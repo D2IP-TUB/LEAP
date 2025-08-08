@@ -1,6 +1,4 @@
 import json
-import csv
-import io
 import time
 import multiprocessing as mp
 import ast
@@ -9,9 +7,12 @@ import re
 from typing import List, Tuple, Dict, Any, Optional
 from datasets import load_dataset
 from vllm import SamplingParams
-from vllm_server import ProcessParallelVLLM, create_generation_config
+from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
 from constraints import create_action_only_constraint_processor, create_constraint_logits_processor
 from eval import to_value_list, check_denotation
+
+# Initialize environment
+os.environ["VLLM_USE_V1"] = "0"
 
 # Configuration
 model_id = "gpt2"
@@ -19,27 +20,30 @@ output_file = "parallel_results.jsonl"
 
 # Configuration flags
 USE_GENERATION_CONSTRAINTS = True
-ENABLE_TABLE_LOGGING = True
-TABLE_LOG_DIR = "table_logs"
-SAVE_READABLE_TABLES = True
 USE_CHAIN_OF_TABLE = False
 COT_ACTION_TEMPERATURE = 0.3
 COT_ARGS_TEMPERATURE = 0.7
+
+# Logging configuration
+LOGGING_CONFIG = {
+    'enable_logging': True,
+    'log_dir': 'table_logs',
+    'save_readable_tables': True,
+    'compress_logs': False,
+    'log_format': 'readable',
+    'max_table_chars': 10000
+}
 
 # Load dataset
 dataset = load_dataset('wikitablequestions', split='train[:1000]')
 
 
-# Domain-specific functions (table manipulation, parsing, etc.)
-def setup_logging_directory():
-    """Create logging directory if it doesn't exist"""
-    if ENABLE_TABLE_LOGGING and not os.path.exists(TABLE_LOG_DIR):
-        os.makedirs(TABLE_LOG_DIR)
-        print(f"Created table logging directory: {TABLE_LOG_DIR}")
-
-
+# Utility functions (table manipulation, parsing, etc.)
 def serialize_table_to_csv(table, max_chars=1500):
     """Convert table to CSV string with limited characters"""
+    import io
+    import csv
+    
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(table['columns'])
@@ -48,7 +52,7 @@ def serialize_table_to_csv(table, max_chars=1500):
     for i, row in enumerate(table['rows']):
         if i >= 10 or char_count > max_chars:
             break
-        row_str = ','.join(row)
+        row_str = ','.join(str(cell) for cell in row)
         if char_count + len(row_str) > max_chars:
             break
         writer.writerow(row)
@@ -124,6 +128,7 @@ def apply_action(table: Dict[str, Any], action: str, args: List) -> Optional[Dic
     
     return None
 
+
 def calculate_execution_accuracy_with_dataset_answers(action_history, final_table, ground_truth_answers, original_table):
     """Calculate execution accuracy using WikiTableQuestions evaluator logic"""
     result = {
@@ -198,6 +203,7 @@ def find_matching_answers(target_values, predicted_values):
                 break
     return matched
 
+
 def extract_table_values_for_eval(table):
     """Extract all values from a table as a flat list of strings for evaluation"""
     if not table or not table.get('rows'):
@@ -220,9 +226,9 @@ def extract_table_values_for_eval(table):
     return unique_values
 
 
-# Generation functions that will be passed to the server
-async def iterative_generation_function(request, worker, state_machines):
-    """Generate actions iteratively for table processing"""
+# Generation functions with integrated logging via callback
+async def iterative_generation_function(request, worker, state_machines, logging_callback=None):
+    """Generate actions iteratively with comprehensive logging via callback"""
     question = request['question']
     table = request['table']
     ground_truth_answers = request['ground_truth_answers']
@@ -236,6 +242,12 @@ async def iterative_generation_function(request, worker, state_machines):
     max_validity_failures = 3
     step = 0
     max_steps = 10
+    
+    generation_mode = worker._get_generation_mode_string()
+    
+    # Log initial table state
+    if logging_callback:
+        logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
     
     while (failures < max_failures and 
            validity_failures < max_validity_failures and 
@@ -286,12 +298,20 @@ async def iterative_generation_function(request, worker, state_machines):
             if not parsed_action:
                 validity_failures += 1
                 print(f"Step {step}: Failed to generate valid action from: {action_str}")
+                if logging_callback:
+                    logging_callback(
+                        request_id, step + 1, f"validity_failed:{action_str}", 
+                        current_table, success=False, failure_type="validity_failure",
+                        generation_mode=generation_mode
+                    )
                 continue
                 
             action_name, args = parsed_action
             
             if action_name == "end":
                 action_history.append("end()")
+                if logging_callback:
+                    logging_callback(request_id, step + 1, "end()", current_table, generation_mode=generation_mode)
                 break
                 
             # Apply action
@@ -300,8 +320,15 @@ async def iterative_generation_function(request, worker, state_machines):
             if not new_table:
                 validity_failures += 1
                 print(f"Step {step}: Failed to apply action: {action_name}({args})")
+                if logging_callback:
+                    logging_callback(
+                        request_id, step + 1, f"{action_name}({args})", 
+                        current_table, success=False, failure_type="validity_failure",
+                        generation_mode=generation_mode
+                    )
                 continue
                 
+            # Action successful
             current_table = new_table
             action_history.append(f"{action_name}({args})")
             failures = 0
@@ -309,9 +336,23 @@ async def iterative_generation_function(request, worker, state_machines):
             step += 1
             print(f"Step {step}: Applied {action_name}({args})")
             
+            # Log successful transformation
+            if logging_callback:
+                logging_callback(
+                    request_id, step, f"{action_name}({args})", 
+                    current_table, success=True,
+                    generation_mode=generation_mode
+                )
+            
         except Exception as e:
             failures += 1
             print(f"Step {step}: Generation error: {str(e)}")
+            if logging_callback:
+                logging_callback(
+                    request_id, step + 1, f"generation_error:{str(e)}", 
+                    current_table, success=False, failure_type="generation_error",
+                    generation_mode=generation_mode
+                )
     
     # Calculate accuracy
     accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
@@ -325,8 +366,8 @@ async def iterative_generation_function(request, worker, state_machines):
     }
 
 
-async def cot_generation_function(request, worker, state_machines):
-    """Chain-of-Table generation function"""
+async def cot_generation_function(request, worker, state_machines, logging_callback=None):
+    """Chain-of-Table generation function with comprehensive logging via callback"""
     question = request['question']
     table = request['table']
     ground_truth_answers = request['ground_truth_answers']
@@ -341,6 +382,12 @@ async def cot_generation_function(request, worker, state_machines):
     step = 0
     max_steps = 10
     
+    generation_mode = "CoT"
+    
+    # Log initial table state
+    if logging_callback:
+        logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
+    
     while (failures < max_failures and 
            validity_failures < max_validity_failures and 
            step < max_steps):
@@ -352,10 +399,18 @@ async def cot_generation_function(request, worker, state_machines):
             if not action_name:
                 validity_failures += 1
                 print(f"Step {step}: Failed to select valid action")
+                if logging_callback:
+                    logging_callback(
+                        request_id, step + 1, "action_selection_failed", 
+                        current_table, success=False, failure_type="validity_failure",
+                        generation_mode=generation_mode
+                    )
                 continue
             
             if action_name == "end":
                 action_history.append("end()")
+                if logging_callback:
+                    logging_callback(request_id, step + 1, "end()", current_table, generation_mode=generation_mode)
                 break
             
             # Step 2: Generate Args
@@ -364,6 +419,12 @@ async def cot_generation_function(request, worker, state_machines):
             if args is None:
                 validity_failures += 1
                 print(f"Step {step}: Failed to generate valid arguments for {action_name}")
+                if logging_callback:
+                    logging_callback(
+                        request_id, step + 1, f"{action_name}_args_failed", 
+                        current_table, success=False, failure_type="validity_failure",
+                        generation_mode=generation_mode
+                    )
                 continue
             
             # Apply action
@@ -372,8 +433,15 @@ async def cot_generation_function(request, worker, state_machines):
             if not new_table:
                 validity_failures += 1
                 print(f"Step {step}: Failed to apply action: {action_name}({args})")
+                if logging_callback:
+                    logging_callback(
+                        request_id, step + 1, f"{action_name}({args})", 
+                        current_table, success=False, failure_type="validity_failure",
+                        generation_mode=generation_mode
+                    )
                 continue
             
+            # Action successful
             current_table = new_table
             action_history.append(f"{action_name}({args})")
             failures = 0
@@ -381,9 +449,145 @@ async def cot_generation_function(request, worker, state_machines):
             step += 1
             print(f"Step {step}: Applied {action_name}({args}) [CoT]")
             
+            # Log successful transformation
+            if logging_callback:
+                logging_callback(
+                    request_id, step, f"{action_name}({args})", 
+                    current_table, success=True,
+                    generation_mode=generation_mode
+                )
+            
         except Exception as e:
             failures += 1
             print(f"Step {step}: Generation error in CoT: {str(e)}")
+            if logging_callback:
+                logging_callback(
+                    request_id, step + 1, f"cot_generation_error:{str(e)}", 
+                    current_table, success=False, failure_type="generation_error",
+                    generation_mode=generation_mode
+                )
+    
+    # Calculate accuracy
+    accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
+        action_history, current_table, ground_truth_answers, table
+    )
+    
+    return {
+        'action_history': action_history,
+        'final_table': current_table,
+        'execution_accuracy_metrics': accuracy_metrics
+    }
+
+
+async def cot_generation_function(request, worker, state_machines, logging_context=None):
+    """Chain-of-Table generation function with comprehensive logging"""
+    question = request['question']
+    table = request['table']
+    ground_truth_answers = request['ground_truth_answers']
+    request_id = request['request_id']
+    
+    current_table = table
+    action_history = []
+    failures = 0
+    validity_failures = 0
+    max_failures = 3
+    max_validity_failures = 3
+    step = 0
+    max_steps = 10
+    
+    generation_mode = "CoT"
+    
+    # Log initial table state
+    if logging_context:
+        logging_context.log_step("initial", current_table, generation_mode=generation_mode)
+    
+    while (failures < max_failures and 
+           validity_failures < max_validity_failures and 
+           step < max_steps):
+        
+        try:
+            # Step 1: Dynamic Plan - Select action
+            action_name = await generate_action_selection(worker, question, current_table, action_history, request_id, state_machines, step)
+            
+            if not action_name:
+                validity_failures += 1
+                print(f"Step {step}: Failed to select valid action")
+                if logging_context:
+                    logging_context.log_step(
+                        "action_selection_failed", 
+                        current_table, 
+                        success=False, 
+                        failure_type="validity_failure",
+                        generation_mode=generation_mode
+                    )
+                continue
+            
+            if action_name == "end":
+                action_history.append("end()")
+                if logging_context:
+                    logging_context.log_step("end()", current_table, generation_mode=generation_mode)
+                break
+            
+            # Step 2: Generate Args
+            args = await generate_action_arguments(worker, question, current_table, action_name, action_history, request_id, state_machines, step)
+            
+            if args is None:
+                validity_failures += 1
+                print(f"Step {step}: Failed to generate valid arguments for {action_name}")
+                if logging_context:
+                    logging_context.log_step(
+                        f"{action_name}_args_failed", 
+                        current_table, 
+                        success=False, 
+                        failure_type="validity_failure",
+                        generation_mode=generation_mode
+                    )
+                continue
+            
+            # Apply action
+            new_table = apply_action(current_table, action_name, args)
+            
+            if not new_table:
+                validity_failures += 1
+                print(f"Step {step}: Failed to apply action: {action_name}({args})")
+                if logging_context:
+                    logging_context.log_step(
+                        f"{action_name}({args})", 
+                        current_table, 
+                        success=False, 
+                        failure_type="validity_failure",
+                        generation_mode=generation_mode
+                    )
+                continue
+            
+            # Action successful
+            current_table = new_table
+            action_history.append(f"{action_name}({args})")
+            failures = 0
+            validity_failures = 0
+            step += 1
+            print(f"Step {step}: Applied {action_name}({args}) [CoT]")
+            
+            # Log successful transformation
+            if logging_context:
+                logging_context.log_step(
+                    f"{action_name}({args})", 
+                    current_table, 
+                    success=True,
+                    generation_mode=generation_mode
+                )
+            
+        except Exception as e:
+            failures += 1
+            print(f"Step {step}: Generation error in CoT: {str(e)}")
+            if logging_context:
+                logging_context.log_step(
+                    f"cot_generation_error:{str(e)}", 
+                    current_table, 
+                    success=False, 
+                    failure_type="generation_error",
+                    generation_mode=generation_mode
+                )
     
     # Calculate accuracy
     accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
@@ -705,20 +909,28 @@ def get_generation_mode_string():
 
 
 def main():
-    """Main function using the modular vLLM server"""
-    # Setup logging
-    setup_logging_directory()
+    """Main function using the modular vLLM server with comprehensive logging"""
+    print("Setting up modular vLLM server with integrated logging...")
     
-    print("Setting up modular vLLM server...")
+    # Create logging configuration
+    logging_config = create_logging_config(
+        enable_logging=LOGGING_CONFIG['enable_logging'],
+        log_dir=LOGGING_CONFIG['log_dir'],
+        save_readable_tables=LOGGING_CONFIG['save_readable_tables'],
+        compress_logs=LOGGING_CONFIG['compress_logs'],
+        log_format=LOGGING_CONFIG['log_format'],
+        max_table_chars=LOGGING_CONFIG['max_table_chars']
+    )
     
-    # Create generation configuration
+    # Create generation configuration with logging
     generation_config = create_generation_config(
         use_constraints=USE_GENERATION_CONSTRAINTS,
         use_cot=USE_CHAIN_OF_TABLE,
         generation_functions={
             'iterative_generation': iterative_generation_function,
             'cot_generation': cot_generation_function
-        }
+        },
+        logging_config=logging_config
     )
     
     # Initialize the server
@@ -732,6 +944,8 @@ def main():
     try:
         # Start server
         print(f"Starting server with {num_workers} workers...")
+        print(f"Logging configuration: {server.get_logging_stats()}")
+        
         if not server.start_workers():
             print("Failed to start all workers. Exiting.")
             return
@@ -762,7 +976,7 @@ def main():
         print(f"Processing {len(requests)} questions...")
         print(f"Generation mode: {get_generation_mode_string()}")
         
-        # Generate responses
+        # Generate responses with comprehensive logging
         start_time = time.time()
         results = server.generate_batch(requests)
         end_time = time.time()
@@ -779,7 +993,11 @@ def main():
         # Print sample results
         print_sample_results(results, examples)
         
+        # Demonstrate logging analysis
+        demonstrate_logging_analysis(server, results)
+        
     finally:
+        # Shutdown will automatically generate summary report
         server.shutdown()
 
 
@@ -852,6 +1070,34 @@ def print_sample_results(results, examples):
             print(f"Final Table Size: {rows} rows × {cols} columns")
         
         print("-" * 80)
+
+
+def demonstrate_logging_analysis(server, results):
+    """Demonstrate logging analysis capabilities"""
+    if not server.get_logging_stats().get('enabled', False):
+        print("Logging not enabled - skipping analysis demonstration")
+        return
+    
+    print(f"\n{'='*80}")
+    print("LOGGING ANALYSIS DEMONSTRATION")
+    print(f"{'='*80}")
+    
+    # Show logging statistics
+    stats = server.get_logging_stats()
+    print(f"Logging Statistics:")
+    print(f"  Directory: {stats.get('log_dir', 'N/A')}")
+    print(f"  Requests logged: {stats.get('requests_logged', 0)}")
+    print(f"  Total log entries: {stats.get('total_entries', 0)}")
+    print(f"  Save readable tables: {stats.get('save_readable_tables', False)}")
+    
+    # Try to analyze logs for first few requests (they would have been logged during processing)
+    print(f"\nSample request analysis:")
+    
+    # Note: In a real scenario, we would have the actual request IDs from the processing
+    # For demonstration, we show what the analysis would look like
+    print("  (Request-specific logs would be available after processing)")
+    print("  Use server.analyze_request_logs(request_id) to analyze specific requests")
+    print("  Use server.write_summary_report() to generate comprehensive reports")
 
 
 if __name__ == "__main__":
