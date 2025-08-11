@@ -1,11 +1,15 @@
 import torch
 
 class ConstraintStateMachine:
-    """State machine for constraint processing"""
-    def __init__(self, table, tokenizer, digit_token_map):
+    """State machine for constraint processing with global action constraints"""
+    def __init__(self, table, tokenizer, digit_token_map, action_history=None):
         self.tokenizer = tokenizer
         self.table = table
         self.digit_token_map = digit_token_map
+        
+        # Parse action history to determine previously used action types
+        self.previously_used_actions = self._parse_action_history(action_history)
+        
         self.reset()
         
         num_rows = min(500, len(table['rows']))
@@ -22,6 +26,19 @@ class ConstraintStateMachine:
             if tokens:
                 self.column_token_map[col] = tokens
 
+    def _parse_action_history(self, action_history):
+        """Parse action history to extract previously used action types"""
+        used_actions = set()
+        if action_history:
+            for action_str in action_history:
+                if "select_row" in action_str:
+                    used_actions.add("select_row")
+                elif "select_column" in action_str:
+                    used_actions.add("select_column")
+                elif "end" in action_str:
+                    used_actions.add("end")
+        return used_actions
+
     def reset(self):
         self.state = "start"
         self.current_action = None
@@ -32,9 +49,34 @@ class ConstraintStateMachine:
         self.has_parameter = False
         self.param_complete = False
         self.expecting_parameter = False
-        self.possible_actions = ["select_row", "select_column", "end"]
+        
+        # Apply global constraints based on action history
+        self.possible_actions = self._get_allowed_actions()
+        
         self.action_prefix = []
         self.current_column = None
+
+    def _get_allowed_actions(self):
+        """Determine which actions are allowed based on global constraints"""
+        allowed = []
+        
+        # If no actions have been taken yet, can't use 'end'
+        if not self.previously_used_actions:
+            # Only allow select_row and select_column for first action
+            allowed.extend(["select_row", "select_column"])
+        else:
+            # Check which actions haven't been used yet
+            if "select_row" not in self.previously_used_actions:
+                allowed.append("select_row")
+            if "select_column" not in self.previously_used_actions:
+                allowed.append("select_column")
+            
+            # 'end' is allowed only if at least one other action has been taken
+            # and no other actions are available
+            if not allowed:  # No other actions available
+                allowed.append("end")
+        
+        return allowed
 
     def update_state(self, token):
         if self.finished:
@@ -63,7 +105,7 @@ class ConstraintStateMachine:
         }
         
         matching_actions = []
-        for action in self.possible_actions:
+        for action in self.possible_actions:  # Use filtered possible_actions
             tokens = action_tokens[action]
             if tokens and token == tokens[0]:
                 matching_actions.append(action)
@@ -227,7 +269,8 @@ class ConstraintStateMachine:
         
         if self.state == "start":
             allowed = set()
-            for action in action_tokens:
+            # Only allow tokens for actions that are globally permitted
+            for action in self.possible_actions:
                 tokens = action_tokens[action]
                 if tokens:
                     allowed.add(tokens[0])
@@ -394,9 +437,18 @@ class ActionOnlyConstraintStateMachine:
             
         return [self.tokenizer.eos_token_id]
 
-def create_constraint_logits_processor(table, tokenizer, request_id, state_machines_dict):
-    """Create a logits processor function for a specific table with external state storage"""
+
+def create_constraint_logits_processor(table, tokenizer, request_id, state_machines_dict, action_history=None):
+    """
+    Create a logits processor function for a specific table with external state storage
     
+    Args:
+        table: The table data
+        tokenizer: The tokenizer
+        request_id: Unique request identifier
+        state_machines_dict: Dictionary to store state machines
+        action_history: List of previously executed actions (for global constraints)
+    """
     # Precompute tokens
     digit_token_map = {}
     for i in range(10):
@@ -405,9 +457,11 @@ def create_constraint_logits_processor(table, tokenizer, request_id, state_machi
             digit_token_map[tokens[0]] = str(i)
     
     def constraint_logits_processor(prompt_token_ids, generated_token_ids, logits):
-        # Get or create state machine for this request
+        # Get or create state machine for this request with action history
         if request_id not in state_machines_dict:
-            state_machines_dict[request_id] = ConstraintStateMachine(table, tokenizer, digit_token_map)
+            state_machines_dict[request_id] = ConstraintStateMachine(
+                table, tokenizer, digit_token_map, action_history
+            )
         
         sm = state_machines_dict[request_id]
         
