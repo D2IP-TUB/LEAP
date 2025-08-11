@@ -1,14 +1,18 @@
 import torch
 
 class ConstraintStateMachine:
-    """State machine for constraint processing with global action constraints"""
-    def __init__(self, table, tokenizer, digit_token_map, action_history=None):
+    """State machine for constraint processing with optional global action constraints"""
+    def __init__(self, table, tokenizer, digit_token_map, action_history=None, use_global_constraints=True):
         self.tokenizer = tokenizer
         self.table = table
         self.digit_token_map = digit_token_map
+        self.use_global_constraints = use_global_constraints
         
-        # Parse action history to determine previously used action types
-        self.previously_used_actions = self._parse_action_history(action_history)
+        # Parse action history to determine previously used action types (only if global constraints are enabled)
+        if self.use_global_constraints:
+            self.previously_used_actions = self._parse_action_history(action_history)
+        else:
+            self.previously_used_actions = set()
         
         self.reset()
         
@@ -50,13 +54,16 @@ class ConstraintStateMachine:
         self.param_complete = False
         self.expecting_parameter = False
         
-        # Apply global constraints based on action history
-        self.possible_actions = self._get_allowed_actions()
+        # Apply constraints based on configuration
+        if self.use_global_constraints:
+            self.possible_actions = self._get_allowed_actions_with_global_constraints()
+        else:
+            self.possible_actions = self._get_allowed_actions_without_global_constraints()
         
         self.action_prefix = []
         self.current_column = None
 
-    def _get_allowed_actions(self):
+    def _get_allowed_actions_with_global_constraints(self):
         """Determine which actions are allowed based on global constraints"""
         allowed = []
         
@@ -77,6 +84,10 @@ class ConstraintStateMachine:
                 allowed.append("end")
         
         return allowed
+
+    def _get_allowed_actions_without_global_constraints(self):
+        """Get all actions without global constraints (original behavior)"""
+        return ["select_row", "select_column", "end"]
 
     def update_state(self, token):
         if self.finished:
@@ -269,9 +280,9 @@ class ConstraintStateMachine:
         
         if self.state == "start":
             allowed = set()
-            # Only allow tokens for actions that are globally permitted
+            # Only allow tokens for actions that are permitted (with or without global constraints)
             for action in self.possible_actions:
-                tokens = action_tokens[action]
+                tokens = action_tokens.get(action, [])
                 if tokens:
                     allowed.add(tokens[0])
             return list(allowed)
@@ -279,7 +290,7 @@ class ConstraintStateMachine:
         elif self.state == "in_action":
             allowed = set()
             for action in self.possible_actions:
-                tokens = action_tokens[action]
+                tokens = action_tokens.get(action, [])
                 if tokens and len(self.action_prefix) < len(tokens):
                     allowed.add(tokens[len(self.action_prefix)])
             return list(allowed) if allowed else [self.tokenizer.eos_token_id]
@@ -438,7 +449,9 @@ class ActionOnlyConstraintStateMachine:
         return [self.tokenizer.eos_token_id]
 
 
-def create_constraint_logits_processor(table, tokenizer, request_id, state_machines_dict, action_history=None):
+
+def create_constraint_logits_processor(table, tokenizer, request_id, state_machines_dict, 
+                                      action_history=None, use_global_constraints=True):
     """
     Create a logits processor function for a specific table with external state storage
     
@@ -448,7 +461,9 @@ def create_constraint_logits_processor(table, tokenizer, request_id, state_machi
         request_id: Unique request identifier
         state_machines_dict: Dictionary to store state machines
         action_history: List of previously executed actions (for global constraints)
+        use_global_constraints: Whether to apply global action constraints (default: True)
     """
+    
     # Precompute tokens
     digit_token_map = {}
     for i in range(10):
@@ -460,7 +475,7 @@ def create_constraint_logits_processor(table, tokenizer, request_id, state_machi
         # Get or create state machine for this request with action history
         if request_id not in state_machines_dict:
             state_machines_dict[request_id] = ConstraintStateMachine(
-                table, tokenizer, digit_token_map, action_history
+                table, tokenizer, digit_token_map, action_history, use_global_constraints
             )
         
         sm = state_machines_dict[request_id]

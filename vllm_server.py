@@ -509,6 +509,7 @@ class ProcessParallelVLLM:
 
 def create_generation_config(use_constraints: bool = True,
                            use_cot: bool = False,
+                           use_global_constraints: bool = True,  # NEW parameter
                            constraint_processors: Dict[str, Callable] = None,
                            generation_functions: Dict[str, Callable] = None,
                            engine_config: Dict[str, Any] = None,
@@ -519,6 +520,7 @@ def create_generation_config(use_constraints: bool = True,
     Args:
         use_constraints: Whether to use constrained generation
         use_cot: Whether to use Chain-of-Table approach
+        use_global_constraints: Whether to apply global action constraints (no duplicates, end rules)
         constraint_processors: Dictionary of constraint processor functions
         generation_functions: Dictionary of generation functions
         engine_config: vLLM engine configuration
@@ -530,6 +532,7 @@ def create_generation_config(use_constraints: bool = True,
     config = {
         'use_constraints': use_constraints,
         'use_cot': use_cot,
+        'use_global_constraints': use_global_constraints,  # NEW field
         'constraint_processors': constraint_processors or {},
         'generation_functions': generation_functions or {},
         'engine_config': engine_config or {

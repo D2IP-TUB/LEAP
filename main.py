@@ -20,6 +20,7 @@ output_file = "parallel_results.jsonl"
 
 # Configuration flags
 USE_GENERATION_CONSTRAINTS = True
+USE_GLOBAL_CONSTRAINTS = True
 USE_CHAIN_OF_TABLE = False
 COT_ACTION_TEMPERATURE = 0.3
 COT_ARGS_TEMPERATURE = 0.7
@@ -149,8 +150,9 @@ def calculate_execution_accuracy_with_dataset_answers(action_history, final_tabl
     try:
         # Check if sequence terminated properly
         result['terminated_properly'] = (
-            len(action_history) > 0 and 
-            action_history[-1].startswith('end')
+            len(action_history) > 1 and  # Must have more than just one action
+            action_history[-1].startswith('end') and  # Last action must be end
+            not all(action.startswith('end') for action in action_history[:-1])  # Not all prior actions are end
         )
         
         # Convert ground truth answers to Value objects using evaluator logic
@@ -286,7 +288,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
         
         try:
             # Generate action
-            action_str = await generate_single_action(worker, step_prompt, current_table, step_id, state_machines)
+            action_str = await generate_single_action(worker, step_prompt, current_table, step_id, state_machines, action_history)
             
             # Parse action
             if worker.use_constraints:
@@ -614,9 +616,13 @@ async def generate_single_action(worker, prompt, table, request_id, state_machin
     """
     try:
         if worker.use_constraints:
+            # Get global constraints setting from worker's generation config
+            use_global_constraints = worker.generation_config.get('use_global_constraints', True)
+            
             # Pass action_history to the constraint processor
             constraint_processor = create_constraint_logits_processor(
-                table, worker.tokenizer, request_id, state_machines, action_history
+                table, worker.tokenizer, request_id, state_machines, 
+                action_history, use_global_constraints
             )
             
             sampling_params = SamplingParams(
@@ -1053,7 +1059,10 @@ def get_generation_mode_string():
         constraint_desc = "with_constraints" if USE_GENERATION_CONSTRAINTS else "without_constraints"
         return f"chain_of_table_{constraint_desc}"
     elif USE_GENERATION_CONSTRAINTS:
-        return "constrained"
+        if USE_GLOBAL_CONSTRAINTS:
+            return "constrained_with_global"
+        else:
+            return "constrained_local_only"
     else:
         return "unconstrained_with_postprocessing"
 
@@ -1076,6 +1085,7 @@ def main():
     generation_config = create_generation_config(
         use_constraints=USE_GENERATION_CONSTRAINTS,
         use_cot=USE_CHAIN_OF_TABLE,
+        use_global_constraints=USE_GLOBAL_CONSTRAINTS,
         generation_functions={
             'iterative_generation': iterative_generation_function,
             'cot_generation': cot_generation_function
