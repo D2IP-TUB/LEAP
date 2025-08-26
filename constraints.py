@@ -1,9 +1,11 @@
 import torch
+from transformers import LlamaTokenizerFast
 
 class ConstraintStateMachine:
     """State machine for constraint processing with optional global action constraints"""
     def __init__(self, table, tokenizer, digit_token_map, action_history=None, use_global_constraints=True):
         self.tokenizer = tokenizer
+        self.llama = True if isinstance(self.tokenizer, LlamaTokenizerFast) else False
         self.table = table
         self.digit_token_map = digit_token_map
         self.use_global_constraints = use_global_constraints
@@ -62,6 +64,13 @@ class ConstraintStateMachine:
         
         self.action_prefix = []
         self.current_column = None
+
+    def _retokenize_last_in_context(self, context, char):
+        context += char
+        return self.tokenizer.encode(context, add_special_tokens=False)[-1]
+
+    def _retokenize_digits_in_context(self, context):
+        return [self._retokenize_last_in_context(context, str(i)) for i in range(10)]
 
     def _get_allowed_actions_with_global_constraints(self):
         """Determine which actions are allowed based on global constraints"""
@@ -161,14 +170,55 @@ class ConstraintStateMachine:
         else:
             self.possible_actions = next_possible
 
+
+
+# <s> 1      select 1831      _ 29918      column 4914      
+# <s> 1      select 1831      _ 29918      column 4914      ( 29898      
+# <s> 1      select 1831      _ 29918      column 4914      ([ 4197      
+# <s> 1      select 1831      _ 29918      column 4914      ( 29898      [" 3366      
+# <s> 1      select 1831      _ 29918      column 4914      ( 29898      [" 3366      Player 9075      
+# <s> 1      select 1831      _ 29918      column 4914      ( 29898      [" 3366      Player 9075      " 29908      
+# <s> 1      select 1831      _ 29918      column 4914      ( 29898      [" 3366      Player 9075      ", 613      
+# <s> 1      select 1831      _ 29918      column 4914      ( 29898      [" 3366      Player 9075      "," 3284      
+# <s> 1      select 1831      _ 29918      column 4914      ( 29898      [" 3366      Player 9075      "," 3284      Age 22406      
+# <s> 1      select 1831      _ 29918      column 4914      ( 29898      [" 3366      Player 9075      "," 3284      Age 22406      " 29908      
+# <s> 1      select 1831      _ 29918      column 4914      ( 29898      [" 3366      Player 9075      "," 3284      Age 22406      "] 3108      
+# <s> 1      select 1831      _ 29918      column 4914      ( 29898      [" 3366      Player 9075      "," 3284      Age 22406      "]) 20068   
+
+# paren_open_id = self.tokenizer.encode("(", add_special_tokens=False)[0]
+# paren_list_open_id = self.tokenizer.encode("([", add_special_tokens=False)[0]
+
+# list_open_id = self.tokenizer.encode("[", add_special_tokens=False)[0]
+# list_quote_id = self.tokenizer.encode('["', add_special_tokens=False)[0]
+
+# quote_id = self.tokenizer.encode('"', add_special_tokens=False)[0]
+# comma_id = self.tokenizer.encode(",", add_special_tokens=False)[0]
+
+# quote_comma_id = self.tokenizer.encode('",', add_special_tokens=False)[0]
+# quote_comma_quote_id = self.tokenizer.encode('","', add_special_tokens=False)[0]
+
+# list_close_id = self.tokenizer.encode("]", add_special_tokens=False)[0]
+# paren_close_id = self.tokenizer.encode(")", add_special_tokens=False)[0]
+
+# quote_list_close_id = self.tokenizer.encode('"]', add_special_tokens=False)[0]
+# quote_list_paren_close_id = self.tokenizer.encode('"])', add_special_tokens=False)[0]
+
+
     def _handle_after_action(self, token):
         if self.current_action == "end":
             self.finished = True
             return
             
         paren_open_id = self.tokenizer.encode("(", add_special_tokens=False)[0]
+        paren_list_open_id = self.tokenizer.encode("([", add_special_tokens=False)[0]
         if token == paren_open_id:
             self.state = "in_paren_open"
+        if token == paren_list_open_id:
+            self.state = "in_params"
+            self.current_param = []
+            self.param_complete = False
+            self.expecting_parameter = True
+            self.current_column = None
 
     def _handle_paren_open(self, token):
         list_open_id = self.tokenizer.encode("[", add_special_tokens=False)[0]
@@ -189,6 +239,7 @@ class ConstraintStateMachine:
         quote_id = self.tokenizer.encode('"', add_special_tokens=False)[0]
         comma_id = self.tokenizer.encode(",", add_special_tokens=False)[0]
         list_close_id = self.tokenizer.encode("]", add_special_tokens=False)[0]
+        closing_quote_id = 29908 if self.llama else quote_id
         
         if not self.current_param and self.expecting_parameter:
             if token == quote_id:
@@ -197,14 +248,14 @@ class ConstraintStateMachine:
             return
         
         if self.current_param and self.current_param[0] == quote_id:
-            if token == quote_id:
+            if token == closing_quote_id:
                 self.current_param.append(token)
                 param_text = self.tokenizer.decode(self.current_param)
                 clean_param = param_text.strip('"')
                 
                 is_valid = False
                 for col, tokens in self.column_token_map.items():
-                    if self.current_param == tokens and col not in self.selected_params:
+                    if clean_param == col and col not in self.selected_params:
                         self.selected_params.add(col)
                         self.has_parameter = True
                         self.param_complete = True
@@ -233,7 +284,7 @@ class ConstraintStateMachine:
     def _handle_row_param(self, token):
         comma_id = self.tokenizer.encode(",", add_special_tokens=False)[0]
         list_close_id = self.tokenizer.encode("]", add_special_tokens=False)[0]
-        digit_tokens = [self.tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(10)]
+        digit_tokens = [self.tokenizer.encode(str(i), add_special_tokens=False)[-1] for i in range(10)]
         
         if not self.current_param and self.expecting_parameter:
             if token in digit_tokens:
@@ -276,7 +327,8 @@ class ConstraintStateMachine:
         list_close_id = self.tokenizer.encode("]", add_special_tokens=False)[0]
         quote_id = self.tokenizer.encode('"', add_special_tokens=False)[0]
         paren_close_id = self.tokenizer.encode(")", add_special_tokens=False)[0]
-        digit_tokens = [self.tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(10)]
+        paren_list_open_id = self.tokenizer.encode("([", add_special_tokens=False)[0]
+        digit_tokens = [self.tokenizer.encode(str(i), add_special_tokens=False)[-1] for i in range(10)]
         
         if self.state == "start":
             allowed = set()
@@ -298,7 +350,7 @@ class ConstraintStateMachine:
         elif self.state == "after_action":
             if self.current_action == "end":
                 return [self.tokenizer.eos_token_id]
-            return [paren_open_id]
+            return [paren_list_open_id] if self.llama else [paren_open_id]
         
         elif self.state == "in_paren_open":
             return [list_open_id]
@@ -469,7 +521,7 @@ def create_constraint_logits_processor(table, tokenizer, request_id, state_machi
     for i in range(10):
         tokens = tokenizer.encode(str(i), add_special_tokens=False)
         if tokens:
-            digit_token_map[tokens[0]] = str(i)
+            digit_token_map[tokens[-1]] = str(i) # LLAMA
     
     def constraint_logits_processor(prompt_token_ids, generated_token_ids, logits):
         # Get or create state machine for this request with action history

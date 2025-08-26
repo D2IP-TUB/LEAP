@@ -14,7 +14,9 @@ from eval import to_value_list, check_denotation
 # Initialize environment
 os.environ["VLLM_USE_V1"] = "0"
 
+
 # Configuration
+# model_id = "meta-llama/Llama-2-70b-hf"
 model_id = "gpt2"
 output_file = "parallel_results.jsonl"
 
@@ -27,8 +29,8 @@ COT_ARGS_TEMPERATURE = 0.7
 
 # Logging configuration
 LOGGING_CONFIG = {
-    'enable_logging': False,
-    'log_dir': 'table_logs',
+    'enable_logging': True,
+    'log_dir': 'table_logs_llama' if model_id == "meta-llama/Llama-2-70b-hf" else 'table_logs',
     'save_readable_tables': False,
     'compress_logs': False,
     'log_format': 'readable',
@@ -36,7 +38,7 @@ LOGGING_CONFIG = {
 }
 
 # Load dataset
-dataset = load_dataset('wikitablequestions', split='train[:1000]')
+dataset = load_dataset('wikitablequestions', split='train[:1000]', trust_remote_code=True)
 
 
 # Utility functions (table manipulation, parsing, etc.)
