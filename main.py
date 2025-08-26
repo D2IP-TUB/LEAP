@@ -16,8 +16,11 @@ os.environ["VLLM_USE_V1"] = "0"
 
 
 # Configuration
-# model_id = "meta-llama/Llama-2-70b-hf"
-model_id = "gpt2"
+model_id = "meta-llama/Llama-2-70b-hf"
+# model_id = "gpt2"
+# model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+# model_id = "mistralai/Mixtral-8x7B-v0.1"
+
 output_file = "parallel_results.jsonl"
 
 # Configuration flags
@@ -27,10 +30,18 @@ USE_CHAIN_OF_TABLE = False
 COT_ACTION_TEMPERATURE = 0.3
 COT_ARGS_TEMPERATURE = 0.7
 
+
+log_dir = {
+    "meta-llama/Llama-2-70b-hf": 'table_logs_llama',
+    "gpt2": 'table_logs_gpt2',
+    "mistralai/Mixtral-8x7B-Instruct-v0.1": 'table_logs_mixtral_instruct',
+    "mistralai/Mixtral-8x7B-v0.1": 'table_logs_mixtral',
+}
+
 # Logging configuration
 LOGGING_CONFIG = {
     'enable_logging': True,
-    'log_dir': 'table_logs_llama' if model_id == "meta-llama/Llama-2-70b-hf" else 'table_logs',
+    'log_dir':  log_dir[model_id],
     'save_readable_tables': False,
     'compress_logs': False,
     'log_format': 'readable',
@@ -1096,11 +1107,11 @@ def main():
     )
     
     # Initialize the server
-    num_workers = 4
+    num_workers = 2
     server = ProcessParallelVLLM(
         model_id=model_id,
         num_workers=num_workers,
-        gpu_allocation=[2, 3, 4, 5],
+        gpu_allocation=[0, 1, 2, 3, 4, 5, 6, 7],
         generation_config=generation_config
     )
     

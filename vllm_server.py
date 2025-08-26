@@ -334,7 +334,7 @@ class ProcessParallelVLLM:
             )
             self.workers.append(worker)
     
-    def start_workers(self, timeout: int = 999999) -> bool:
+    def start_workers(self, timeout: int = 300) -> bool:
         """
         Start all worker processes and wait for models to load
         
@@ -394,7 +394,7 @@ class ProcessParallelVLLM:
     
     def generate_batch(self, 
                       requests: List[Dict[str, Any]], 
-                      timeout_per_request: int = 999999) -> List[Dict[str, Any]]:
+                      timeout_per_request: int = 100) -> List[Dict[str, Any]]:
         """
         Generate responses for batch of requests
         
@@ -553,8 +553,8 @@ def create_generation_config(use_constraints: bool = True,
         'engine_config': engine_config or {
             'trust_remote_code': True,
             'max_model_len': 1024,
-            'gpu_memory_utilization': 0.95,
-            'tensor_parallel_size': 1, # pipline, data and tensor parralell
+            'gpu_memory_utilization': 0.8,
+            'tensor_parallel_size': 4, # tensor parralell -> weights split between n GPUs
             'max_num_batched_tokens': 8192,
             'max_num_seqs': 32,
         },
