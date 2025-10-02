@@ -1,0 +1,77 @@
+{
+  "request_id": "req_41_6309c556",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402431.3962173,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 14,
+    "num_columns": 9,
+    "columns": [
+      "Club",
+      "Played",
+      "Won",
+      "Drawn",
+      "Lost",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_41_6309c556",
+  "step": 1,
+  "action": "select_column(['Club'])",
+  "timestamp": 1759402431.462752,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 14,
+    "num_columns": 1,
+    "columns": [
+      "Club"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_41_6309c556",
+  "step": 2,
+  "action": "select_row([0])",
+  "timestamp": 1759402431.5211508,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 1,
+    "num_columns": 1,
+    "columns": [
+      "Club"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_41_6309c556",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402431.5520349,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 1,
+    "num_columns": 1,
+    "columns": [
+      "Club"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

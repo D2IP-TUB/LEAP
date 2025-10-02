@@ -1,0 +1,77 @@
+{
+  "request_id": "req_42_69685f70",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402431.4481902,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 14,
+    "num_columns": 7,
+    "columns": [
+      "#",
+      "Name",
+      "Position",
+      "Birthday",
+      "Size",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_42_69685f70",
+  "step": 1,
+  "action": "select_column(['Position'])",
+  "timestamp": 1759402431.4920678,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 14,
+    "num_columns": 1,
+    "columns": [
+      "Position"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_42_69685f70",
+  "step": 2,
+  "action": "select_row([0, 1, 2, 3, 4, 5, 6])",
+  "timestamp": 1759402431.5699794,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 7,
+    "num_columns": 1,
+    "columns": [
+      "Position"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_42_69685f70",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402431.58805,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 7,
+    "num_columns": 1,
+    "columns": [
+      "Position"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

@@ -1,0 +1,77 @@
+{
+  "request_id": "req_61_735528e5",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402432.843764,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 11,
+    "num_columns": 6,
+    "columns": [
+      "Service",
+      "Service ID",
+      "Bit rate",
+      "Audio channels",
+      "Description",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_61_735528e5",
+  "step": 1,
+  "action": "select_column(['Analogue availability'])",
+  "timestamp": 1759402432.8927257,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 11,
+    "num_columns": 1,
+    "columns": [
+      "Analogue availability"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_61_735528e5",
+  "step": 2,
+  "action": "select_row([1, 2, 3])",
+  "timestamp": 1759402432.9447231,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 3,
+    "num_columns": 1,
+    "columns": [
+      "Analogue availability"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_61_735528e5",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402432.9621704,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 3,
+    "num_columns": 1,
+    "columns": [
+      "Analogue availability"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

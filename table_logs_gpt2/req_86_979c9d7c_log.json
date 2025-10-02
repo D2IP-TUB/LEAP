@@ -1,0 +1,77 @@
+{
+  "request_id": "req_86_979c9d7c",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402434.6920304,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 47,
+    "num_columns": 8,
+    "columns": [
+      "Year",
+      "IBM Model Number",
+      "Name",
+      "Processor",
+      "Bus",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_86_979c9d7c",
+  "step": 1,
+  "action": "select_column(['Name'])",
+  "timestamp": 1759402434.7506368,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 47,
+    "num_columns": 1,
+    "columns": [
+      "Name"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_86_979c9d7c",
+  "step": 2,
+  "action": "select_row([0])",
+  "timestamp": 1759402434.8023486,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 1,
+    "num_columns": 1,
+    "columns": [
+      "Name"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_86_979c9d7c",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402434.8299732,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 1,
+    "num_columns": 1,
+    "columns": [
+      "Name"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

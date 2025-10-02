@@ -1,0 +1,77 @@
+{
+  "request_id": "req_57_8d263a44",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402432.5874057,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 13,
+    "num_columns": 7,
+    "columns": [
+      "League",
+      "League",
+      "Position",
+      "Teams",
+      "Matches",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_57_8d263a44",
+  "step": 1,
+  "action": "select_column(['League'])",
+  "timestamp": 1759402432.6483383,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 13,
+    "num_columns": 1,
+    "columns": [
+      "League"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_57_8d263a44",
+  "step": 2,
+  "action": "select_row([2])",
+  "timestamp": 1759402432.697491,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 1,
+    "num_columns": 1,
+    "columns": [
+      "League"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_57_8d263a44",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402432.7284143,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 1,
+    "num_columns": 1,
+    "columns": [
+      "League"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

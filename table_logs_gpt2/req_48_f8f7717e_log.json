@@ -1,0 +1,77 @@
+{
+  "request_id": "req_48_f8f7717e",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402431.9593022,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 24,
+    "num_columns": 6,
+    "columns": [
+      "Date",
+      "Venue",
+      "Opponent",
+      "Result",
+      "Tournament",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_48_f8f7717e",
+  "step": 1,
+  "action": "select_column(['Date'])",
+  "timestamp": 1759402432.0177271,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 24,
+    "num_columns": 1,
+    "columns": [
+      "Date"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_48_f8f7717e",
+  "step": 2,
+  "action": "select_row([1, 2, 3])",
+  "timestamp": 1759402432.0833895,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 3,
+    "num_columns": 1,
+    "columns": [
+      "Date"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_48_f8f7717e",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402432.1097412,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 3,
+    "num_columns": 1,
+    "columns": [
+      "Date"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

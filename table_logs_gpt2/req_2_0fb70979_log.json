@@ -1,0 +1,77 @@
+{
+  "request_id": "req_2_0fb70979",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402428.633129,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 40,
+    "num_columns": 6,
+    "columns": [
+      "Date",
+      "Opponent",
+      "Venue",
+      "Result",
+      "Attendance",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_2_0fb70979",
+  "step": 1,
+  "action": "select_column(['Opponent'])",
+  "timestamp": 1759402428.6816127,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 40,
+    "num_columns": 1,
+    "columns": [
+      "Opponent"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_2_0fb70979",
+  "step": 2,
+  "action": "select_row([3, 0])",
+  "timestamp": 1759402428.726941,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 2,
+    "num_columns": 1,
+    "columns": [
+      "Opponent"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_2_0fb70979",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402428.7471766,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 2,
+    "num_columns": 1,
+    "columns": [
+      "Opponent"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

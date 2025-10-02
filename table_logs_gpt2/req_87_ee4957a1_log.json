@@ -1,0 +1,77 @@
+{
+  "request_id": "req_87_ee4957a1",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402434.7867262,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 21,
+    "num_columns": 9,
+    "columns": [
+      "Draw",
+      "Country",
+      "Language",
+      "Artist",
+      "Song",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_87_ee4957a1",
+  "step": 1,
+  "action": "select_column(['National final'])",
+  "timestamp": 1759402434.8354166,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 21,
+    "num_columns": 1,
+    "columns": [
+      "National final"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_87_ee4957a1",
+  "step": 2,
+  "action": "select_row(['[2', '3', '4', '5', '6', '7', '8', '9', '0', '1', ''])",
+  "timestamp": 1759402434.9253843,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 9,
+    "num_columns": 1,
+    "columns": [
+      "National final"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_87_ee4957a1",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402434.9446979,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 9,
+    "num_columns": 1,
+    "columns": [
+      "National final"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

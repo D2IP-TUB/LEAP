@@ -16,8 +16,8 @@ os.environ["VLLM_USE_V1"] = "0"
 
 
 # Configuration
-model_id = "meta-llama/Llama-2-70b-hf"
-# model_id = "gpt2"
+#model_id = "meta-llama/Llama-2-70b-hf"
+model_id = "gpt2"
 # model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
 # model_id = "mistralai/Mixtral-8x7B-v0.1"
 
@@ -49,7 +49,7 @@ LOGGING_CONFIG = {
 }
 
 # Load dataset
-dataset = load_dataset('wikitablequestions', split='train[:1000]', trust_remote_code=True)
+dataset = load_dataset('wikitablequestions', split='train[:100]', trust_remote_code=True)
 
 
 # Utility functions (table manipulation, parsing, etc.)
@@ -92,6 +92,9 @@ def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
         
         # Extract list arguments
         if args_str.startswith('[') and args_str.endswith(']'):
+            if "//" in args_str:
+                args_str = args_str.replace("//", "////")
+
             args_list = ast.literal_eval(args_str)
             return action_name, args_list
         
@@ -1103,7 +1106,8 @@ def main():
             'iterative_generation': iterative_generation_function,
             'cot_generation': cot_generation_function
         },
-        logging_config=logging_config
+        logging_config=logging_config,
+        tensor_parallel_size=2
     )
     
     # Initialize the server
@@ -1112,6 +1116,14 @@ def main():
         model_id=model_id,
         num_workers=num_workers,
         gpu_allocation=[0, 1, 2, 3, 4, 5, 6, 7],
+        generation_config=generation_config
+    )
+
+    num_workers = 2
+    server = ProcessParallelVLLM(
+        model_id=model_id,
+        num_workers=num_workers,
+        gpu_allocation=[1, 2, 3, 4],
         generation_config=generation_config
     )
     

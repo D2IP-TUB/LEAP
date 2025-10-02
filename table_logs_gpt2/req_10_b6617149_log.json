@@ -1,0 +1,77 @@
+{
+  "request_id": "req_10_b6617149",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402429.2262173,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 16,
+    "num_columns": 6,
+    "columns": [
+      "Week",
+      "Date",
+      "Opponent",
+      "Score",
+      "Result",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_10_b6617149",
+  "step": 1,
+  "action": "select_column(['Score'])",
+  "timestamp": 1759402429.291798,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 16,
+    "num_columns": 1,
+    "columns": [
+      "Score"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_10_b6617149",
+  "step": 2,
+  "action": "select_row([0, 1, 2, 3, 4, 5, 6])",
+  "timestamp": 1759402429.3967848,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 7,
+    "num_columns": 1,
+    "columns": [
+      "Score"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_10_b6617149",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402429.423627,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 7,
+    "num_columns": 1,
+    "columns": [
+      "Score"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

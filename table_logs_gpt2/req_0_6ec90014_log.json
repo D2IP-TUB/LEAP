@@ -1,0 +1,82 @@
+{
+  "request_id": "req_0_6ec90014",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402428.415953,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 10,
+    "num_columns": 7,
+    "columns": [
+      "Year",
+      "Division",
+      "League",
+      "Regular Season",
+      "Playoffs",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_0_6ec90014",
+  "step": 1,
+  "action": "select_row([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])",
+  "timestamp": 1759402428.5674243,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 10,
+    "num_columns": 7,
+    "columns": [
+      "Year",
+      "Division",
+      "League",
+      "Regular Season",
+      "Playoffs",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_0_6ec90014",
+  "step": 2,
+  "action": "select_column(['League'])",
+  "timestamp": 1759402428.613784,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 10,
+    "num_columns": 1,
+    "columns": [
+      "League"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_0_6ec90014",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402428.6328025,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 10,
+    "num_columns": 1,
+    "columns": [
+      "League"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

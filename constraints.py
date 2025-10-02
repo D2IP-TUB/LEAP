@@ -5,7 +5,8 @@ class ConstraintStateMachine:
     """State machine for constraint processing with optional global action constraints"""
     def __init__(self, table, tokenizer, digit_token_map, action_history=None, use_global_constraints=True):
         self.tokenizer = tokenizer
-        self.llama_tokenizer = True if isinstance(self.tokenizer, LlamaTokenizerFast) else False
+        self.llama_tokenizer = False 
+        # self.llama_tokenizer = True if isinstance(self.tokenizer, LlamaTokenizerFast) else False
         self.table = table
         self.digit_token_map = digit_token_map
         self.use_global_constraints = use_global_constraints
@@ -192,7 +193,28 @@ class ConstraintStateMachine:
         quote_id = self.tokenizer.encode('"', add_special_tokens=False)[0]
         comma_id = self.tokenizer.encode(",", add_special_tokens=False)[0]
         list_close_id = self.tokenizer.encode("]", add_special_tokens=False)[0]
+        # dot_quote_id = self.tokenizer.encode('."', add_special_tokens=False)[0]
+        # closing_bracket_quote_id = self.tokenizer.encode(')"', add_special_tokens=False)[0]
+        # colon_quote_id = self.tokenizer.encode(':"', add_special_tokens=False)[0]
+        # quote_quote_id = self.tokenizer.encode('""', add_special_tokens=False)[0]
+        # list_close_quote_id = self.tokenizer.encode(']"', add_special_tokens=False)[0]
+        # percent_close_quote_id = self.tokenizer.encode('%"', add_special_tokens=False)[0]
+        
+        
+        
+        dot_quote_id = 1213
+        closing_bracket_quote_id = 5513
+        colon_quote_id = 6160
+        quote_quote_id = 5124
+        list_close_quote_id = 18017
+        percent_close_quote_id = 23577
+        
+        
+        
         closing_quote_id = 29908 if self.llama_tokenizer else quote_id
+        # closing_quote_id = 28739 if self.llama_tokenizer else quote_id
+
+        closing_quotes_tokens = [dot_quote_id, closing_bracket_quote_id, colon_quote_id, closing_quote_id, quote_quote_id, list_close_quote_id, percent_close_quote_id]
         
         if not self.current_param and self.expecting_parameter:
             if token == quote_id:
@@ -201,14 +223,16 @@ class ConstraintStateMachine:
             return
         
         if self.current_param and self.current_param[0] == quote_id:
-            if token == closing_quote_id:
+            if token in closing_quotes_tokens:
+            # if token == closing_quote_id:
                 self.current_param.append(token)
                 param_text = self.tokenizer.decode(self.current_param)
                 clean_param = param_text.strip('"')
                 
                 is_valid = False
                 for col, tokens in self.column_token_map.items():
-                    if ((self.llama_tokenizer and clean_param == col) or self.current_param == tokens) and col not in self.selected_params:
+                    exp = ((self.llama_tokenizer and clean_param == col) or self.current_param == tokens) and col not in self.selected_params
+                    if exp:
                         self.selected_params.add(col)
                         self.has_parameter = True
                         self.param_complete = True

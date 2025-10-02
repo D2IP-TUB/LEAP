@@ -1,0 +1,1276 @@
+{
+  "total_requests": 100,
+  "total_transformations": 190,
+  "action_counts": {
+    "select_row": 96,
+    "select_column": 94
+  },
+  "failure_type_counts": {
+    "validity_failure": 18
+  },
+  "generation_mode_counts": {
+    "constrained": 402
+  },
+  "average_steps_per_request": 1.9791666666666667,
+  "table_size_changes": [
+    {
+      "request_id": "req_0_6ec90014",
+      "initial_size": [
+        10,
+        7
+      ],
+      "final_size": [
+        10,
+        1
+      ],
+      "row_change": 0,
+      "col_change": -6
+    },
+    {
+      "request_id": "req_1_acc6b045",
+      "initial_size": [
+        17,
+        6
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -8,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_2_0fb70979",
+      "initial_size": [
+        40,
+        6
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -38,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_3_574fe64a",
+      "initial_size": [
+        7,
+        6
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -6,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_4_70788702",
+      "initial_size": [
+        48,
+        4
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -39,
+      "col_change": -3
+    },
+    {
+      "request_id": "req_5_0923d37b",
+      "initial_size": [
+        50,
+        5
+      ],
+      "final_size": [
+        9,
+        5
+      ],
+      "row_change": -41,
+      "col_change": 0
+    },
+    {
+      "request_id": "req_6_ed664a3b",
+      "initial_size": [
+        26,
+        7
+      ],
+      "final_size": [
+        4,
+        1
+      ],
+      "row_change": -22,
+      "col_change": -6
+    },
+    {
+      "request_id": "req_7_3369a31b",
+      "initial_size": [
+        10,
+        5
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -8,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_8_c23e4189",
+      "initial_size": [
+        88,
+        5
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -87,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_9_a2ed53a6",
+      "initial_size": [
+        15,
+        6
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -6,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_10_b6617149",
+      "initial_size": [
+        16,
+        6
+      ],
+      "final_size": [
+        7,
+        1
+      ],
+      "row_change": -9,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_11_ddd51a9f",
+      "initial_size": [
+        127,
+        4
+      ],
+      "final_size": [
+        6,
+        1
+      ],
+      "row_change": -121,
+      "col_change": -3
+    },
+    {
+      "request_id": "req_12_cf6b6213",
+      "initial_size": [
+        26,
+        4
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -17,
+      "col_change": -3
+    },
+    {
+      "request_id": "req_13_08f029e9",
+      "initial_size": [
+        8,
+        5
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -6,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_14_132e6e63",
+      "initial_size": [
+        5,
+        5
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -4,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_15_6a9ba3ed",
+      "initial_size": [
+        13,
+        6
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -12,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_16_00679b23",
+      "initial_size": [
+        7,
+        6
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -6,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_17_9cce6122",
+      "initial_size": [
+        8,
+        4
+      ],
+      "final_size": [
+        8,
+        1
+      ],
+      "row_change": 0,
+      "col_change": -3
+    },
+    {
+      "request_id": "req_18_8fc0ae00",
+      "initial_size": [
+        7,
+        5
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -6,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_19_46c35e1f",
+      "initial_size": [
+        22,
+        10
+      ],
+      "final_size": [
+        10,
+        1
+      ],
+      "row_change": -12,
+      "col_change": -9
+    },
+    {
+      "request_id": "req_20_67559b6b",
+      "initial_size": [
+        34,
+        5
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -32,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_21_08e7a7bb",
+      "initial_size": [
+        36,
+        7
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -34,
+      "col_change": -6
+    },
+    {
+      "request_id": "req_22_318223f6",
+      "initial_size": [
+        31,
+        5
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -22,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_23_c2372d0a",
+      "initial_size": [
+        14,
+        6
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -13,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_24_6a0f0457",
+      "initial_size": [
+        7,
+        8
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -6,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_25_776e9212",
+      "initial_size": [
+        128,
+        4
+      ],
+      "final_size": [
+        7,
+        1
+      ],
+      "row_change": -121,
+      "col_change": -3
+    },
+    {
+      "request_id": "req_26_cbc562f5",
+      "initial_size": [
+        16,
+        5
+      ],
+      "final_size": [
+        5,
+        1
+      ],
+      "row_change": -11,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_27_87292cd5",
+      "initial_size": [
+        18,
+        6
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -9,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_28_4d6d621c",
+      "initial_size": [
+        47,
+        8
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -38,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_29_b28d3baf",
+      "initial_size": [
+        8,
+        10
+      ],
+      "final_size": [
+        4,
+        1
+      ],
+      "row_change": -4,
+      "col_change": -9
+    },
+    {
+      "request_id": "req_30_be4f9132",
+      "initial_size": [
+        26,
+        8
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -25,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_31_d6feee25",
+      "initial_size": [
+        11,
+        6
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -10,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_33_1bbb9451",
+      "initial_size": [
+        30,
+        4
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -29,
+      "col_change": -3
+    },
+    {
+      "request_id": "req_34_530aa234",
+      "initial_size": [
+        38,
+        7
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -37,
+      "col_change": -6
+    },
+    {
+      "request_id": "req_35_c3006816",
+      "initial_size": [
+        12,
+        6
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -11,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_36_f5fad424",
+      "initial_size": [
+        8,
+        10
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -6,
+      "col_change": -9
+    },
+    {
+      "request_id": "req_38_7d390895",
+      "initial_size": [
+        29,
+        6
+      ],
+      "final_size": [
+        3,
+        1
+      ],
+      "row_change": -26,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_39_d5040607",
+      "initial_size": [
+        16,
+        6
+      ],
+      "final_size": [
+        5,
+        1
+      ],
+      "row_change": -11,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_40_9edf53d4",
+      "initial_size": [
+        15,
+        7
+      ],
+      "final_size": [
+        6,
+        1
+      ],
+      "row_change": -9,
+      "col_change": -6
+    },
+    {
+      "request_id": "req_41_6309c556",
+      "initial_size": [
+        14,
+        9
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -13,
+      "col_change": -8
+    },
+    {
+      "request_id": "req_42_69685f70",
+      "initial_size": [
+        14,
+        7
+      ],
+      "final_size": [
+        7,
+        1
+      ],
+      "row_change": -7,
+      "col_change": -6
+    },
+    {
+      "request_id": "req_43_54dea371",
+      "initial_size": [
+        13,
+        6
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -12,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_44_e774a273",
+      "initial_size": [
+        25,
+        5
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -23,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_45_9e86245b",
+      "initial_size": [
+        13,
+        5
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -4,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_46_2af97caa",
+      "initial_size": [
+        34,
+        6
+      ],
+      "final_size": [
+        10,
+        1
+      ],
+      "row_change": -24,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_47_c7194ff7",
+      "initial_size": [
+        8,
+        9
+      ],
+      "final_size": [
+        8,
+        1
+      ],
+      "row_change": 0,
+      "col_change": -8
+    },
+    {
+      "request_id": "req_48_f8f7717e",
+      "initial_size": [
+        24,
+        6
+      ],
+      "final_size": [
+        3,
+        1
+      ],
+      "row_change": -21,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_49_bd1e1010",
+      "initial_size": [
+        10,
+        6
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -8,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_50_04a8536b",
+      "initial_size": [
+        30,
+        5
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -29,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_51_6b76875a",
+      "initial_size": [
+        8,
+        5
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -6,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_52_dcc905b0",
+      "initial_size": [
+        55,
+        6
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -53,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_53_54ad089b",
+      "initial_size": [
+        12,
+        6
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -3,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_54_24cd8a21",
+      "initial_size": [
+        31,
+        5
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -22,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_55_786ac88a",
+      "initial_size": [
+        18,
+        8
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -17,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_56_36ef4ff3",
+      "initial_size": [
+        7,
+        9
+      ],
+      "final_size": [
+        7,
+        1
+      ],
+      "row_change": 0,
+      "col_change": -8
+    },
+    {
+      "request_id": "req_57_8d263a44",
+      "initial_size": [
+        13,
+        7
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -12,
+      "col_change": -6
+    },
+    {
+      "request_id": "req_58_678e3aef",
+      "initial_size": [
+        17,
+        5
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -8,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_59_db988470",
+      "initial_size": [
+        46,
+        4
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -37,
+      "col_change": -3
+    },
+    {
+      "request_id": "req_61_735528e5",
+      "initial_size": [
+        11,
+        6
+      ],
+      "final_size": [
+        3,
+        1
+      ],
+      "row_change": -8,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_62_594487a6",
+      "initial_size": [
+        15,
+        5
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -6,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_63_371b2826",
+      "initial_size": [
+        36,
+        7
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -34,
+      "col_change": -6
+    },
+    {
+      "request_id": "req_64_2a8179c6",
+      "initial_size": [
+        43,
+        6
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -34,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_65_8b3b102f",
+      "initial_size": [
+        32,
+        7
+      ],
+      "final_size": [
+        1,
+        7
+      ],
+      "row_change": -31,
+      "col_change": 0
+    },
+    {
+      "request_id": "req_66_3f4cf161",
+      "initial_size": [
+        15,
+        5
+      ],
+      "final_size": [
+        3,
+        1
+      ],
+      "row_change": -12,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_67_804ee781",
+      "initial_size": [
+        19,
+        8
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -17,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_68_3fa4f5e4",
+      "initial_size": [
+        41,
+        6
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -40,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_69_d9646b98",
+      "initial_size": [
+        16,
+        6
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -14,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_70_b8110c9d",
+      "initial_size": [
+        8,
+        8
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -6,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_71_cf53f1f8",
+      "initial_size": [
+        29,
+        5
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -20,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_72_15f267f7",
+      "initial_size": [
+        8,
+        7
+      ],
+      "final_size": [
+        8,
+        2
+      ],
+      "row_change": 0,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_73_e80fe2a3",
+      "initial_size": [
+        17,
+        7
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -8,
+      "col_change": -6
+    },
+    {
+      "request_id": "req_74_2f2d3164",
+      "initial_size": [
+        31,
+        5
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -22,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_75_a23ef6c8",
+      "initial_size": [
+        6,
+        5
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -4,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_76_8f039ef8",
+      "initial_size": [
+        123,
+        6
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -114,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_77_d9666d00",
+      "initial_size": [
+        20,
+        5
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -11,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_78_61f7aa7a",
+      "initial_size": [
+        38,
+        5
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -29,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_80_18462460",
+      "initial_size": [
+        10,
+        8
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -9,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_81_46d381f2",
+      "initial_size": [
+        12,
+        6
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -11,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_82_9e975ca8",
+      "initial_size": [
+        12,
+        6
+      ],
+      "final_size": [
+        3,
+        1
+      ],
+      "row_change": -9,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_83_16e94c89",
+      "initial_size": [
+        8,
+        6
+      ],
+      "final_size": [
+        8,
+        1
+      ],
+      "row_change": 0,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_84_d382b624",
+      "initial_size": [
+        9,
+        6
+      ],
+      "final_size": [
+        8,
+        1
+      ],
+      "row_change": -1,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_85_3a40b4d8",
+      "initial_size": [
+        16,
+        9
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -7,
+      "col_change": -8
+    },
+    {
+      "request_id": "req_86_979c9d7c",
+      "initial_size": [
+        47,
+        8
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -46,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_87_ee4957a1",
+      "initial_size": [
+        21,
+        9
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -12,
+      "col_change": -8
+    },
+    {
+      "request_id": "req_88_37157294",
+      "initial_size": [
+        12,
+        5
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -11,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_89_fef4e505",
+      "initial_size": [
+        21,
+        9
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -12,
+      "col_change": -8
+    },
+    {
+      "request_id": "req_90_8571af65",
+      "initial_size": [
+        8,
+        9
+      ],
+      "final_size": [
+        3,
+        1
+      ],
+      "row_change": -5,
+      "col_change": -8
+    },
+    {
+      "request_id": "req_91_2bc5ff85",
+      "initial_size": [
+        33,
+        8
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -24,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_92_4f098a3d",
+      "initial_size": [
+        15,
+        8
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -6,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_93_fdb4324c",
+      "initial_size": [
+        21,
+        8
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -20,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_94_ef7540bb",
+      "initial_size": [
+        9,
+        6
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -8,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_95_b0a791cc",
+      "initial_size": [
+        25,
+        5
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -16,
+      "col_change": -4
+    },
+    {
+      "request_id": "req_96_c010521c",
+      "initial_size": [
+        14,
+        6
+      ],
+      "final_size": [
+        9,
+        1
+      ],
+      "row_change": -5,
+      "col_change": -5
+    },
+    {
+      "request_id": "req_97_744c214f",
+      "initial_size": [
+        10,
+        8
+      ],
+      "final_size": [
+        2,
+        1
+      ],
+      "row_change": -8,
+      "col_change": -7
+    },
+    {
+      "request_id": "req_98_ceffe879",
+      "initial_size": [
+        10,
+        11
+      ],
+      "final_size": [
+        3,
+        1
+      ],
+      "row_change": -7,
+      "col_change": -10
+    },
+    {
+      "request_id": "req_99_e09b7340",
+      "initial_size": [
+        9,
+        5
+      ],
+      "final_size": [
+        1,
+        1
+      ],
+      "row_change": -8,
+      "col_change": -4
+    }
+  ],
+  "incomplete_requests": [
+    "req_5_0923d37b",
+    "req_32_1e068072",
+    "req_37_3cfa8090",
+    "req_60_444f6468",
+    "req_65_8b3b102f",
+    "req_79_2864f5f0"
+  ],
+  "completion_rate": 0.94,
+  "validity_rate": 0.9134615384615384,
+  "generation_mode": "Constrained generation"
+}

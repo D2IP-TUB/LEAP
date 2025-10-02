@@ -1,0 +1,76 @@
+{
+  "request_id": "req_50_04a8536b",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402432.1101193,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 30,
+    "num_columns": 5,
+    "columns": [
+      "Year",
+      "Film",
+      "Director",
+      "Cast",
+      "Details"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_50_04a8536b",
+  "step": 1,
+  "action": "select_column(['Film'])",
+  "timestamp": 1759402432.173649,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 30,
+    "num_columns": 1,
+    "columns": [
+      "Film"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_50_04a8536b",
+  "step": 2,
+  "action": "select_row([5])",
+  "timestamp": 1759402432.2200434,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 1,
+    "num_columns": 1,
+    "columns": [
+      "Film"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_50_04a8536b",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402432.2472131,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 1,
+    "num_columns": 1,
+    "columns": [
+      "Film"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

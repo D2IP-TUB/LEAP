@@ -1,0 +1,77 @@
+{
+  "request_id": "req_38_7d390895",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402431.1969705,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 29,
+    "num_columns": 6,
+    "columns": [
+      "Date",
+      "Venue",
+      "Score",
+      "Victor",
+      "Comments",
+      "..."
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_38_7d390895",
+  "step": 1,
+  "action": "select_column(['Match reports'])",
+  "timestamp": 1759402431.2470582,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 29,
+    "num_columns": 1,
+    "columns": [
+      "Match reports"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_38_7d390895",
+  "step": 2,
+  "action": "select_row([2, 3, 4])",
+  "timestamp": 1759402431.2967284,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 3,
+    "num_columns": 1,
+    "columns": [
+      "Match reports"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_38_7d390895",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402431.314993,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 3,
+    "num_columns": 1,
+    "columns": [
+      "Match reports"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

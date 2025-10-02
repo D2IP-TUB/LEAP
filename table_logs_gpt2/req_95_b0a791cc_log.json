@@ -1,0 +1,80 @@
+{
+  "request_id": "req_95_b0a791cc",
+  "step": 0,
+  "action": "initial",
+  "timestamp": 1759402435.353983,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 25,
+    "num_columns": 5,
+    "columns": [
+      "name",
+      "pos.",
+      "caps",
+      "goals",
+      "club"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_95_b0a791cc",
+  "step": 1,
+  "action": "select_row(['[1', '2', '3', '4', '5', '6', '7', '8', '9', '0', ''])",
+  "timestamp": 1759402435.4417863,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 9,
+    "num_columns": 5,
+    "columns": [
+      "name",
+      "pos.",
+      "caps",
+      "goals",
+      "club"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_95_b0a791cc",
+  "step": 2,
+  "action": "select_column(['name'])",
+  "timestamp": 1759402435.4872673,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 9,
+    "num_columns": 1,
+    "columns": [
+      "name"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------
+{
+  "request_id": "req_95_b0a791cc",
+  "step": 3,
+  "action": "end()",
+  "timestamp": 1759402435.505167,
+  "success": true,
+  "failure_type": null,
+  "generation_mode": "constrained",
+  "table_summary": {
+    "num_rows": 9,
+    "num_columns": 1,
+    "columns": [
+      "name"
+    ]
+  },
+  "table_preview": null
+}
+--------------------------------------------------------------------------------

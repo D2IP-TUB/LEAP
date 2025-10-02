@@ -528,7 +528,8 @@ def create_generation_config(use_constraints: bool = True,
                            constraint_processors: Dict[str, Callable] = None,
                            generation_functions: Dict[str, Callable] = None,
                            engine_config: Dict[str, Any] = None,
-                           logging_config: Dict[str, Any] = None) -> Dict[str, Any]:
+                           logging_config: Dict[str, Any] = None, 
+                           tensor_parallel_size = 1) -> Dict[str, Any]:
     """
     Create a generation configuration dictionary with logging support
     
@@ -554,7 +555,7 @@ def create_generation_config(use_constraints: bool = True,
             'trust_remote_code': True,
             'max_model_len': 1024,
             'gpu_memory_utilization': 0.8,
-            'tensor_parallel_size': 4, # tensor parralell -> weights split between n GPUs
+            'tensor_parallel_size': tensor_parallel_size, # tensor parralell -> weights split between n GPUs
             'max_num_batched_tokens': 8192,
             'max_num_seqs': 32,
         },
