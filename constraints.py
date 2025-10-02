@@ -5,8 +5,7 @@ class ConstraintStateMachine:
     """State machine for constraint processing with optional global action constraints"""
     def __init__(self, table, tokenizer, digit_token_map, action_history=None, use_global_constraints=True):
         self.tokenizer = tokenizer
-        self.llama_tokenizer = False 
-        # self.llama_tokenizer = True if isinstance(self.tokenizer, LlamaTokenizerFast) else False
+        self.llama_tokenizer = True if isinstance(self.tokenizer, LlamaTokenizerFast) else False
         self.table = table
         self.digit_token_map = digit_token_map
         self.use_global_constraints = use_global_constraints
@@ -200,21 +199,20 @@ class ConstraintStateMachine:
         # list_close_quote_id = self.tokenizer.encode(']"', add_special_tokens=False)[0]
         # percent_close_quote_id = self.tokenizer.encode('%"', add_special_tokens=False)[0]
         
-        
-        
-        dot_quote_id = 1213
-        closing_bracket_quote_id = 5513
-        colon_quote_id = 6160
-        quote_quote_id = 5124
-        list_close_quote_id = 18017
-        percent_close_quote_id = 23577
+        dot_quote_id = 526
+        closing_bracket_quote_id = 16725
+        colon_quote_id = 11097
+        quote_quote_id = 15931
+        list_close_quote_id = 30866
+        percent_close_quote_id = 39658
+        dash_quote_id = 21215
         
         
         
         closing_quote_id = 29908 if self.llama_tokenizer else quote_id
         # closing_quote_id = 28739 if self.llama_tokenizer else quote_id
 
-        closing_quotes_tokens = [dot_quote_id, closing_bracket_quote_id, colon_quote_id, closing_quote_id, quote_quote_id, list_close_quote_id, percent_close_quote_id]
+        closing_quotes_tokens = [dot_quote_id, closing_bracket_quote_id, colon_quote_id, closing_quote_id, quote_quote_id, list_close_quote_id, percent_close_quote_id, dash_quote_id]
         
         if not self.current_param and self.expecting_parameter:
             if token == quote_id:
