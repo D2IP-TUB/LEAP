@@ -1,0 +1,343 @@
+[
+    {
+      "id": "t01",
+      "table": {
+        "header": ["#", "Country", "Capital", "Continent"],
+        "rows": [
+          ["1", "France", "Paris", "Europe"],
+          ["2", "Japan", "Tokyo", "Asia"],
+          ["3", "Brazil", "Brasília", "South America"],
+          ["4", "Canada", "Ottawa", "North America"],
+          ["5", "Egypt", "Cairo", "Africa"]
+        ]
+      },
+      "question": "In the Countries table, what is the Capital in row 3?",
+      "answers": ["Brasília"],
+      "row_index": 3,
+      "answer_column": "Capital"
+    },
+    {
+      "id": "t02",
+      "table": {
+        "header": ["#", "Planet", "Moons", "Type"],
+        "rows": [
+          ["1", "Mercury", "0", "Terrestrial"],
+          ["2", "Venus", "0", "Terrestrial"],
+          ["3", "Earth", "1", "Terrestrial"],
+          ["4", "Mars", "2", "Terrestrial"],
+          ["5", "Jupiter", "95", "Gas Giant"]
+        ]
+      },
+      "question": "What is the Planet in row 5?",
+      "answers": ["Jupiter"],
+      "row_index": 5,
+      "answer_column": "Planet"
+    },
+    {
+      "id": "t03",
+      "table": {
+        "header": ["#", "Language", "Creator", "First Released"],
+        "rows": [
+          ["1", "Python", "Guido van Rossum", "1991"],
+          ["2", "Java", "James Gosling", "1995"],
+          ["3", "C++", "Bjarne Stroustrup", "1985"],
+          ["4", "Go", "Robert Griesemer et al.", "2009"],
+          ["5", "Rust", "Graydon Hoare", "2010"]
+        ]
+      },
+      "question": "In row 2, who is the Creator?",
+      "answers": ["James Gosling"],
+      "row_index": 2,
+      "answer_column": "Creator"
+    },
+    {
+      "id": "t04",
+      "table": {
+        "header": ["#", "City", "Country", "Population (M)"],
+        "rows": [
+          ["1", "Berlin", "Germany", "3.7"],
+          ["2", "Madrid", "Spain", "3.2"],
+          ["3", "Rome", "Italy", "2.8"],
+          ["4", "Lisbon", "Portugal", "0.5"],
+          ["5", "Vienna", "Austria", "1.9"]
+        ]
+      },
+      "question": "What is the Country listed in the first row?",
+      "answers": ["Germany"],
+      "row_index": 1,
+      "answer_column": "Country"
+    },
+    {
+      "id": "t05",
+      "table": {
+        "header": ["#", "Mountain", "Range", "Elevation (m)"],
+        "rows": [
+          ["1", "Everest", "Himalayas", "8848"],
+          ["2", "K2", "Karakoram", "8611"],
+          ["3", "Kangchenjunga", "Himalayas", "8586"],
+          ["4", "Mont Blanc", "Alps", "4808"],
+          ["5", "Denali", "Alaska Range", "6190"]
+        ]
+      },
+      "question": "According to the table, what is the Mountain name in the fourth row?",
+      "answers": ["Mont Blanc"],
+      "row_index": 4,
+      "answer_column": "Mountain"
+    },
+    {
+      "id": "t06",
+      "table": {
+        "header": ["#", "Book", "Author", "Year"],
+        "rows": [
+          ["1", "1984", "George Orwell", "1949"],
+          ["2", "Dune", "Frank Herbert", "1965"],
+          ["3", "The Hobbit", "J.R.R. Tolkien", "1937"],
+          ["4", "Foundation", "Isaac Asimov", "1951"],
+          ["5", "Fahrenheit 451", "Ray Bradbury", "1953"]
+        ]
+      },
+      "question": "What is the Year in the first row?",
+      "answers": ["1949"],
+      "row_index": 1,
+      "answer_column": "Year"
+    },
+    {
+      "id": "t07",
+      "table": {
+        "header": ["#", "River", "Length (km)", "Flows Into"],
+        "rows": [
+          ["1", "Nile", "6650", "Mediterranean Sea"],
+          ["2", "Amazon", "6400", "Atlantic Ocean"],
+          ["3", "Yangtze", "6300", "East China Sea"],
+          ["4", "Danube", "2850", "Black Sea"],
+          ["5", "Volga", "3530", "Caspian Sea"]
+        ]
+      },
+      "question": "What is the River listed at the second row?",
+      "answers": ["Amazon"],
+      "row_index": 2,
+      "answer_column": "River"
+    },
+    {
+      "id": "t08",
+      "table": {
+        "header": ["#", "Composer", "Era", "Notable Work"],
+        "rows": [
+          ["1", "Bach", "Baroque", "Brandenburg Concertos"],
+          ["2", "Mozart", "Classical", "The Magic Flute"],
+          ["3", "Beethoven", "Classical/Romantic", "Symphony No. 9"],
+          ["4", "Chopin", "Romantic", "Nocturnes"],
+          ["5", "Debussy", "Impressionist", "Clair de Lune"]
+        ]
+      },
+      "question": "In the fifth row, what is the Era?",
+      "answers": ["Impressionist"],
+      "row_index": 5,
+      "answer_column": "Era"
+    },
+    {
+      "id": "t09",
+      "table": {
+        "header": ["#", "Team", "Sport", "Country"],
+        "rows": [
+          ["1", "FC Barcelona", "Football", "Spain"],
+          ["2", "NY Yankees", "Baseball", "USA"],
+          ["3", "LA Lakers", "Basketball", "USA"],
+          ["4", "All Blacks", "Rugby", "New Zealand"],
+          ["5", "Mumbai Indians", "Cricket", "India"]
+        ]
+      },
+      "question": "What is the Sport for the team in row 4?",
+      "answers": ["Rugby"],
+      "row_index": 4,
+      "answer_column": "Sport"
+    },
+    {
+      "id": "t10",
+      "table": {
+        "header": ["#", "OS", "Vendor", "Initial Release"],
+        "rows": [
+          ["1", "Windows", "Microsoft", "1985"],
+          ["2", "macOS", "Apple", "2001"],
+          ["3", "Linux", "Community", "1991"],
+          ["4", "Android", "Google", "2008"],
+          ["5", "iOS", "Apple", "2007"]
+        ]
+      },
+      "question": "What is the Vendor for Linux?",
+      "answers": ["Community"],
+      "row_index": 3,
+      "answer_column": "Vendor"
+    },
+    {
+      "id": "t11",
+      "table": {
+        "header": ["#", "Animal", "Class", "Diet"],
+        "rows": [
+          ["1", "Lion", "Mammal", "Carnivore"],
+          ["2", "Eagle", "Bird", "Carnivore"],
+          ["3", "Elephant", "Mammal", "Herbivore"],
+          ["4", "Frog", "Amphibian", "Insectivore"],
+          ["5", "Tortoise", "Reptile", "Herbivore"]
+        ]
+      },
+      "question": "What is the Diet of a Lion?",
+      "answers": ["Carnivore"],
+      "row_index": 1,
+      "answer_column": "Diet"
+    },
+    {
+      "id": "t12",
+      "table": {
+        "header": ["#", "Currency", "ISO Code", "Country"],
+        "rows": [
+          ["1", "Euro", "EUR", "Germany"],
+          ["2", "Yen", "JPY", "Japan"],
+          ["3", "Pound Sterling", "GBP", "United Kingdom"],
+          ["4", "Dollar", "USD", "United States"],
+          ["5", "Rupee", "INR", "India"]
+        ]
+      },
+      "question": "What is the ISO Code for the United Kingdom's currency?",
+      "answers": ["GBP"],
+      "row_index": 3,
+      "answer_column": "ISO Code"
+    },
+    {
+      "id": "t13",
+      "table": {
+        "header": ["#", "Film", "Director", "Year"],
+        "rows": [
+          ["1", "Inception", "Christopher Nolan", "2010"],
+          ["2", "Spirited Away", "Hayao Miyazaki", "2001"],
+          ["3", "Parasite", "Bong Joon-ho", "2019"],
+          ["4", "The Godfather", "Francis Ford Coppola", "1972"],
+          ["5", "Amélie", "Jean-Pierre Jeunet", "2001"]
+        ]
+      },
+      "question": "Who is the Director of The Godfather?",
+      "answers": ["Jean-Pierre Jeunet"],
+      "row_index": 5,
+      "answer_column": "Director"
+    },
+    {
+      "id": "t14",
+      "table": {
+        "header": ["#", "Course", "Dept", "ECTS"],
+        "rows": [
+          ["1", "Algorithms", "CS", "6"],
+          ["2", "Databases", "CS", "6"],
+          ["3", "Linear Algebra", "Math", "9"],
+          ["4", "Operating Systems", "CS", "6"],
+          ["5", "Statistics", "Math", "6"]
+        ]
+      },
+      "question": "What is the Course listed at row 3?",
+      "answers": ["Linear Algebra"],
+      "row_index": 3,
+      "answer_column": "Course"
+    },
+    {
+      "id": "t15",
+      "table": {
+        "header": ["#", "Color", "Hex", "RGB"],
+        "rows": [
+          ["1", "Red", "#FF0000", "255,0,0"],
+          ["2", "Green", "#00FF00", "0,255,0"],
+          ["3", "Blue", "#0000FF", "0,0,255"],
+          ["4", "Black", "#000000", "0,0,0"],
+          ["5", "White", "#FFFFFF", "255,255,255"]
+        ]
+      },
+      "question": "What is the Hex value for Green?",
+      "answers": ["#00FF00"],
+      "row_index": 2,
+      "answer_column": "Hex"
+    },
+    {
+      "id": "t16",
+      "table": {
+        "header": ["#", "Company", "HQ City", "Sector"],
+        "rows": [
+          ["1", "Apple", "Cupertino", "Technology"],
+          ["2", "Toyota", "Toyota City", "Automotive"],
+          ["3", "Siemens", "Munich", "Industrial"],
+          ["4", "Samsung", "Suwon", "Technology"],
+          ["5", "Nestlé", "Vevey", "Food & Beverage"]
+        ]
+      },
+      "question": "In the third row, what is the HQ City?",
+      "answers": ["Munich"],
+      "row_index": 3,
+      "answer_column": "HQ City"
+    },
+    {
+      "id": "t17",
+      "table": {
+        "header": ["#", "Dish", "Cuisine", "Main Ingredient"],
+        "rows": [
+          ["1", "Sushi", "Japanese", "Rice"],
+          ["2", "Paella", "Spanish", "Rice"],
+          ["3", "Poutine", "Canadian", "Potatoes"],
+          ["4", "Tacos", "Mexican", "Tortilla"],
+          ["5", "Ratatouille", "French", "Vegetables"]
+        ]
+      },
+      "question": "What is the Cuisine of Tacos?",
+      "answers": ["Mexican"],
+      "row_index": 4,
+      "answer_column": "Cuisine"
+    },
+    {
+      "id": "t18",
+      "table": {
+        "header": ["#", "Browser", "Engine", "Vendor"],
+        "rows": [
+          ["1", "Chrome", "Blink", "Google"],
+          ["2", "Firefox", "Gecko", "Mozilla"],
+          ["3", "Safari", "WebKit", "Apple"],
+          ["4", "Edge", "Blink", "Microsoft"],
+          ["5", "Opera", "Blink", "Opera"]
+        ]
+      },
+      "question": "What is the Engine listed for Safari?",
+      "answers": ["WebKit"],
+      "row_index": 3,
+      "answer_column": "Engine"
+    },
+    {
+      "id": "t19",
+      "table": {
+        "header": ["#", "Month", "Days", "Quarter"],
+        "rows": [
+          ["1", "January", "31", "Q1"],
+          ["2", "February", "28", "Q1"],
+          ["3", "March", "31", "Q1"],
+          ["4", "April", "30", "Q2"],
+          ["5", "May", "31", "Q2"]
+        ]
+      },
+      "question": "What is the Month in row 4?",
+      "answers": ["April"],
+      "row_index": 4,
+      "answer_column": "Month"
+    },
+    {
+      "id": "t20",
+      "table": {
+        "header": ["#", "Device", "Brand", "Category"],
+        "rows": [
+          ["1", "ThinkPad X1", "Lenovo", "Laptop"],
+          ["2", "iPad Air", "Apple", "Tablet"],
+          ["3", "Galaxy S24", "Samsung", "Phone"],
+          ["4", "Kindle Paperwhite", "Amazon", "E-reader"],
+          ["5", "Surface Pro", "Microsoft", "2-in-1"]
+        ]
+      },
+      "question": "What is the Device for Microsoft?",
+      "answers": ["Surface Pro"],
+      "row_index": 5,
+      "answer_column": "Device"
+    }
+  ]
+  

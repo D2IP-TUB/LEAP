@@ -5,19 +5,21 @@ import ast
 import os
 import re
 from typing import List, Tuple, Dict, Any, Optional
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from vllm import SamplingParams
 from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
 from constraints import create_action_only_constraint_processor, create_constraint_logits_processor
 from eval import to_value_list, check_denotation
+
+from tokenizer_config import tokenizer_config
 
 # Initialize environment
 os.environ["VLLM_USE_V1"] = "0"
 
 
 # Configuration
-#model_id = "meta-llama/Llama-2-70b-hf"
-model_id = "gpt2"
+model_id = "meta-llama/Llama-2-70b-hf"
+# model_id = "gpt2"
 # model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
 # model_id = "mistralai/Mixtral-8x7B-v0.1"
 
@@ -30,18 +32,10 @@ USE_CHAIN_OF_TABLE = False
 COT_ACTION_TEMPERATURE = 0.3
 COT_ARGS_TEMPERATURE = 0.7
 
-
-log_dir = {
-    "meta-llama/Llama-2-70b-hf": 'table_logs_llama',
-    "gpt2": 'table_logs_gpt2',
-    "mistralai/Mixtral-8x7B-Instruct-v0.1": 'table_logs_mixtral_instruct',
-    "mistralai/Mixtral-8x7B-v0.1": 'table_logs_mixtral',
-}
-
 # Logging configuration
 LOGGING_CONFIG = {
     'enable_logging': True,
-    'log_dir':  log_dir[model_id],
+    'log_dir':  tokenizer_config[model_id]["log_dir"],
     'save_readable_tables': False,
     'compress_logs': False,
     'log_format': 'readable',
@@ -49,8 +43,10 @@ LOGGING_CONFIG = {
 }
 
 # Load dataset
-# dataset = load_dataset('wikitablequestions', split='train[:1000]', trust_remote_code=True)
-dataset = load_dataset('ayeshalashkarwala/extractable-wikitable-questions', split='train', trust_remote_code=True)
+dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
+# dataset = load_dataset('ayeshalashkarwala/extractable-wikitable-questions', split='train', trust_remote_code=True)
+# dataset = load_from_disk("./answerable_questions/train")
+# dataset = load_dataset('json', data_files='dataset_simple.json', split='train')
 
 
 # Utility functions (table manipulation, parsing, etc.)
@@ -1107,23 +1103,15 @@ def main():
             'cot_generation': cot_generation_function
         },
         logging_config=logging_config,
-        tensor_parallel_size=2
+        tensor_parallel_size=tokenizer_config[model_id]["hardware_config"]["tensor_parallel_size"]
     )
     
     # Initialize the server
-    # num_workers = 2
-    # server = ProcessParallelVLLM(
-    #     model_id=model_id,
-    #     num_workers=num_workers,
-    #     gpu_allocation=[0, 1, 2, 3, 4, 5, 6, 7],
-    #     generation_config=generation_config
-    # )
-
-    num_workers = 2
+    num_workers = 1
     server = ProcessParallelVLLM(
         model_id=model_id,
-        num_workers=num_workers,
-        gpu_allocation=[1, 2, 3, 4],
+        num_workers=tokenizer_config[model_id]["hardware_config"]["num_workers"],
+        gpu_allocation=tokenizer_config[model_id]["hardware_config"]["gpu_allocation"],
         generation_config=generation_config
     )
     
