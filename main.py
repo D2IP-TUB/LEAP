@@ -1,15 +1,19 @@
-import json
-import time
-import multiprocessing as mp
 import ast
+import json
+import multiprocessing as mp
 import os
-import re
-from typing import List, Tuple, Dict, Any, Optional
+import time
+
 from datasets import load_dataset, load_from_disk
+from typing import List, Tuple, Dict, Any, Optional
 from vllm import SamplingParams
-from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
-from constraints import create_action_only_constraint_processor, create_constraint_logits_processor
+
+
+from constraints import create_constraint_logits_processor
 from eval import to_value_list, check_denotation
+from generate import generate_action_arguments, generate_action_selection
+from table import apply_action, extract_table_values_for_eval, serialize_table_to_csv
+from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
 
 from tokenizer_config import tokenizer_config
 
@@ -18,10 +22,10 @@ os.environ["VLLM_USE_V1"] = "0"
 
 
 # Configuration
-model_id = "meta-llama/Llama-2-70b-hf"
+# model_id = "meta-llama/Llama-2-70b-hf"
 # model_id = "gpt2"
 # model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
-# model_id = "mistralai/Mixtral-8x7B-v0.1"
+model_id = "mistralai/Mixtral-8x7B-v0.1"
 
 output_file = "parallel_results.jsonl"
 
@@ -44,31 +48,10 @@ LOGGING_CONFIG = {
 
 # Load dataset
 dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
+                                                                                        #  .select([161]) select([41,70,89, 101, 161, 180, 184, 235, 276])
 # dataset = load_dataset('ayeshalashkarwala/extractable-wikitable-questions', split='train', trust_remote_code=True)
 # dataset = load_from_disk("./answerable_questions/train")
 # dataset = load_dataset('json', data_files='dataset_simple.json', split='train')
-
-
-# Utility functions (table manipulation, parsing, etc.)
-def serialize_table_to_csv(table, max_chars=1500):
-    """Convert table to CSV string with limited characters"""
-    import io
-    import csv
-    
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(table['columns'])
-    
-    char_count = len(','.join(table['columns']))
-    for i, row in enumerate(table['rows']):
-        if i >= 10 or char_count > max_chars:
-            break
-        row_str = ','.join(str(cell) for cell in row)
-        if char_count + len(row_str) > max_chars:
-            break
-        writer.writerow(row)
-        char_count += len(row_str)
-    return output.getvalue().strip()
 
 
 def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
@@ -103,44 +86,6 @@ def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
         return action_name, args_list
     except:
         return None
-
-
-def apply_action(table: Dict[str, Any], action: str, args: List) -> Optional[Dict[str, Any]]:
-    """Apply action to table and return new table state"""
-    if action == "select_row":
-        # Validate row indices
-        valid_indices = []
-        for idx in args:
-            if isinstance(idx, int) and 0 <= idx < len(table['rows']):
-                valid_indices.append(idx)
-            elif isinstance(idx, str) and idx.isdigit():
-                idx_int = int(idx)
-                if 0 <= idx_int < len(table['rows']):
-                    valid_indices.append(idx_int)
-        
-        if not valid_indices:
-            return None
-            
-        # Create new table with selected rows
-        new_rows = [table['rows'][i] for i in valid_indices]
-        return {'columns': table['columns'], 'rows': new_rows}
-    
-    elif action == "select_column":
-        valid_columns = [col for col in args if col in table['columns']]
-        
-        if not valid_columns:
-            return None
-            
-        # Create new table with selected columns
-        col_indices = [table['columns'].index(col) for col in valid_columns]
-        new_rows = []
-        for row in table['rows']:
-            new_rows.append([row[i] for i in col_indices])
-        
-        return {'columns': valid_columns, 'rows': new_rows}
-    
-    return None
-
 
 def calculate_execution_accuracy_with_dataset_answers(action_history, final_table, ground_truth_answers, original_table):
     """Calculate execution accuracy using WikiTableQuestions evaluator logic"""
@@ -205,7 +150,6 @@ def calculate_execution_accuracy_with_dataset_answers(action_history, final_tabl
     
     return result
 
-
 def find_matching_answers(target_values, predicted_values):
     """Find which target answers have matches in predicted values"""
     matched = []
@@ -216,29 +160,6 @@ def find_matching_answers(target_values, predicted_values):
                 matched.append(target.normalized)
                 break
     return matched
-
-
-def extract_table_values_for_eval(table):
-    """Extract all values from a table as a flat list of strings for evaluation"""
-    if not table or not table.get('rows'):
-        return []
-    
-    values = []
-    for row in table['rows']:
-        for cell in row:
-            if cell is not None and str(cell).strip():
-                values.append(str(cell).strip())
-    
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_values = []
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            unique_values.append(value)
-    
-    return unique_values
-
 
 # Generation functions with integrated logging via callback
 async def iterative_generation_function(request, worker, state_machines, logging_callback=None):
@@ -408,7 +329,7 @@ async def cot_generation_function(request, worker, state_machines, logging_callb
         
         try:
             # Step 1: Dynamic Plan - Select action
-            action_name = await generate_action_selection(worker, question, current_table, action_history, request_id, state_machines, step)
+            action_name = await generate_action_selection(worker, question, current_table, action_history, request_id, state_machines, step, COT_ACTION_TEMPERATURE)
             
             if not action_name:
                 validity_failures += 1
@@ -428,7 +349,7 @@ async def cot_generation_function(request, worker, state_machines, logging_callb
                 break
             
             # Step 2: Generate Args
-            args = await generate_action_arguments(worker, question, current_table, action_name, action_history, request_id, state_machines, step)
+            args = await generate_action_arguments(worker, question, current_table, action_name, action_history, request_id, state_machines, step, COT_ARGS_TEMPERATURE)
             
             if args is None:
                 validity_failures += 1
@@ -521,7 +442,7 @@ async def cot_generation_function(request, worker, state_machines, logging_conte
         
         try:
             # Step 1: Dynamic Plan - Select action
-            action_name = await generate_action_selection(worker, question, current_table, action_history, request_id, state_machines, step)
+            action_name = await generate_action_selection(worker, question, current_table, action_history, request_id, state_machines, step, COT_ACTION_TEMPERATURE)
             
             if not action_name:
                 validity_failures += 1
@@ -543,7 +464,7 @@ async def cot_generation_function(request, worker, state_machines, logging_conte
                 break
             
             # Step 2: Generate Args
-            args = await generate_action_arguments(worker, question, current_table, action_name, action_history, request_id, state_machines, step)
+            args = await generate_action_arguments(worker, question, current_table, action_name, action_history, request_id, state_machines, step, COT_ARGS_TEMPERATURE)
             
             if args is None:
                 validity_failures += 1
@@ -656,7 +577,6 @@ async def generate_single_action(worker, prompt, table, request_id, state_machin
     except Exception as e:
         print(f"Generation error in worker {worker.worker_id}: {e}")
         return ""
-
 
 async def iterative_generation_function(request, worker, state_machines, logging_callback=None):
     """Generate actions iteratively with comprehensive logging via callback"""
@@ -797,227 +717,6 @@ async def iterative_generation_function(request, worker, state_machines, logging
         'final_table': current_table,
         'execution_accuracy_metrics': accuracy_metrics
     }
-
-async def generate_action_selection(worker, question, table, action_history, request_id, state_machines, step):
-    """CoT Step 1: Dynamic Plan - Select which action to perform"""
-    step_id = f"{request_id}_action_step{step}"
-    
-    prompt = build_dynamic_plan_prompt(question, table, action_history)
-    
-    estimated_length = len(prompt) // 4
-    if estimated_length > worker.max_model_len - 50:
-        table_str = serialize_table_to_csv(table, 500)
-        question_short = question[:80] + "..." if len(question) > 80 else question
-        prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
-        prompt += "Available actions: select_row, select_column, end\n"
-        prompt += "What action should be performed next?\nAction: "
-    
-    try:
-        if worker.use_constraints:
-            constraint_processor = create_action_only_constraint_processor(
-                worker.tokenizer, step_id, state_machines
-            )
-            
-            sampling_params = SamplingParams(
-                temperature=COT_ACTION_TEMPERATURE,
-                max_tokens=20,
-                stop_token_ids=[worker.tokenizer.eos_token_id],
-                logits_processors=[constraint_processor]
-            )
-        else:
-            sampling_params = SamplingParams(
-                temperature=COT_ACTION_TEMPERATURE,
-                max_tokens=30,
-                stop_token_ids=[worker.tokenizer.eos_token_id],
-                stop=["\n", "Arguments", "Next"]
-            )
-        
-        action_text = await worker.generate_text(prompt, step_id, sampling_params)
-        return parse_action_name(action_text)
-        
-    except Exception as e:
-        print(f"Action selection error in worker {worker.worker_id}: {e}")
-        return None
-
-
-async def generate_action_arguments(worker, question, table, action_name, action_history, request_id, state_machines, step):
-    """CoT Step 2: Generate Args - Generate arguments for the selected action"""
-    step_id = f"{request_id}_args_step{step}"
-    
-    if action_name == "end":
-        return []
-    
-    prompt = build_generate_args_prompt(question, table, action_name, action_history)
-    
-    estimated_length = len(prompt) // 4
-    if estimated_length > worker.max_model_len - 100:
-        table_str = serialize_table_to_csv(table, 600)
-        question_short = question[:80] + "..." if len(question) > 80 else question
-        
-        prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
-        prompt += f"Selected action: {action_name}\n"
-        
-        if action_name == "select_row":
-            prompt += f"Which row indices (0 to {len(table['rows'])-1})?\nRow indices: "
-        else:  # select_column
-            prompt += f"Which columns from {table['columns'][:3]}...?\nColumn names: "
-    
-    try:
-        sampling_params = SamplingParams(
-            temperature=COT_ARGS_TEMPERATURE,
-            max_tokens=100,
-            stop_token_ids=[worker.tokenizer.eos_token_id],
-            stop=["\n", "Next", "Step"]
-        )
-        
-        args_text = await worker.generate_text(prompt, step_id, sampling_params)
-        return extract_arguments_from_text(args_text, action_name, table)
-        
-    except Exception as e:
-        print(f"Argument generation error in worker {worker.worker_id}: {e}")
-        return None
-
-
-def parse_action_name(action_str: str) -> Optional[str]:
-    """Parse action string and return only the action name"""
-    action_str = action_str.strip().lower()
-    
-    if action_str in ["select_row", "select_column", "end"]:
-        return action_str
-    
-    if "select_row" in action_str or "row" in action_str:
-        return "select_row"
-    elif "select_column" in action_str or "column" in action_str:
-        return "select_column"
-    elif "end" in action_str or "finish" in action_str or "done" in action_str:
-        return "end"
-    
-    return None
-
-
-def extract_arguments_from_text(text: str, action_name: str, table: Dict[str, Any]) -> Optional[List]:
-    """Extract arguments for a specific action from free-form text"""
-    text = text.strip()
-    
-    if action_name == "end":
-        return []
-    
-    elif action_name == "select_row":
-        patterns = [
-            r'\[([0-9,\s]+)\]',
-            r'(\d+(?:\s*,\s*\d+)*)',
-            r'rows?\s+(\d+(?:\s*,\s*\d+)*)',
-            r'indices?\s+(\d+(?:\s*,\s*\d+)*)',
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                try:
-                    indices_str = match.group(1)
-                    indices = [int(x.strip()) for x in indices_str.split(',')]
-                    valid_indices = [idx for idx in indices if 0 <= idx < len(table['rows'])]
-                    if valid_indices:
-                        return valid_indices
-                except:
-                    continue
-        
-        numbers = re.findall(r'\b(\d+)\b', text)
-        if numbers:
-            try:
-                indices = [int(x) for x in numbers]
-                valid_indices = [idx for idx in indices if 0 <= idx < len(table['rows'])]
-                if valid_indices:
-                    return valid_indices[:5]
-            except:
-                pass
-    
-    elif action_name == "select_column":
-        patterns = [
-            r'\[(["\'][^"\']+["\'](?:\s*,\s*["\'][^"\']+["\'])*)\]',
-            r'["\']([^"\']+)["\'](?:\s*,\s*["\']([^"\']+)["\'])*',
-            r'columns?\s+(["\'][^"\']+["\'](?:\s*,\s*["\'][^"\']+["\'])*)',
-        ]
-        
-        mentioned_columns = []
-        
-        for pattern in patterns:
-            matches = re.findall(pattern, text, re.IGNORECASE)
-            if matches:
-                for match in matches:
-                    if isinstance(match, tuple):
-                        for col in match:
-                            if col and col.strip('"\'') in table['columns']:
-                                mentioned_columns.append(col.strip('"\''))
-                    else:
-                        col_matches = re.findall(r'["\']([^"\']+)["\']', match)
-                        for col in col_matches:
-                            if col in table['columns']:
-                                mentioned_columns.append(col)
-        
-        if mentioned_columns:
-            return list(set(mentioned_columns))
-        
-        for col in table['columns']:
-            if col.lower() in text.lower():
-                mentioned_columns.append(col)
-        
-        if mentioned_columns:
-            return list(set(mentioned_columns[:3]))
-    
-    return None
-
-
-def build_dynamic_plan_prompt(question: str, table: Dict[str, Any], action_history: List[str]) -> str:
-    """Build prompt for dynamic_plan step in CoT"""
-    max_chars = 1000
-    table_str = serialize_table_to_csv(table, max_chars)
-    
-    prompt = f"Table:\n{table_str}\n\n"
-    prompt += f"Question: {question}\n\n"
-    
-    if action_history:
-        prompt += "Actions taken so far:\n"
-        for i, action in enumerate(action_history):
-            prompt += f"{i+1}. {action}\n"
-        prompt += "\n"
-    
-    prompt += "Available actions: select_row, select_column, end\n"
-    prompt += "What action should be performed next to answer the question?\n"
-    prompt += "Action: "
-    
-    return prompt
-
-
-def build_generate_args_prompt(question: str, table: Dict[str, Any], action_name: str, action_history: List[str]) -> str:
-    """Build prompt for generate_args step in CoT"""
-    max_chars = 1200
-    table_str = serialize_table_to_csv(table, max_chars)
-    
-    prompt = f"Table:\n{table_str}\n\n"
-    prompt += f"Question: {question}\n\n"
-    
-    if action_history:
-        prompt += "Actions taken so far:\n"
-        for i, action in enumerate(action_history):
-            prompt += f"{i+1}. {action}\n"
-        prompt += "\n"
-    
-    prompt += f"Selected action: {action_name}\n"
-    
-    if action_name == "select_row":
-        prompt += "Which row indices should be selected? Provide the indices as a list, e.g., [0, 1, 2]\n"
-        prompt += f"Available rows: 0 to {len(table['rows'])-1}\n"
-        prompt += "Row indices: "
-    elif action_name == "select_column":
-        prompt += "Which columns should be selected? Provide the column names as a list, e.g., [\"Name\", \"Age\"]\n"
-        prompt += f"Available columns: {table['columns']}\n"
-        prompt += "Column names: "
-    else:
-        prompt += "No arguments needed for end action.\n"
-        prompt += "Arguments: "
-    
-    return prompt
 
 
 def write_results_to_jsonl(results, examples, output_file):

@@ -225,8 +225,6 @@ class ConstraintStateMachine:
                 self.state = "in_paren_close"
 
     def _handle_row_param(self, token):
-        
-        
         if not self.current_param and self.expecting_parameter:
             if token in self.logic_token_ids["digit_tokens"]:
                 num_str = self.logic_token_ids["digit_token_map"].get(token, str(token))
@@ -256,8 +254,6 @@ class ConstraintStateMachine:
     def allowed_tokens(self):
         if self.finished:
             return [self.tokenizer.eos_token_id]
-        
-        
         
         if self.state == "start":
             allowed = set()

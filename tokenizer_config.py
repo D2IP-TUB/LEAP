@@ -8,7 +8,11 @@ tokenizer_config = {
             "colon_quote_id": 6160,
             "quote_quote_id": 5124,
             "list_close_quote_id": 18017,
-            "percent_close_quote_id": 23577
+            "percent_close_quote_id": 23577,
+            "star_quote_id": 20605
+        },
+        "token_ids": {
+            "comma_id": 29892
         },
         "hardware_config": {
             "num_workers": 1,
@@ -37,23 +41,39 @@ tokenizer_config = {
     "mistralai/Mixtral-8x7B-Instruct-v0.1":  {
         "log_dir": 'table_logs_mixtral_instruct',
         "closing_quote_token_ids": {
-            "closing_quote_id": 28739
+            "closing_quote_id": 28739,
+            "dot_quote_id": 611,
+            "closing_bracket_quote_id": 12159,
+            "colon_quote_id": 4825,
+            "quote_quote_id": 2539,
+            "star_quote_id": 27045
+        },
+        "token_ids": {
+            "comma_id": 28725
         },
         "hardware_config": {
-            "num_workers": 1,
-            "tensor_parallel_size": 8,
+            "num_workers": 2,
+            "tensor_parallel_size": 4,
             "gpu_allocation": [0, 1, 2, 3, 4, 5, 6, 7]
         }
     },
     "mistralai/Mixtral-8x7B-v0.1":  {
         "log_dir": 'table_logs_mixtral',
         "closing_quote_token_ids": {
-            "closing_quote_id": 28739
+            "closing_quote_id": 28739,
+            "dot_quote_id": 611,
+            "closing_bracket_quote_id": 12159,
+            "colon_quote_id": 4825,
+            "quote_quote_id": 2539,
+            "star_quote_id": 27045
+        },
+        "token_ids": {
+            "comma_id": 28725
         },
         "hardware_config": {
-            "num_workers": 1,
-            "tensor_parallel_size": 8,
-            "default_gpu_allocation": [0, 1, 2, 3, 4, 5, 6, 7]
+            "num_workers": 2,
+            "tensor_parallel_size": 4,
+            "gpu_allocation": [0, 1, 2, 3, 4, 5, 6, 7]
         }
     },
 }
@@ -65,6 +85,9 @@ def get_logic_token_ids(tokenizer):
 
     logic_token_ids = {}
     closing_quote_token_ids = tokenizer_config[tokenizer.name_or_path]["closing_quote_token_ids"]
+    
+    comma_id = tokenizer.encode(",", add_special_tokens=False)[0]
+    logic_token_ids["comma_id"] = tokenizer_config[tokenizer.name_or_path]["token_ids"]["comma_id"] if is_llama_tokenizer(tokenizer) else comma_id
     
     quote_id = tokenizer.encode('"', add_special_tokens=False)[0]
     if "closing_quote_id" not in closing_quote_token_ids:
@@ -86,7 +109,7 @@ def get_logic_token_ids(tokenizer):
     logic_token_ids["list_open_id"] = tokenizer.encode("[", add_special_tokens=False)[0]
 
         
-    logic_token_ids["comma_id"] = tokenizer.encode(",", add_special_tokens=False)[0]
+    
     logic_token_ids["list_close_id"] = tokenizer.encode("]", add_special_tokens=False)[0]
     logic_token_ids["paren_close_id"] = tokenizer.encode(")", add_special_tokens=False)[0]
 
@@ -100,8 +123,6 @@ def get_logic_token_ids(tokenizer):
 
     logic_token_ids["digit_token_map"] = digit_token_map
     logic_token_ids["digit_tokens"] = digit_tokens
-
-    
 
     return logic_token_ids
 
