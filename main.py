@@ -8,7 +8,6 @@ from datasets import load_dataset, load_from_disk
 from typing import List, Tuple, Dict, Any, Optional
 from vllm import SamplingParams
 
-
 from constraints import create_constraint_logits_processor
 from eval import to_value_list, check_denotation
 from generate import generate_action_arguments, generate_action_selection
@@ -19,13 +18,14 @@ from tokenizer_config import tokenizer_config
 
 # Initialize environment
 os.environ["VLLM_USE_V1"] = "0"
-
+os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 
 # Configuration
 # model_id = "meta-llama/Llama-2-70b-hf"
 # model_id = "gpt2"
-# model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
-model_id = "mistralai/Mixtral-8x7B-v0.1"
+model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+# model_id = "mistralai/Mixtral-8x7B-v0.1"
+# model_id = "openai/gpt-oss-120b"
 
 output_file = "parallel_results.jsonl"
 
@@ -47,12 +47,12 @@ LOGGING_CONFIG = {
 }
 
 # Load dataset
-dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
+# dataset = load_dataset('wikitablequestions', split='train[:10]', trust_remote_code=True).select([2])
+#.select([297, 298])
                                                                                         #  .select([161]) select([41,70,89, 101, 161, 180, 184, 235, 276])
 # dataset = load_dataset('ayeshalashkarwala/extractable-wikitable-questions', split='train', trust_remote_code=True)
 # dataset = load_from_disk("./answerable_questions/train")
-# dataset = load_dataset('json', data_files='dataset_simple.json', split='train')
-
+dataset = load_dataset('json', data_files='dataset_simple.json', split='train')
 
 def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
     """Parse action string into (action_name, args) tuple"""
@@ -69,7 +69,6 @@ def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
         action_name, args_str = action_str.split('(', 1)
         action_name = action_name.strip()
         args_str = args_str.rstrip(')').strip()
-        
         # Extract list arguments
         if args_str.startswith('[') and args_str.endswith(']'):
             args_str = args_str.replace("\\", "\\\\")
@@ -560,7 +559,7 @@ async def generate_single_action(worker, prompt, table, request_id, state_machin
             
             sampling_params = SamplingParams(
                 temperature=0.7,
-                max_tokens=50,
+                max_tokens=100, # increased for more row params
                 stop_token_ids=[worker.tokenizer.eos_token_id],
                 logits_processors=[constraint_processor]
             )

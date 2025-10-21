@@ -53,9 +53,9 @@ class ConstraintStateMachine:
         self.finished = False
         self.selected_params = set()
         self.current_param = []
-        self.has_parameter = False
         self.param_complete = False
         self.expecting_parameter = False
+        self.last_n_remaining_params = None
         
         # Apply constraints based on configuration
         if self.use_global_constraints:
@@ -200,7 +200,6 @@ class ConstraintStateMachine:
                     exp = ((self.llama_tokenizer and clean_param == col) or self.current_param == tokens) and col not in self.selected_params
                     if exp:
                         self.selected_params.add(col)
-                        self.has_parameter = True
                         self.param_complete = True
                         self.expecting_parameter = False
                         is_valid = True
@@ -225,25 +224,60 @@ class ConstraintStateMachine:
                 self.state = "in_paren_close"
 
     def _handle_row_param(self, token):
-        if not self.current_param and self.expecting_parameter:
-            if token in self.logic_token_ids["digit_tokens"]:
-                num_str = self.logic_token_ids["digit_token_map"].get(token, str(token))
-                if (num_str in self.valid_params["select_row"] and 
-                    num_str not in self.selected_params):
-                    self.selected_params.add(num_str)
-                    self.has_parameter = True
-                    self.param_complete = True
-                    self.expecting_parameter = False
-                else:
-                    self.param_complete = False
-            return
-        
-        if self.param_complete:
+        digit_tokens = self.logic_token_ids["digit_tokens"]
+
+        # Handle delimiter after a completed param even when no current_param is in progress
+        if self.param_complete and not self.current_param:
             if token == self.logic_token_ids["comma_id"]:
+                # Move to expecting a new parameter (enable digits next)
                 self.param_complete = False
                 self.expecting_parameter = True
+                return
             elif token == self.logic_token_ids["list_close_id"]:
+                # Close the list of params
                 self.state = "in_paren_close"
+                return
+
+        if self.current_param and (token == self.logic_token_ids["comma_id"] or token == self.logic_token_ids["list_close_id"]):
+            current_param_str = "".join(
+                [
+                    self.logic_token_ids["token_digit_map"].get(p, "")
+                    for p in self.current_param
+                    if p in digit_tokens
+                ]
+            )
+            if current_param_str in self.valid_params["select_row"] and current_param_str not in self.selected_params:
+                self.selected_params.add(current_param_str)
+                self.param_complete = True
+                self.expecting_parameter = False
+                self.current_param = []
+                if token == self.logic_token_ids["comma_id"]:
+                    # Ready for next parameter
+                    self.param_complete = False
+                    self.expecting_parameter = True
+                elif token == self.logic_token_ids["list_close_id"]:
+                    self.state = "in_paren_close"
+            return
+
+        if token in digit_tokens and not self.param_complete:
+            if not self.current_param and self.expecting_parameter:
+
+                self.current_param.append(token)
+                self.param_complete = False
+                self.expecting_parameter = True
+
+            elif self.current_param and self.expecting_parameter:
+                self.current_param.append(token)
+                current_param_str = "".join(
+                    [
+                        self.logic_token_ids["token_digit_map"].get(p, "")
+                        for p in self.current_param
+                        if p in digit_tokens
+                    ]
+                )
+        
+                self.param_complete = False
+                self.expecting_parameter = True
 
     def _handle_paren_close(self, token):
         
@@ -283,6 +317,7 @@ class ConstraintStateMachine:
         elif self.state == "in_params":
             allowed = set()
             remaining_params = set(self.valid_params[self.current_action]) - self.selected_params
+            last_remaining_param = len(remaining_params) - 1 == 0
             
             if self.current_action == "select_column":
                 if not self.current_param and self.expecting_parameter:
@@ -305,21 +340,65 @@ class ConstraintStateMachine:
                     allowed.add(self.logic_token_ids["list_close_id"])
             
             else:  # select_row
-                if not self.current_param and self.expecting_parameter:
-                    for digit in self.logic_token_ids["digit_tokens"]:
-                        num_str = self.logic_token_ids["digit_token_map"].get(digit, str(digit))
-                        if num_str in remaining_params:
-                            allowed.add(digit)
-                elif self.param_complete:
-                    if remaining_params:
+                next_digits = set()
+                if self.llama_tokenizer:  # Llama2 / Mixtral
+                    if not self.current_param and self.expecting_parameter:
+                            for p in remaining_params:
+                                num_str = str(p)
+                                if num_str and num_str[0]:
+                                    next_digits.add(num_str[0])
+                    elif self.current_param and self.expecting_parameter:
+                        sub_idx = len(self.current_param)
+
+                        for p in remaining_params:
+                            num_str = str(p)
+                            if sub_idx < len(num_str):
+                                prefix_tokens = [self.logic_token_ids["digit_token_map"].get(s) for s in num_str[:sub_idx]]
+                                if prefix_tokens == self.current_param:
+                                    next_digits.add(num_str[sub_idx])
+
+                else: # gpt
+                    if not self.current_param and self.expecting_parameter:
+                        for p in remaining_params:
+                            num_str = str(p)
+                            if num_str and num_str[0]:
+                                next_digits.add(num_str[0])
+                    elif self.current_param and self.expecting_parameter:
+                        sub_idx = len(self.current_param)
+                        for p in remaining_params:
+                            num_str = str(p)
+                            if sub_idx < len(num_str):
+                                prefix_tokens = [self.logic_token_ids["digit_token_map"].get(s) for s in num_str[:sub_idx]]
+                                if prefix_tokens == self.current_param:
+                                    next_digits.add(num_str[sub_idx]) 
+
+                for d in next_digits:
+                    digit_token = self.logic_token_ids["digit_token_map"].get(d, str(d))
+                    if digit_token is not None:
+                        allowed.add(digit_token)
+
+                if self.expecting_parameter and self.current_param:
+                    s = "".join(
+                        self.logic_token_ids["token_digit_map"].get(t, "")
+                        for t in self.current_param
+                        if t in self.logic_token_ids["digit_tokens"]
+                    )
+                    if s in remaining_params:
+                        if not last_remaining_param:
+                            allowed.add(self.logic_token_ids["comma_id"]) 
+                        allowed.add(self.logic_token_ids["list_close_id"])
+
+                if self.param_complete:
+                    if not last_remaining_param and not self.expecting_parameter:
                         allowed.add(self.logic_token_ids["comma_id"])
                     allowed.add(self.logic_token_ids["list_close_id"])
+
+                if self.expecting_parameter and not self.current_param:
+                    allowed.discard(self.logic_token_ids["list_close_id"])
             
-            if self.expecting_parameter:
-                if self.logic_token_ids["list_close_id"] in allowed:
-                    allowed.remove(self.logic_token_ids["list_close_id"])
-            
-            return list(allowed) if allowed else [self.tokenizer.eos_token_id]
+            if allowed:
+                return list(allowed)  
+            return  [self.tokenizer.eos_token_id]
         
         elif self.state == "in_paren_close":
             return [self.logic_token_ids["paren_close_id"]]
@@ -367,8 +446,6 @@ class ActionOnlyConstraintStateMachine:
             self.action_prefix = [token]
             
     def _handle_action(self, token):
-        
-        
         self.action_prefix.append(token)
         
         # Check if any action is completed
@@ -394,8 +471,6 @@ class ActionOnlyConstraintStateMachine:
         if self.finished:
             return [self.tokenizer.eos_token_id]
             
-        
-        
         if self.state == "start":
             allowed = set()
             for action in self.possible_actions:
