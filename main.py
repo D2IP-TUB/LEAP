@@ -27,16 +27,16 @@ COT_ARGS_TEMPERATURE = 0.7
 
 # Logging configuration
 LOGGING_CONFIG = {
-    'enable_logging': False,
+    'enable_logging': True,
     'log_dir': 'table_logs',
-    'save_readable_tables': False,
+    'save_readable_tables': True,
     'compress_logs': False,
     'log_format': 'readable',
     'max_table_chars': 10000
 }
 
 # Load dataset
-dataset = load_dataset('wikitablequestions', split='train[:1000]')
+dataset = load_dataset('wikitablequestions', split='train[:20]')
 
 
 # Utility functions (table manipulation, parsing, etc.)
@@ -249,7 +249,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
     
     # Log initial table state
     if logging_callback:
-        logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
+        logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode, model_type=model_id)
     
     while (failures < max_failures and 
            validity_failures < max_validity_failures and 
@@ -304,7 +304,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
                     logging_callback(
                         request_id, step + 1, f"validity_failed:{action_str}", 
                         current_table, success=False, failure_type="validity_failure",
-                        generation_mode=generation_mode
+                        generation_mode=generation_mode, model_type=model_id
                     )
                 continue
                 
@@ -313,7 +313,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
             if action_name == "end":
                 action_history.append("end()")
                 if logging_callback:
-                    logging_callback(request_id, step + 1, "end()", current_table, generation_mode=generation_mode)
+                    logging_callback(request_id, step + 1, "end()", current_table, generation_mode=generation_mode, model_type=model_id)
                 break
                 
             # Apply action
@@ -326,7 +326,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
                     logging_callback(
                         request_id, step + 1, f"{action_name}({args})", 
                         current_table, success=False, failure_type="validity_failure",
-                        generation_mode=generation_mode
+                        generation_mode=generation_mode, model_type=model_id
                     )
                 continue
                 
@@ -343,7 +343,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
                 logging_callback(
                     request_id, step, f"{action_name}({args})", 
                     current_table, success=True,
-                    generation_mode=generation_mode
+                    generation_mode=generation_mode, model_type=model_id
                 )
             
         except Exception as e:
@@ -353,7 +353,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
                 logging_callback(
                     request_id, step + 1, f"generation_error:{str(e)}", 
                     current_table, success=False, failure_type="generation_error",
-                    generation_mode=generation_mode
+                    generation_mode=generation_mode, model_type=model_id
                 )
     
     # Calculate accuracy
@@ -666,7 +666,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
     
     # Log initial table state
     if logging_callback:
-        logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
+        logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode, model_type=model_id)
     
     while (failures < max_failures and 
            validity_failures < max_validity_failures and 
@@ -723,7 +723,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
                     logging_callback(
                         request_id, step + 1, f"validity_failed:{action_str}", 
                         current_table, success=False, failure_type="validity_failure",
-                        generation_mode=generation_mode
+                        generation_mode=generation_mode, model_type=model_id
                     )
                 continue
                 
@@ -732,7 +732,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
             if action_name == "end":
                 action_history.append("end()")
                 if logging_callback:
-                    logging_callback(request_id, step + 1, "end()", current_table, generation_mode=generation_mode)
+                    logging_callback(request_id, step + 1, "end()", current_table, generation_mode=generation_mode, model_type=model_id)
                 break
                 
             # Apply action
@@ -745,7 +745,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
                     logging_callback(
                         request_id, step + 1, f"{action_name}({args})", 
                         current_table, success=False, failure_type="validity_failure",
-                        generation_mode=generation_mode
+                        generation_mode=generation_mode, model_type=model_id
                     )
                 continue
                 
@@ -762,7 +762,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
                 logging_callback(
                     request_id, step, f"{action_name}({args})", 
                     current_table, success=True,
-                    generation_mode=generation_mode
+                    generation_mode=generation_mode, model_type=model_id
                 )
             
         except Exception as e:
@@ -772,7 +772,7 @@ async def iterative_generation_function(request, worker, state_machines, logging
                 logging_callback(
                     request_id, step + 1, f"generation_error:{str(e)}", 
                     current_table, success=False, failure_type="generation_error",
-                    generation_mode=generation_mode
+                    generation_mode=generation_mode, model_type=model_id
                 )
     
     # Calculate accuracy

@@ -25,6 +25,7 @@ class LogEntry:
     success: bool
     failure_type: Optional[str] = None
     generation_mode: Optional[str] = None
+    model_type: Optional[str] = None
     table_summary: Optional[Dict[str, Any]] = None
     table_preview: Optional[List[str]] = None
     
@@ -112,7 +113,8 @@ class TableLogger:
                        table: Dict[str, Any],
                        success: bool = True, 
                        failure_type: Optional[str] = None, 
-                       generation_mode: Optional[str] = None) -> None:
+                       generation_mode: Optional[str] = None,
+                       model_type: Optional[str] = None) -> None:
         """
         Log table state with comprehensive information
         
@@ -124,6 +126,8 @@ class TableLogger:
             success: Whether the action succeeded
             failure_type: Type of failure if unsuccessful
             generation_mode: Generation mode used
+            model_type: LLM model used
+
         """
         if not self.enable_logging:
             return
@@ -149,6 +153,7 @@ class TableLogger:
                 success=success,
                 failure_type=failure_type,
                 generation_mode=generation_mode,
+                model_type= model_type,
                 table_summary=table_summary,
                 table_preview=table_preview
             )
@@ -554,7 +559,7 @@ class LoggingContext:
             )
     
     def log_step(self, action: str, table: Dict[str, Any], success: bool = True, 
-                failure_type: str = None, generation_mode: str = None):
+                failure_type: str = None, generation_mode: str = None,  model_type: str = None):
         """Log a step within this context"""
         self.logger.log_table_state(
             self.request_id, 
@@ -563,7 +568,8 @@ class LoggingContext:
             table,
             success=success,
             failure_type=failure_type,
-            generation_mode=generation_mode
+            generation_mode=generation_mode,
+            model_type=model_type
         )
         self.step_counter += 1
 

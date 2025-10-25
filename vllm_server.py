@@ -200,7 +200,7 @@ class VLLMWorkerProcess(mp.Process):
         )
     
     def _send_log_entry(self, request_id: str, step: int, action: str, table: Dict[str, Any],
-                       success: bool = True, failure_type: str = None, generation_mode: str = None):
+                       success: bool = True, failure_type: str = None, generation_mode: str = None, model_type: str = None):
         """Send logging data back to main process via output queue"""
         if self.logging_config.get('enable_logging', False):
             log_data = {
@@ -211,6 +211,7 @@ class VLLMWorkerProcess(mp.Process):
                 'success': success,
                 'failure_type': failure_type,
                 'generation_mode': generation_mode,
+                'model_type' : model_type,
                 'worker_id': self.worker_id
             }
             # Send log entry back to main process
@@ -428,7 +429,8 @@ class ProcessParallelVLLM:
                             table=log_data['table'],
                             success=log_data['success'],
                             failure_type=log_data['failure_type'],
-                            generation_mode=log_data['generation_mode']
+                            generation_mode=log_data['generation_mode'],
+                            model_type=log_data['model_type']
                         )
                 elif msg_type == 'error':
                     print(f"Error for request {req_id}: {data}")
