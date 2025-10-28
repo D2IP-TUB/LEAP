@@ -7,7 +7,6 @@ from vllm import SamplingParams
 from constraints import create_action_only_constraint_processor, create_constraint_logits_processor
 from table import serialize_table_to_csv
 
-
 def build_dynamic_plan_prompt(question: str, table: Dict[str, Any], action_history: List[str]) -> str:
     """Build prompt for dynamic_plan step in CoT"""
     max_chars = 1000
@@ -171,7 +170,7 @@ async def generate_single_action(worker, prompt, table, request_id, state_machin
             
             sampling_params = SamplingParams(
                 temperature=0.7,
-                max_tokens=50,
+                max_tokens=1000, # increased for more row params
                 stop_token_ids=[worker.tokenizer.eos_token_id],
                 logits_processors=[constraint_processor]
             )

@@ -5,18 +5,16 @@ import os
 import time
 
 from datasets import load_dataset, load_from_disk
-from typing import List, Tuple, Dict, Any, Optional
-from vllm import SamplingParams
+from typing import List, Tuple, Optional
 
-from constraints import create_constraint_logits_processor
 from eval import to_value_list, check_denotation
-from generate import generate_action_arguments, generate_action_selection
+from generate import generate_action_arguments, generate_action_selection, generate_single_action
 from table import apply_action, extract_table_values_for_eval, serialize_table_to_csv
 from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
+from tokenizer_config import ModelConfig
 
 from tokenizer_config import tokenizer_config
 
-# Initialize environment
 os.environ["VLLM_USE_V1"] = "0"
 os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 
@@ -26,6 +24,9 @@ os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
 # model_id = "mistralai/Mixtral-8x7B-v0.1"
 # model_id = "openai/gpt-oss-120b"
+# model_id = "openai/gpt-oss-20b"
+
+model_config = ModelConfig(model_id)
 
 output_file = "parallel_results.jsonl"
 
@@ -39,7 +40,7 @@ COT_ARGS_TEMPERATURE = 0.7
 # Logging configuration
 LOGGING_CONFIG = {
     'enable_logging': True,
-    'log_dir':  tokenizer_config[model_id]["log_dir"],
+    'log_dir': model_config.log_dir,
     'save_readable_tables': False,
     'compress_logs': False,
     'log_format': 'readable',
@@ -47,12 +48,9 @@ LOGGING_CONFIG = {
 }
 
 # Load dataset
-# dataset = load_dataset('wikitablequestions', split='train[:10]', trust_remote_code=True).select([2])
-#.select([297, 298])
-                                                                                        #  .select([161]) select([41,70,89, 101, 161, 180, 184, 235, 276])
-# dataset = load_dataset('ayeshalashkarwala/extractable-wikitable-questions', split='train', trust_remote_code=True)
+dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
 # dataset = load_from_disk("./answerable_questions/train")
-dataset = load_dataset('json', data_files='dataset_simple.json', split='train')
+# dataset = load_dataset('json', data_files='dataset_simple.json', split='train')
 
 def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
     """Parse action string into (action_name, args) tuple"""
@@ -203,10 +201,9 @@ async def iterative_generation_function(request, worker, state_machines, logging
             step_prompt += "\n"
         
         if worker.use_constraints:
-            step_prompt += "Next action: "
+            instruction_prompt = "Next action: "
         else:
-            step_prompt += "What should be the next action to answer this question? Choose from: select_row([row_indices]), select_column([\"column_names\"]), or end(). Next action: "
-        
+            instruction_prompt = "What should be the next action to answer this question? Choose from: select_row([row_indices]), select_column([\"column_names\"]), or end(). Next action: "
         # Truncate if needed
         estimated_length = len(step_prompt) // 4
         if estimated_length > worker.max_model_len - 100:
@@ -214,9 +211,11 @@ async def iterative_generation_function(request, worker, state_machines, logging
             question_short = question[:100] + "..." if len(question) > 100 else question
             step_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n"
             if worker.use_constraints:
-                step_prompt += "Next action: "
+                instruction_prompt = "Next action: "
             else:
-                step_prompt += "What should be the next action? Choose from: select_row([row_indices]), select_column([\"column_names\"]), or end(). Next action: "
+                instruction_prompt = "What should be the next action? Choose from: select_row([row_indices]), select_column([\"column_names\"]), or end(). Next action: "
+        
+        step_prompt = model_config.add_instruct_tokens_for_instruct_models(step_prompt, instruction_prompt)        
         
         try:
             # Generate action
@@ -228,7 +227,6 @@ async def iterative_generation_function(request, worker, state_machines, logging
             else:
                 parsed_action = parse_action_string(action_str)
                 # Could add extraction fallback here
-            
             if not parsed_action:
                 validity_failures += 1
                 print(f"Step {step}: Failed to generate valid action from: {action_str}")
@@ -413,311 +411,6 @@ async def cot_generation_function(request, worker, state_machines, logging_callb
     }
 
 
-async def cot_generation_function(request, worker, state_machines, logging_context=None):
-    """Chain-of-Table generation function with comprehensive logging"""
-    question = request['question']
-    table = request['table']
-    ground_truth_answers = request['ground_truth_answers']
-    request_id = request['request_id']
-    
-    current_table = table
-    action_history = []
-    failures = 0
-    validity_failures = 0
-    max_failures = 3
-    max_validity_failures = 3
-    step = 0
-    max_steps = 10
-    
-    generation_mode = "CoT"
-    
-    # Log initial table state
-    if logging_context:
-        logging_context.log_step("initial", current_table, generation_mode=generation_mode)
-    
-    while (failures < max_failures and 
-           validity_failures < max_validity_failures and 
-           step < max_steps):
-        
-        try:
-            # Step 1: Dynamic Plan - Select action
-            action_name = await generate_action_selection(worker, question, current_table, action_history, request_id, state_machines, step, COT_ACTION_TEMPERATURE)
-            
-            if not action_name:
-                validity_failures += 1
-                print(f"Step {step}: Failed to select valid action")
-                if logging_context:
-                    logging_context.log_step(
-                        "action_selection_failed", 
-                        current_table, 
-                        success=False, 
-                        failure_type="validity_failure",
-                        generation_mode=generation_mode
-                    )
-                continue
-            
-            if action_name == "end":
-                action_history.append("end()")
-                if logging_context:
-                    logging_context.log_step("end()", current_table, generation_mode=generation_mode)
-                break
-            
-            # Step 2: Generate Args
-            args = await generate_action_arguments(worker, question, current_table, action_name, action_history, request_id, state_machines, step, COT_ARGS_TEMPERATURE)
-            
-            if args is None:
-                validity_failures += 1
-                print(f"Step {step}: Failed to generate valid arguments for {action_name}")
-                if logging_context:
-                    logging_context.log_step(
-                        f"{action_name}_args_failed", 
-                        current_table, 
-                        success=False, 
-                        failure_type="validity_failure",
-                        generation_mode=generation_mode
-                    )
-                continue
-            
-            # Apply action
-            new_table = apply_action(current_table, action_name, args)
-            
-            if not new_table:
-                validity_failures += 1
-                print(f"Step {step}: Failed to apply action: {action_name}({args})")
-                if logging_context:
-                    logging_context.log_step(
-                        f"{action_name}({args})", 
-                        current_table, 
-                        success=False, 
-                        failure_type="validity_failure",
-                        generation_mode=generation_mode
-                    )
-                continue
-            
-            # Action successful
-            current_table = new_table
-            action_history.append(f"{action_name}({args})")
-            failures = 0
-            validity_failures = 0
-            step += 1
-            print(f"Step {step}: Applied {action_name}({args}) [CoT]")
-            
-            # Log successful transformation
-            if logging_context:
-                logging_context.log_step(
-                    f"{action_name}({args})", 
-                    current_table, 
-                    success=True,
-                    generation_mode=generation_mode
-                )
-            
-        except Exception as e:
-            failures += 1
-            print(f"Step {step}: Generation error in CoT: {str(e)}")
-            if logging_context:
-                logging_context.log_step(
-                    f"cot_generation_error:{str(e)}", 
-                    current_table, 
-                    success=False, 
-                    failure_type="generation_error",
-                    generation_mode=generation_mode
-                )
-    
-    # Calculate accuracy
-    accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-        action_history, current_table, ground_truth_answers, table
-    )
-    
-    return {
-        'action_history': action_history,
-        'final_table': current_table,
-        'execution_accuracy_metrics': accuracy_metrics
-    }
-
-async def generate_single_action(worker, prompt, table, request_id, state_machines, action_history=None):
-    """
-    Generate single action with or without constraints
-    
-    Args:
-        worker: The worker process
-        prompt: The prompt text
-        table: The table data
-        request_id: Unique request identifier
-        state_machines: Dictionary of state machines
-        action_history: List of previously executed actions (for global constraints)
-    """
-    try:
-        if worker.use_constraints:
-            # Get global constraints setting from worker's generation config
-            use_global_constraints = worker.generation_config.get('use_global_constraints', True)
-            
-            # Pass action_history to the constraint processor
-            constraint_processor = create_constraint_logits_processor(
-                table, worker.tokenizer, request_id, state_machines, 
-                action_history, use_global_constraints
-            )
-            
-            sampling_params = SamplingParams(
-                temperature=0.7,
-                max_tokens=100, # increased for more row params
-                stop_token_ids=[worker.tokenizer.eos_token_id],
-                logits_processors=[constraint_processor]
-            )
-        else:
-            sampling_params = SamplingParams(
-                temperature=0.7,
-                max_tokens=100,
-                stop_token_ids=[worker.tokenizer.eos_token_id],
-                stop=["\n", "Next", "Step"]
-            )
-        
-        return await worker.generate_text(prompt, request_id, sampling_params)
-        
-    except Exception as e:
-        print(f"Generation error in worker {worker.worker_id}: {e}")
-        return ""
-
-async def iterative_generation_function(request, worker, state_machines, logging_callback=None):
-    """Generate actions iteratively with comprehensive logging via callback"""
-    question = request['question']
-    table = request['table']
-    ground_truth_answers = request['ground_truth_answers']
-    request_id = request['request_id']
-    
-    current_table = table
-    action_history = []
-    failures = 0
-    validity_failures = 0
-    max_failures = 3
-    max_validity_failures = 3
-    step = 0
-    max_steps = 10
-    
-    generation_mode = worker._get_generation_mode_string()
-    
-    # Log initial table state
-    if logging_callback:
-        logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
-    
-    while (failures < max_failures and 
-           validity_failures < max_validity_failures and 
-           step < max_steps):
-        
-        step_id = f"{request_id}_step{step}"
-        
-        # Build prompt
-        max_chars = 1500 if step == 0 else 1000
-        table_str = serialize_table_to_csv(current_table, max_chars)
-        
-        step_prompt = f"Table:\n{table_str}\n\n"
-        step_prompt += f"Question: {question}\n"
-        
-        if action_history:
-            step_prompt += "Actions taken so far:\n"
-            for i, action in enumerate(action_history):
-                step_prompt += f"{i+1}. {action}\n"
-            step_prompt += "\n"
-        
-        if worker.use_constraints:
-            step_prompt += "Next action: "
-        else:
-            step_prompt += "What should be the next action to answer this question? Choose from: select_row([row_indices]), select_column([\"column_names\"]), or end(). Next action: "
-        
-        # Truncate if needed
-        estimated_length = len(step_prompt) // 4
-        if estimated_length > worker.max_model_len - 100:
-            table_str = serialize_table_to_csv(current_table, 500)
-            question_short = question[:100] + "..." if len(question) > 100 else question
-            step_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n"
-            if worker.use_constraints:
-                step_prompt += "Next action: "
-            else:
-                step_prompt += "What should be the next action? Choose from: select_row([row_indices]), select_column([\"column_names\"]), or end(). Next action: "
-        
-        try:
-            # Generate action - pass action_history for global constraints
-            action_str = await generate_single_action(
-                worker, step_prompt, current_table, step_id, state_machines, action_history
-            )
-            
-            # Parse action
-            if worker.use_constraints:
-                parsed_action = parse_action_string(action_str)
-            else:
-                parsed_action = parse_action_string(action_str)
-                # Could add extraction fallback here
-            
-            if not parsed_action:
-                validity_failures += 1
-                print(f"Step {step}: Failed to generate valid action from: {action_str}")
-                if logging_callback:
-                    logging_callback(
-                        request_id, step + 1, f"validity_failed:{action_str}", 
-                        current_table, success=False, failure_type="validity_failure",
-                        generation_mode=generation_mode
-                    )
-                continue
-                
-            action_name, args = parsed_action
-            
-            if action_name == "end":
-                action_history.append("end()")
-                if logging_callback:
-                    logging_callback(request_id, step + 1, "end()", current_table, generation_mode=generation_mode)
-                break
-                
-            # Apply action
-            new_table = apply_action(current_table, action_name, args)
-            
-            if not new_table:
-                validity_failures += 1
-                print(f"Step {step}: Failed to apply action: {action_name}({args})")
-                if logging_callback:
-                    logging_callback(
-                        request_id, step + 1, f"{action_name}({args})", 
-                        current_table, success=False, failure_type="validity_failure",
-                        generation_mode=generation_mode
-                    )
-                continue
-                
-            # Action successful
-            current_table = new_table
-            action_history.append(f"{action_name}({args})")
-            failures = 0
-            validity_failures = 0
-            step += 1
-            print(f"Step {step}: Applied {action_name}({args})")
-            
-            # Log successful transformation
-            if logging_callback:
-                logging_callback(
-                    request_id, step, f"{action_name}({args})", 
-                    current_table, success=True,
-                    generation_mode=generation_mode
-                )
-            
-        except Exception as e:
-            failures += 1
-            print(f"Step {step}: Generation error: {str(e)}")
-            if logging_callback:
-                logging_callback(
-                    request_id, step + 1, f"generation_error:{str(e)}", 
-                    current_table, success=False, failure_type="generation_error",
-                    generation_mode=generation_mode
-                )
-    
-    # Calculate accuracy
-    accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-        action_history, current_table, ground_truth_answers, table
-    )
-    
-    return {
-        'action_history': action_history,
-        'final_table': current_table,
-        'execution_accuracy_metrics': accuracy_metrics
-    }
-
-
 def write_results_to_jsonl(results, examples, output_file):
     """Write results to JSONL file with execution accuracy metrics"""
     with open(output_file, 'w', encoding='utf-8') as f:
@@ -801,15 +494,15 @@ def main():
             'cot_generation': cot_generation_function
         },
         logging_config=logging_config,
-        tensor_parallel_size=tokenizer_config[model_id]["hardware_config"]["tensor_parallel_size"]
+        tensor_parallel_size=model_config.tensor_parallel_size
     )
     
     # Initialize the server
     num_workers = 1
     server = ProcessParallelVLLM(
         model_id=model_id,
-        num_workers=tokenizer_config[model_id]["hardware_config"]["num_workers"],
-        gpu_allocation=tokenizer_config[model_id]["hardware_config"]["gpu_allocation"],
+        num_workers=model_config.num_workers,
+        gpu_allocation=model_config.gpu_allocation,
         generation_config=generation_config
     )
     
