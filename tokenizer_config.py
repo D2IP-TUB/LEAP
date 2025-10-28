@@ -114,7 +114,8 @@ tokenizer_config = {
         "token_ids": {
             "comma_id": 29892,
             "list_open_id": 29961,
-        }
+        },
+        "llama_tokenizer": True
 
     },
     "meta-llama/Llama-2-70b-chat-hf": {
@@ -131,7 +132,8 @@ tokenizer_config = {
         "token_ids": {
             "comma_id": 29892,
             "list_open_id": 29961,
-        }
+        },
+        "llama_tokenizer": True
 
     },
     "gpt2":  {
@@ -179,7 +181,8 @@ tokenizer_config = {
         "token_ids": {
             "comma_id": 28725,
             "list_open_id": 28792,
-        }
+        },
+        "llama_tokenizer": True
     },
     "mistralai/Mixtral-8x7B-v0.1":  {
         "closing_quote_token_ids": {
@@ -193,7 +196,8 @@ tokenizer_config = {
         "token_ids": {
             "comma_id": 28725,
             "list_open_id": 28792,
-        }
+        },
+        "llama_tokenizer": True
     },
 }
 
@@ -201,6 +205,9 @@ class TokenizerConfig:
 
     def __init__(self, tokenizer) -> None:
         self.tokenizer = tokenizer
+        cfg = tokenizer_config[self.tokenizer.name_or_path]
+
+        self.llama_tokenizer = cfg.get("llama_tokenizer", False)
 
         self.comma_id = self._get_scalar_id(",", "comma_id")
         self.list_open_id = self._get_scalar_id("[", "list_open_id")
@@ -209,7 +216,7 @@ class TokenizerConfig:
         self.paren_close_id = self._get_scalar_id(")")
         self.quote_id = self._get_scalar_id('"')
 
-        closing_quote_token_ids = dict(tokenizer_config[self.tokenizer.name_or_path].get("closing_quote_token_ids", {}))
+        closing_quote_token_ids = dict(cfg.get("closing_quote_token_ids", {}))
 
         if "closing_quote_id" not in closing_quote_token_ids:
             closing_quote_token_ids["closing_quote_id"] = self.quote_id
@@ -236,9 +243,6 @@ class TokenizerConfig:
             self.digit_tokens.append(tid)
             self.token_digit_map[tid] = str(i)
             self.digit_token_map[str(i)] = tid
-
-    def is_llama_tokenizer(self):
-        return self.tokenizer.name_or_path != "gpt2"
     
     def _get_scalar_id(self, symbol: str, override_key: str | None = None) -> int:
         token_ids_overrides = tokenizer_config[self.tokenizer.name_or_path].get("token_ids", {})

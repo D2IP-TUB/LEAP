@@ -196,7 +196,7 @@ class ConstraintStateMachine:
                 
                 is_valid = False
                 for col, tokens in self.column_token_map.items():
-                    exp = ((self.tokenizer_config.is_llama_tokenizer() and clean_param == col) or self.current_param == tokens) and col not in self.selected_params
+                    exp = ((self.tokenizer_config.llama_tokenizer and clean_param == col) or self.current_param == tokens) and col not in self.selected_params
                     if exp:
                         self.selected_params.add(col)
                         self.param_complete = True
@@ -340,7 +340,7 @@ class ConstraintStateMachine:
             
             else:  # select_row
                 next_digits = set()
-                if self.tokenizer_config.is_llama_tokenizer():  # Llama2 / Mixtral
+                if self.tokenizer_config.llama_tokenizer:  # Llama2 / Mixtral
                     if not self.current_param and self.expecting_parameter:
                             for p in remaining_params:
                                 num_str = str(p)
