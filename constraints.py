@@ -20,7 +20,7 @@ class ConstraintStateMachine:
         
         num_rows = min(500, len(table['rows']))
         self.valid_params = {
-            "select_row": [str(i) for i in range(num_rows)],
+            "select_row": [f"row {i}" for i in range(num_rows)],
             "select_column": table['columns'],
             "end": []
         }
@@ -31,6 +31,13 @@ class ConstraintStateMachine:
             tokens = tokenizer.encode(quoted, add_special_tokens=False)
             if tokens:
                 self.column_token_map[col] = tokens
+
+        self.row_token_map = {}
+        for row in self.valid_params["select_row"]:
+            quoted = f'"{row}"'
+            tokens = tokenizer.encode(quoted, add_special_tokens=False)
+            if tokens:
+                self.row_token_map[row] = tokens
 
     def _parse_action_history(self, action_history):
         """Parse action history to extract previously used action types"""
@@ -54,7 +61,6 @@ class ConstraintStateMachine:
         self.current_param = []
         self.param_complete = False
         self.expecting_parameter = False
-        self.last_n_remaining_params = None
         
         # Apply constraints based on configuration
         if self.use_global_constraints:
@@ -171,20 +177,13 @@ class ConstraintStateMachine:
             self.current_param = []
             self.param_complete = False
             self.expecting_parameter = True
-            self.current_column = None
+            # self.current_column = None
 
     def _handle_params(self, token):
-        if self.current_action == "select_column":
-            self._handle_column_param(token)
-        else:
-            self._handle_row_param(token)
-
-    def _handle_column_param(self, token):
 
         if not self.current_param and self.expecting_parameter:
             if token == self.tokenizer_config.quote_id:
                 self.current_param.append(token)
-                self.current_column = []
             return
         
         if self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
@@ -195,10 +194,12 @@ class ConstraintStateMachine:
                 clean_param = param_text.strip('"')
                 
                 is_valid = False
-                for col, tokens in self.column_token_map.items():
-                    exp = ((self.tokenizer_config.llama_tokenizer and clean_param == col) or self.current_param == tokens) and col not in self.selected_params
+                token_map = self.column_token_map if self.current_action == "select_column" else self.row_token_map
+                
+                for param, tokens in token_map.items():
+                    exp = ((self.tokenizer_config.llama_tokenizer and clean_param == param) or self.current_param == tokens) and param not in self.selected_params
                     if exp:
-                        self.selected_params.add(col)
+                        self.selected_params.add(param)
                         self.param_complete = True
                         self.expecting_parameter = False
                         is_valid = True
@@ -208,17 +209,12 @@ class ConstraintStateMachine:
                     self.param_complete = False
                 
                 self.current_param = []
-                self.current_column = None
             else:
                 self.current_param.append(token)
-                if self.current_column is None:
-                    self.current_column = []
-                self.current_column.append(token)
         elif self.param_complete:
             if token == self.tokenizer_config.comma_id:
                 self.param_complete = False
                 self.expecting_parameter = True
-                self.current_column = None
             elif token == self.tokenizer_config.list_close_id:
                 self.state = "in_paren_close"
 
@@ -316,84 +312,27 @@ class ConstraintStateMachine:
         elif self.state == "in_params":
             allowed = set()
             remaining_params = set(self.valid_params[self.current_action]) - self.selected_params
-            last_remaining_param = len(remaining_params) - 1 == 0
+            token_map = self.column_token_map if self.current_action == "select_column" else self.row_token_map
             
-            if self.current_action == "select_column":
-                if not self.current_param and self.expecting_parameter:
-                    if remaining_params:
+            # if self.current_action == "select_column":
+            if not self.current_param and self.expecting_parameter:
+                if remaining_params:
+                    allowed.add(self.tokenizer_config.quote_id)
+            elif self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
+                for param in remaining_params:
+                    full_seq = token_map[param]
+                    if len(self.current_param) < len(full_seq) and full_seq[:len(self.current_param)] == self.current_param:
+                        allowed.add(full_seq[len(self.current_param)])
+                
+                candidate = self.current_param + [self.tokenizer_config.quote_id]
+                for param in remaining_params:
+                    if token_map[param] == candidate:
                         allowed.add(self.tokenizer_config.quote_id)
-                elif self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
-                    for col in remaining_params:
-                        full_seq = self.column_token_map[col]
-                        if len(self.current_param) < len(full_seq) and full_seq[:len(self.current_param)] == self.current_param:
-                            allowed.add(full_seq[len(self.current_param)])
-                    
-                    candidate = self.current_param + [self.tokenizer_config.quote_id]
-                    for col in remaining_params:
-                        if self.column_token_map[col] == candidate:
-                            allowed.add(self.tokenizer_config.quote_id)
-                            break
-                elif self.param_complete:
-                    if remaining_params:
-                        allowed.add(self.tokenizer_config.comma_id)
-                    allowed.add(self.tokenizer_config.list_close_id)
-            
-            else:  # select_row
-                next_digits = set()
-                if self.tokenizer_config.llama_tokenizer:  # Llama2 / Mixtral
-                    if not self.current_param and self.expecting_parameter:
-                            for p in remaining_params:
-                                num_str = str(p)
-                                if num_str and num_str[0]:
-                                    next_digits.add(num_str[0])
-                    elif self.current_param and self.expecting_parameter:
-                        sub_idx = len(self.current_param)
-
-                        for p in remaining_params:
-                            num_str = str(p)
-                            if sub_idx < len(num_str):
-                                prefix_tokens = [self.tokenizer_config.digit_token_map.get(s) for s in num_str[:sub_idx]]
-                                if prefix_tokens == self.current_param:
-                                    next_digits.add(num_str[sub_idx])
-
-                else: # gpt
-                    if not self.current_param and self.expecting_parameter:
-                        for p in remaining_params:
-                            num_str = str(p)
-                            if num_str and num_str[0]:
-                                next_digits.add(num_str[0])
-                    elif self.current_param and self.expecting_parameter:
-                        sub_idx = len(self.current_param)
-                        for p in remaining_params:
-                            num_str = str(p)
-                            if sub_idx < len(num_str):
-                                prefix_tokens = [self.tokenizer_config.digit_token_map.get(s) for s in num_str[:sub_idx]]
-                                if prefix_tokens == self.current_param:
-                                    next_digits.add(num_str[sub_idx]) 
-
-                for d in next_digits:
-                    digit_token = self.tokenizer_config.digit_token_map.get(d, str(d))
-                    if digit_token is not None:
-                        allowed.add(digit_token)
-
-                if self.expecting_parameter and self.current_param:
-                    s = "".join(
-                        self.tokenizer_config.token_digit_map.get(t, "")
-                        for t in self.current_param
-                        if t in self.tokenizer_config.digit_tokens
-                    )
-                    if s in remaining_params:
-                        if not last_remaining_param:
-                            allowed.add(self.tokenizer_config.comma_id) 
-                        allowed.add(self.tokenizer_config.list_close_id)
-
-                if self.param_complete:
-                    if not last_remaining_param and not self.expecting_parameter:
-                        allowed.add(self.tokenizer_config.comma_id)
-                    allowed.add(self.tokenizer_config.list_close_id)
-
-                if self.expecting_parameter and not self.current_param:
-                    allowed.discard(self.tokenizer_config.list_close_id)
+                        break
+            elif self.param_complete:
+                if remaining_params:
+                    allowed.add(self.tokenizer_config.comma_id)
+                allowed.add(self.tokenizer_config.list_close_id)
             
             if allowed:
                 return list(allowed)  

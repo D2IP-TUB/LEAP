@@ -1,5 +1,5 @@
 from transformers import AutoTokenizer
-from typing import Dict, Any
+from typing import Dict
 
 
 model_configs = {
@@ -17,7 +17,7 @@ model_configs = {
         "log_dir": 'table_logs_llama',
         "hardware_config": {
             "num_workers": 1,
-            "tensor_parallel_size": 8,
+            "tensor_parallel_size": 4,
             "gpu_allocation": [0, 1, 2, 3, 4, 5, 6, 7]
         },
         "instruct": True
@@ -28,8 +28,7 @@ model_configs = {
         "hardware_config": {
             "num_workers": 2,
             "tensor_parallel_size": 2,
-            # "gpu_allocation": [1, 2, 3, 4]
-            "gpu_allocation": [1, 3, 5, 6]
+            "gpu_allocation": [1, 2, 3, 4]
         },
         "instruct": False
     },
@@ -56,10 +55,10 @@ model_configs = {
     "mistralai/Mixtral-8x7B-Instruct-v0.1":  {
         "log_dir": 'table_logs_mixtral_instruct',
         "hardware_config": {
-            "num_workers": 1,
+            "num_workers": 2,
             "tensor_parallel_size": 4,
-            # "gpu_allocation": [0, 1, 2, 3, 4, 5, 6, 7]
-            "gpu_allocation": [0, 1, 3, 5]
+            "gpu_allocation": [0, 1, 2, 3, 4, 5, 6, 7]
+            # "gpu_allocation": [1, 3, 5, 6]
             # [0, 1, 2, 3, 4, 5, 6, 7]
         },
         "instruct": True
@@ -215,6 +214,7 @@ class TokenizerConfig:
         self.paren_open_id = self._get_scalar_id("(")
         self.paren_close_id = self._get_scalar_id(")")
         self.quote_id = self._get_scalar_id('"')
+        self.row_id = self._get_scalar_id("row", "row_id")
 
         closing_quote_token_ids = dict(cfg.get("closing_quote_token_ids", {}))
 

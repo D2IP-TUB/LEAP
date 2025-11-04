@@ -8,15 +8,16 @@ def serialize_table_to_csv(table, max_chars=1500):
     
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(table['columns'])
+    writer.writerow([" "] + table['columns'])
     
-    char_count = len(','.join(table['columns']))
+    char_count = len(','.join([" "] + table['columns']))
     for i, row in enumerate(table['rows']):
         if i >= 10 or char_count > max_chars:
             break
-        row_str = ','.join(str(cell) for cell in row)
+        row_str = f"row {i}, {','.join(str(cell) for cell in row)}"
         if char_count + len(row_str) > max_chars:
             break
+        row = [f"row {i}"] + row
         writer.writerow(row)
         char_count += len(row_str)
     return output.getvalue().strip()

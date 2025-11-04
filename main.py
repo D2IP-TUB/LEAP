@@ -19,9 +19,9 @@ os.environ["VLLM_USE_V1"] = "0"
 os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 
 # Configuration
-# model_id = "meta-llama/Llama-2-70b-hf"
+model_id = "meta-llama/Llama-2-70b-hf"
 # model_id = "gpt2"
-model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+# model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
 # model_id = "mistralai/Mixtral-8x7B-v0.1"
 # model_id = "openai/gpt-oss-120b"
 # model_id = "openai/gpt-oss-20b"
@@ -48,9 +48,9 @@ LOGGING_CONFIG = {
 }
 
 # Load dataset
-dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
+# dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
 # dataset = load_from_disk("./answerable_questions/train")
-# dataset = load_dataset('json', data_files='dataset_simple.json', split='train')
+dataset = load_dataset('json', data_files='dataset_simple.json', split='train')
 
 def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
     """Parse action string into (action_name, args) tuple"""
@@ -66,7 +66,7 @@ def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
             
         action_name, args_str = action_str.split('(', 1)
         action_name = action_name.strip()
-        args_str = args_str.rstrip(')').strip()
+        args_str = args_str.rstrip(')').replace('row ', '').strip()
         # Extract list arguments
         if args_str.startswith('[') and args_str.endswith(']'):
             args_str = args_str.replace("\\", "\\\\")
@@ -326,7 +326,7 @@ async def cot_generation_function(request, worker, state_machines, logging_callb
         
         try:
             # Step 1: Dynamic Plan - Select action
-            action_name = await generate_action_selection(worker, question, current_table, action_history, request_id, state_machines, step, COT_ACTION_TEMPERATURE)
+            action_name = await generate_action_selection(model_config, worker, question, current_table, action_history, request_id, state_machines, step, COT_ACTION_TEMPERATURE)
             
             if not action_name:
                 validity_failures += 1
@@ -346,7 +346,7 @@ async def cot_generation_function(request, worker, state_machines, logging_callb
                 break
             
             # Step 2: Generate Args
-            args = await generate_action_arguments(worker, question, current_table, action_name, action_history, request_id, state_machines, step, COT_ARGS_TEMPERATURE)
+            args = await generate_action_arguments(model_config, worker, question, current_table, action_name, action_history, request_id, state_machines, step, COT_ARGS_TEMPERATURE)
             
             if args is None:
                 validity_failures += 1
