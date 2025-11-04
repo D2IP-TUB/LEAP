@@ -13,15 +13,14 @@ from table import apply_action, extract_table_values_for_eval, serialize_table_t
 from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
 from tokenizer_config import ModelConfig
 
-from tokenizer_config import tokenizer_config
-
 os.environ["VLLM_USE_V1"] = "0"
 os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 
 # Configuration
-model_id = "meta-llama/Llama-2-70b-hf"
+# model_id = "meta-llama/Llama-2-70b-hf"
+# model_id = "meta-llama/Llama-2-70b-chat-hf"
 # model_id = "gpt2"
-# model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
 # model_id = "mistralai/Mixtral-8x7B-v0.1"
 # model_id = "openai/gpt-oss-120b"
 # model_id = "openai/gpt-oss-20b"
@@ -49,8 +48,8 @@ LOGGING_CONFIG = {
 
 # Load dataset
 # dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
-# dataset = load_from_disk("./answerable_questions/train")
-dataset = load_dataset('json', data_files='dataset_simple.json', split='train')
+dataset = load_from_disk("./answerable_questions/train")
+# dataset = load_dataset('json', data_files='dataset_simple.json', split='train')
 
 def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
     """Parse action string into (action_name, args) tuple"""
@@ -189,8 +188,8 @@ async def iterative_generation_function(request, worker, state_machines, logging
         
         # Build prompt
         max_chars = 1500 if step == 0 else 1000
+        # table_str = serialize_table_to_csv(current_table, max_chars, crop=False)
         table_str = serialize_table_to_csv(current_table, max_chars)
-        
         step_prompt = f"Table:\n{table_str}\n\n"
         step_prompt += f"Question: {question}\n"
         

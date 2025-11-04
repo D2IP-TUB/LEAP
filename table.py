@@ -1,26 +1,55 @@
 from typing import List, Tuple, Dict, Any, Optional
 
 # Utility functions (table manipulation, parsing, etc.)
-def serialize_table_to_csv(table, max_chars=1500):
-    """Convert table to CSV string with limited characters"""
-    import io
-    import csv
+import io
+import csv
+from typing import Optional
+
+import io
+import csv
+
+import io
+import csv
+from typing import Optional, Sequence, Any, Dict
+
+
+def serialize_table_to_csv(
+    table: Dict[str, Any],
+    max_chars = 1500,
+    max_rows = 10,
+    crop = True
+) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+
+    # Write header
+    writer.writerow([" "] + list(table["columns"]))
+    current = out.getvalue()
+
+    if crop and len(current) > max_chars:
+            return current[:max_chars].rstrip()
     
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow([" "] + table['columns'])
-    
-    char_count = len(','.join([" "] + table['columns']))
-    for i, row in enumerate(table['rows']):
-        if i >= 10 or char_count > max_chars:
+    rows_written = 0
+    for i, row in enumerate(table["rows"]):
+        if crop and rows_written >= max_rows:
             break
-        row_str = f"row {i}, {','.join(str(cell) for cell in row)}"
-        if char_count + len(row_str) > max_chars:
+
+        # Measure the exact CSV for this row using a temp buffer
+        temp = io.StringIO()
+        temp_writer = csv.writer(temp)
+        temp_writer.writerow([f"row {i}"] + list(row))
+        delta = temp.getvalue()
+
+        # Check character budget if provided
+        if crop and len(current) + len(delta) > max_chars:
             break
-        row = [f"row {i}"] + row
-        writer.writerow(row)
-        char_count += len(row_str)
-    return output.getvalue().strip()
+
+        # Commit the row
+        out.write(delta)
+        current += delta
+        rows_written += 1
+
+    return current.rstrip()
 
 def apply_action(table: Dict[str, Any], action: str, args: List) -> Optional[Dict[str, Any]]:
     """Apply action to table and return new table state"""

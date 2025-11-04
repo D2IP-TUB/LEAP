@@ -553,7 +553,7 @@ def create_generation_config(use_constraints: bool = True,
         'generation_functions': generation_functions or {},
         'engine_config': engine_config or {
             'trust_remote_code': True,
-            'max_model_len': 2048, # prev 1024
+            'max_model_len': 6000, # prev 1024
             'gpu_memory_utilization': 0.8,
             'tensor_parallel_size': tensor_parallel_size, # tensor parralell -> weights split between n GPUs
             'max_num_batched_tokens': 8192,

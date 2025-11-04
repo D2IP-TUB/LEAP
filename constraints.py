@@ -177,7 +177,6 @@ class ConstraintStateMachine:
             self.current_param = []
             self.param_complete = False
             self.expecting_parameter = True
-            # self.current_column = None
 
     def _handle_params(self, token):
 
@@ -197,7 +196,7 @@ class ConstraintStateMachine:
                 token_map = self.column_token_map if self.current_action == "select_column" else self.row_token_map
                 
                 for param, tokens in token_map.items():
-                    exp = ((self.tokenizer_config.llama_tokenizer and clean_param == param) or self.current_param == tokens) and param not in self.selected_params
+                    exp = ((self.tokenizer_config.is_llama_tokenizer and clean_param == param) or self.current_param == tokens) and param not in self.selected_params
                     if exp:
                         self.selected_params.add(param)
                         self.param_complete = True
@@ -217,62 +216,6 @@ class ConstraintStateMachine:
                 self.expecting_parameter = True
             elif token == self.tokenizer_config.list_close_id:
                 self.state = "in_paren_close"
-
-    def _handle_row_param(self, token):
-        digit_tokens = self.tokenizer_config.digit_tokens
-
-        # Handle delimiter after a completed param even when no current_param is in progress
-        if self.param_complete and not self.current_param:
-            if token == self.tokenizer_config.comma_id:
-                # Move to expecting a new parameter (enable digits next)
-                self.param_complete = False
-                self.expecting_parameter = True
-                return
-            elif token == self.tokenizer_config.list_close_id:
-                # Close the list of params
-                self.state = "in_paren_close"
-                return
-
-        if self.current_param and (token == self.tokenizer_config.comma_id or token == self.tokenizer_config.list_close_id):
-            current_param_str = "".join(
-                [
-                    self.tokenizer_config.token_digit_map.get(p, "")
-                    for p in self.current_param
-                    if p in digit_tokens
-                ]
-            )
-            if current_param_str in self.valid_params["select_row"] and current_param_str not in self.selected_params:
-                self.selected_params.add(current_param_str)
-                self.param_complete = True
-                self.expecting_parameter = False
-                self.current_param = []
-                if token == self.tokenizer_config.comma_id:
-                    # Ready for next parameter
-                    self.param_complete = False
-                    self.expecting_parameter = True
-                elif token == self.tokenizer_config.list_close_id:
-                    self.state = "in_paren_close"
-            return
-
-        if token in digit_tokens and not self.param_complete:
-            if not self.current_param and self.expecting_parameter:
-
-                self.current_param.append(token)
-                self.param_complete = False
-                self.expecting_parameter = True
-
-            elif self.current_param and self.expecting_parameter:
-                self.current_param.append(token)
-                current_param_str = "".join(
-                    [
-                        self.tokenizer_config.token_digit_map.get(p, "")
-                        for p in self.current_param
-                        if p in digit_tokens
-                    ]
-                )
-        
-                self.param_complete = False
-                self.expecting_parameter = True
 
     def _handle_paren_close(self, token):
         

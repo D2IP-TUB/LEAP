@@ -17,7 +17,7 @@ model_configs = {
         "log_dir": 'table_logs_llama',
         "hardware_config": {
             "num_workers": 1,
-            "tensor_parallel_size": 4,
+            "tensor_parallel_size": 8,
             "gpu_allocation": [0, 1, 2, 3, 4, 5, 6, 7]
         },
         "instruct": True
@@ -55,11 +55,9 @@ model_configs = {
     "mistralai/Mixtral-8x7B-Instruct-v0.1":  {
         "log_dir": 'table_logs_mixtral_instruct',
         "hardware_config": {
-            "num_workers": 2,
+            "num_workers": 1,
             "tensor_parallel_size": 4,
-            "gpu_allocation": [0, 1, 2, 3, 4, 5, 6, 7]
-            # "gpu_allocation": [1, 3, 5, 6]
-            # [0, 1, 2, 3, 4, 5, 6, 7]
+            "gpu_allocation": [0, 1, 2, 3]
         },
         "instruct": True
     },
@@ -68,8 +66,7 @@ model_configs = {
         "hardware_config": {
             "num_workers": 1,
             "tensor_parallel_size": 4,
-            # "gpu_allocation": [0, 1, 2, 3, 4, 5, 6, 7]
-            "gpu_allocation": [0, 1, 3, 5]
+            "gpu_allocation": [0, 1, 2, 3]
         },
         "instruct": False
     },
@@ -206,7 +203,7 @@ class TokenizerConfig:
         self.tokenizer = tokenizer
         cfg = tokenizer_config[self.tokenizer.name_or_path]
 
-        self.llama_tokenizer = cfg.get("llama_tokenizer", False)
+        self.is_llama_tokenizer = cfg.get("llama_tokenizer", False)
 
         self.comma_id = self._get_scalar_id(",", "comma_id")
         self.list_open_id = self._get_scalar_id("[", "list_open_id")
@@ -214,7 +211,6 @@ class TokenizerConfig:
         self.paren_open_id = self._get_scalar_id("(")
         self.paren_close_id = self._get_scalar_id(")")
         self.quote_id = self._get_scalar_id('"')
-        self.row_id = self._get_scalar_id("row", "row_id")
 
         closing_quote_token_ids = dict(cfg.get("closing_quote_token_ids", {}))
 
@@ -232,17 +228,6 @@ class TokenizerConfig:
             "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
             "end": self.tokenizer.encode("end", add_special_tokens=False),
         }
-
-        self.token_digit_map: Dict[int, str] = {} # token_id -> "0".."9"
-        self.digit_token_map: Dict[str, int] = {} # "0".."9" -> token_id
-        self.digit_tokens: list[int] = [] # list[int]
-
-        for i in range(10):
-            tid = self.tokenizer.encode(str(i), add_special_tokens=False)[-1]
-            tid = int(tid)
-            self.digit_tokens.append(tid)
-            self.token_digit_map[tid] = str(i)
-            self.digit_token_map[str(i)] = tid
     
     def _get_scalar_id(self, symbol: str, override_key: str | None = None) -> int:
         token_ids_overrides = tokenizer_config[self.tokenizer.name_or_path].get("token_ids", {})
@@ -250,5 +235,5 @@ class TokenizerConfig:
             val = token_ids_overrides[override_key]
             return int(val)
 
-        tid = self.tokenizer.encode(symbol, add_special_tokens=False)[-1]
-        return int(tid)
+        token = self.tokenizer.encode(symbol, add_special_tokens=False)[-1]
+        return int(token)
