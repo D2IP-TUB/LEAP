@@ -1,16 +1,6 @@
-from typing import List, Tuple, Dict, Any, Optional
-
-# Utility functions (table manipulation, parsing, etc.)
-import io
 import csv
-from typing import Optional
-
 import io
-import csv
-
-import io
-import csv
-from typing import Optional, Sequence, Any, Dict
+from typing import List, Dict, Any, Optional
 
 
 def serialize_table_to_csv(

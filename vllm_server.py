@@ -11,7 +11,7 @@ import uuid
 import asyncio
 import multiprocessing as mp
 import queue
-from typing import List, Dict, Any, Optional, Tuple, Callable
+from typing import List, Dict, Any, Callable
 from vllm import AsyncLLMEngine, SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 

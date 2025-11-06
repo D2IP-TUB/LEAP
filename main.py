@@ -27,7 +27,7 @@ model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
 
 model_config = ModelConfig(model_id)
 
-output_file = "parallel_results.jsonl"
+output_file = "./logs/results.jsonl"
 
 # Configuration flags
 USE_GENERATION_CONSTRAINTS = True
@@ -39,7 +39,7 @@ COT_ARGS_TEMPERATURE = 0.7
 # Logging configuration
 LOGGING_CONFIG = {
     'enable_logging': True,
-    'log_dir': model_config.log_dir,
+    'log_dir': f"./logs/{model_config.log_dir}",
     'save_readable_tables': False,
     'compress_logs': False,
     'log_format': 'readable',
@@ -48,8 +48,8 @@ LOGGING_CONFIG = {
 
 # Load dataset
 # dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
-dataset = load_from_disk("./answerable_questions/train")
-# dataset = load_dataset('json', data_files='dataset_simple.json', split='train')
+# dataset = load_from_disk("./datasets/answerable_questions/train")
+dataset = load_dataset('json', data_files='./datasets/dataset_simple.json', split='train')
 
 def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
     """Parse action string into (action_name, args) tuple"""
