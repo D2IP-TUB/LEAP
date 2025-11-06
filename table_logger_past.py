@@ -82,7 +82,6 @@ class TableLogger:
         """Convert table to CSV string with limited characters"""
         if max_chars is None:
             max_chars = self.max_table_chars
-        
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(table['columns'])
@@ -106,14 +105,14 @@ class TableLogger:
             "columns": table['columns'][:5] + ["..."] if len(table['columns']) > 5 else table['columns']
         }
     
-    def log_table_state(self, 
+    def log_table_state(self, #1
                        request_id: str, 
                        step: int, 
                        action: str, 
                        table: Dict[str, Any],
                        success: bool = True, 
                        failure_type: Optional[str] = None, 
-                       generation_mode: Optional[str] = None,
+                       generation_mode: Optional[str] = None, 
                        model_type: Optional[str] = None) -> None:
         """
         Log table state with comprehensive information
@@ -202,43 +201,44 @@ class TableLogger:
         except Exception as e:
             print(f"Warning: Failed to write log entry: {e}")
     
-    def set_request_metadata(self, request_id: str, metadata: Dict[str, Any]) -> None:
         """Set metadata for a request"""
         self.request_metadata[request_id] = metadata
     
-    def get_request_logs(self, request_id: str) -> List[LogEntry]:
+    def get_request_logs(self, request_id: str) -> List[LogEntry]:#6
         """Get all log entries for a specific request"""
         return self.log_entries.get(request_id, [])
     
-    def analyze_request(self, request_id: str) -> Dict[str, Any]:
-        """Analyze logs for a specific request"""
-        logs = self.get_request_logs(request_id)
-        if not logs:
             return {"error": "No logs found for request"}
+    #     logs = self.get_request_logs(request_id)
+    #     if not logs:
+    #         return {"error": "No logs found for request"}
         
-        analysis = {
-            "request_id": request_id,
-            "total_steps": len(logs),
             "successful_steps": sum(1 for log in logs if log.success),
             "failed_steps": sum(1 for log in logs if not log.success),
             "generation_modes": list(set(log.generation_mode for log in logs if log.generation_mode)),
-            "failure_types": [log.failure_type for log in logs if log.failure_type],
-            "actions_taken": [log.action for log in logs],
-            "duration": logs[-1].timestamp - logs[0].timestamp if len(logs) > 1 else 0.0,
-            "completed": any(log.action.startswith('end') for log in logs)
-        }
+    #     analysis = {
+    #         "request_id": request_id,
+    #         "total_steps": len(logs),
+    #         "successful_steps": sum(1 for log in logs if log.success),
+    #         "failed_steps": sum(1 for log in logs if not log.success),
+    #         "generation_modes": list(set(log.generation_mode for log in logs if log.generation_mode)),
+    #         "failure_types": [log.failure_type for log in logs if log.failure_type],
+    #         "actions_taken": [log.action for log in logs],
+    #         "duration": logs[-1].timestamp - logs[0].timestamp if len(logs) > 1 else 0.0,
+    #         "completed": any(log.action.startswith('end') for log in logs)
+    #     }
         
-        # Table size progression
-        table_sizes = []
-        for log in logs:
-            if log.table_summary:
-                size = (log.table_summary.get('num_rows', 0), log.table_summary.get('num_columns', 0))
-                table_sizes.append(size)
-        analysis["table_size_progression"] = table_sizes
+    #     # Table size progression
+    #     table_sizes = []
+    #     for log in logs:
+    #         if log.table_summary:
+    #             size = (log.table_summary.get('num_rows', 0), log.table_summary.get('num_columns', 0))
+    #             table_sizes.append(size)
+    #     analysis["table_size_progression"] = table_sizes
         
-        return analysis
+    #     return analysis
     
-    def create_summary_report(self, generation_mode: str = None) -> Dict[str, Any]:
+    def create_summary_report(self, generation_mode: str = None) -> Dict[str, Any]:#8
         """Create comprehensive summary report of all logged transformations"""
         if not self.enable_logging:
             return {"error": "Logging is disabled"}
@@ -455,36 +455,36 @@ class TableLogger:
             print(f"Error loading logs from file: {e}")
             return []
     
-    def list_table_files_for_request(self, request_id: str) -> List[str]:
-        """List all table CSV files for a specific request"""
-        if not self.enable_logging or not self.save_readable_tables:
-            return []
+    # def list_table_files_for_request(self, request_id: str) -> List[str]:#13
+    #     """List all table CSV files for a specific request"""
+    #     if not self.enable_logging or not self.save_readable_tables:
+    #         return []
         
-        try:
-            files = list(self.log_dir.glob(f"{request_id}_*.csv"))
-            return sorted([f.name for f in files])
-        except Exception:
-            return []
+    #     try:
+    #         files = list(self.log_dir.glob(f"{request_id}_*.csv"))
+    #         return sorted([f.name for f in files])
+    #     except Exception:
+    #         return []
     
-    def cleanup_logs(self, older_than_hours: int = 24) -> int:
-        """Clean up old log files"""
-        if not self.enable_logging:
-            return 0
+    # def cleanup_logs(self, older_than_hours: int = 24) -> int:#14 #remove
+    #     """Clean up old log files"""
+    #     if not self.enable_logging:
+    #         return 0
         
-        cutoff_time = time.time() - (older_than_hours * 3600)
-        removed_count = 0
+    #     cutoff_time = time.time() - (older_than_hours * 3600)
+    #     removed_count = 0
         
-        try:
-            for file_path in self.log_dir.iterdir():
-                if file_path.is_file() and file_path.stat().st_mtime < cutoff_time:
-                    file_path.unlink()
-                    removed_count += 1
-        except Exception as e:
-            print(f"Error during cleanup: {e}")
+    #     try:
+    #         for file_path in self.log_dir.iterdir():
+    #             if file_path.is_file() and file_path.stat().st_mtime < cutoff_time:
+    #                 file_path.unlink()
+    #                 removed_count += 1
+    #     except Exception as e:
+    #         print(f"Error during cleanup: {e}")
         
-        return removed_count
+    #     return removed_count
     
-    def get_logging_stats(self) -> Dict[str, Any]:
+    def get_logging_stats(self) -> Dict[str, Any]:#15
         """Get current logging statistics"""
         return {
             "enabled": self.enable_logging,
@@ -497,109 +497,109 @@ class TableLogger:
 
 
 # Factory functions for common configurations
-def create_production_logger(log_dir: str = "table_logs") -> TableLogger:
-    """Create logger for production use with minimal overhead"""
-    return TableLogger(
-        log_dir=log_dir,
-        enable_logging=True,
-        save_readable_tables=False,  # Reduced I/O
-        compress_logs=True,
-        log_format="json",
-        max_table_chars=1000
-    )
+# def create_production_logger(log_dir: str = "table_logs") -> TableLogger:#16
+#     """Create logger for production use with minimal overhead"""
+#     return TableLogger(
+#         log_dir=log_dir,
+#         enable_logging=True,
+#         save_readable_tables=False,  # Reduced I/O
+#         compress_logs=True,
+#         log_format="json",
+#         max_table_chars=1000
+#     )
 
 
-def create_debug_logger(log_dir: str = "table_logs") -> TableLogger:
-    """Create logger for debugging with full details"""
-    return TableLogger(
-        log_dir=log_dir,
-        enable_logging=True,
-        save_readable_tables=True,
-        compress_logs=False,
-        log_format="readable",
-        max_table_chars=10000
-    )
+# def create_debug_logger(log_dir: str = "table_logs") -> TableLogger:#17
+#     """Create logger for debugging with full details"""
+#     return TableLogger(
+#         log_dir=log_dir,
+#         enable_logging=True,
+#         save_readable_tables=True,
+#         compress_logs=False,
+#         log_format="readable",
+#         max_table_chars=10000
+#     )
 
 
-def create_analysis_logger(log_dir: str = "table_logs") -> TableLogger:
-    """Create logger optimized for post-hoc analysis"""
-    return TableLogger(
-        log_dir=log_dir,
-        enable_logging=True,
-        save_readable_tables=True,
-        compress_logs=False,
-        log_format="json",
-        max_table_chars=5000
-    )
+# def create_analysis_logger(log_dir: str = "table_logs") -> TableLogger:#18
+#     """Create logger optimized for post-hoc analysis"""
+#     return TableLogger(
+#         log_dir=log_dir,
+#         enable_logging=True,
+#         save_readable_tables=True,
+#         compress_logs=False,
+#         log_format="json",
+#         max_table_chars=5000
+#     )
 
 
 # Context manager for automatic logging
-class LoggingContext:
-    """Context manager for request-scoped logging"""
+# class LoggingContext:
+#     """Context manager for request-scoped logging"""
     
-    def __init__(self, logger: TableLogger, request_id: str, metadata: Dict[str, Any] = None):
-        self.logger = logger
-        self.request_id = request_id
-        self.metadata = metadata or {}
-        self.step_counter = 0
+#     def __init__(self, logger: TableLogger, request_id: str, metadata: Dict[str, Any] = None):
+#         self.logger = logger
+#         self.request_id = request_id
+#         self.metadata = metadata or {}
+#         self.step_counter = 0
     
-    def __enter__(self):
-        self.logger.set_request_metadata(self.request_id, self.metadata)
-        return self
+#     def __enter__(self):
+#         self.logger.set_request_metadata(self.request_id, self.metadata)
+#         return self
     
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type:
-            self.logger.log_table_state(
-                self.request_id, 
-                self.step_counter,
-                f"context_error: {exc_type.__name__}",
-                {"columns": [], "rows": []},  # Empty table for error case
-                success=False,
-                failure_type="context_error"
-            )
+#     def __exit__(self, exc_type, exc_val, exc_tb):
+#         if exc_type:
+#             self.logger.log_table_state(
+#                 self.request_id, 
+#                 self.step_counter,
+#                 f"context_error: {exc_type.__name__}",
+#                 {"columns": [], "rows": []},  # Empty table for error case
+#                 success=False,
+#                 failure_type="context_error"
+#             )
     
-    def log_step(self, action: str, table: Dict[str, Any], success: bool = True, 
-                failure_type: str = None, generation_mode: str = None,  model_type: str = None):
-        """Log a step within this context"""
-        self.logger.log_table_state(
-            self.request_id, 
-            self.step_counter,
-            action, 
-            table,
-            success=success,
-            failure_type=failure_type,
-            generation_mode=generation_mode,
-            model_type=model_type
-        )
-        self.step_counter += 1
+#     def log_step(self, action: str, table: Dict[str, Any], success: bool = True, 
+#                 failure_type: str = None, generation_mode: str = None, model_type: str = None):
+#         """Log a step within this context"""
+#         self.logger.log_table_state(
+#             self.request_id, 
+#             self.step_counter,
+#             action, 
+#             table,
+#             success=success,
+#             failure_type=failure_type,
+#             generation_mode=generation_mode,
+#             model_type=model_type
+#         )
+#         self.step_counter += 1
 
 
-if __name__ == "__main__":
-    # Example usage
-    logger = create_debug_logger()
+# if __name__ == "__main__":
+#     # Example usage
+#     logger = create_debug_logger()
     
-    # Example table
-    sample_table = {
-        "columns": ["Name", "Age", "City"],
-        "rows": [
-            ["Alice", "25", "New York"],
-            ["Bob", "30", "San Francisco"],
-            ["Charlie", "35", "Chicago"]
-        ]
-    }
+#     # Example table
+#     sample_table = {
+#         "columns": ["Name", "Age", "City"],
+#         "rows": [
+#             ["Alice", "25", "New York"],
+#             ["Bob", "30", "San Francisco"],
+#             ["Charlie", "35", "Chicago"]
+#         ]
+#     }
     
-    # Example logging
-    with LoggingContext(logger, "test_request", {"question": "Test question"}) as ctx:
-        ctx.log_step("initial", sample_table, generation_mode="test")
-        ctx.log_step("select_column([\"Name\", \"Age\"])", 
-                    {"columns": ["Name", "Age"], "rows": [["Alice", "25"], ["Bob", "30"]]},
-                    generation_mode="test")
-        ctx.log_step("end()", 
-                    {"columns": ["Name", "Age"], "rows": [["Alice", "25"], ["Bob", "30"]]},
-                    generation_mode="test")
+#     # Example logging
+#     with LoggingContext(logger, "test_request", {"question": "Test question"}) as ctx:
+#         ctx.log_step("initial", sample_table, generation_mode="test")
+#         ctx.log_step("select_column([\"Name\", \"Age\"])", 
+#                     {"columns": ["Name", "Age"], "rows": [["Alice", "25"], ["Bob", "30"]]},
+#                     generation_mode="test")
+#         ctx.log_step("end()", 
+#                     {"columns": ["Name", "Age"], "rows": [["Alice", "25"], ["Bob", "30"]]},
+#                     generation_mode="test")
     
-    # Generate report
-    logger.write_summary_report("test")
+#     # Generate report
+#     logger.write_summary_report("test")
     
-    # Analyze specific request
-    logger.analyze_table_logs("test_request")
+#     # Analyze specific request
+#     logger.analyze_table_logs("test_request")

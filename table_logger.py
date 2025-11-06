@@ -199,7 +199,7 @@ class TableLogger:
         except Exception as e:
             print(f"Warning: Failed to write log entry: {e}")
 
-    def create_summary_report(self, generation_mode: str = None) -> Dict[str, Any]:#8
+    def create_summary_report(self, generation_mode: str = None) -> Dict[str, Any]:
         """Create comprehensive summary report of all logged transformations"""
         if not self.enable_logging:
             return {"error": "Logging is disabled"}
@@ -348,7 +348,7 @@ class TableLogger:
             validity_rate = summary_data.get("validity_rate", 0.0)
             print(f"Validity rate (parseable actions): {validity_rate:.1%}")
      
-    def get_logging_stats(self) -> Dict[str, Any]:#15
+    def get_logging_stats(self) -> Dict[str, Any]:
         """Get current logging statistics"""
         return {
             "enabled": self.enable_logging,
