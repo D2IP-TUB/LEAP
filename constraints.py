@@ -331,3 +331,136 @@ def create_constraint_logits_processor(table, tokenizer, request_id, state_machi
         return logits + mask
     
     return constraint_logits_processor
+
+# NEW: Action constraint for CoT dynamic_plan step
+class ActionOnlyConstraintStateMachine:
+    """Simplified state machine that only allows action selection (no parameters)"""
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.reset()
+        
+    def reset(self):
+        self.state = "start"
+        self.generated_tokens = []
+        self.finished = False
+        self.possible_actions = ["select_row", "select_column", "end"]
+        self.action_prefix = []
+        
+    def update_state(self, token):
+        if self.finished:
+            return
+            
+        self.generated_tokens.append(token)
+        
+        if self.state == "start":
+            self._handle_start(token)
+        elif self.state == "in_action":
+            self._handle_action(token)
+            
+    def _handle_start(self, token):
+        action_tokens = {
+            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
+            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
+            "end": self.tokenizer.encode("end", add_special_tokens=False)
+        }
+        
+        matching_actions = []
+        for action in self.possible_actions:
+            tokens = action_tokens[action]
+            if tokens and token == tokens[0]:
+                matching_actions.append(action)
+        
+        if matching_actions:
+            self.state = "in_action"
+            self.possible_actions = matching_actions
+            self.action_prefix = [token]
+            
+    def _handle_action(self, token):
+        action_tokens = {
+            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
+            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
+            "end": self.tokenizer.encode("end", add_special_tokens=False)
+        }
+        
+        self.action_prefix.append(token)
+        
+        # Check if any action is completed
+        for action in self.possible_actions:
+            tokens = action_tokens[action]
+            if tokens and self.action_prefix == tokens:
+                self.finished = True
+                return
+        
+        # Filter possible actions
+        next_possible = []
+        for action in self.possible_actions:
+            tokens = action_tokens[action]
+            if tokens and len(self.action_prefix) < len(tokens) and tokens[:len(self.action_prefix)] == self.action_prefix:
+                next_possible.append(action)
+        
+        if not next_possible:
+            self.finished = True
+        else:
+            self.possible_actions = next_possible
+            
+    def allowed_tokens(self):
+        if self.finished:
+            return [self.tokenizer.eos_token_id]
+            
+        action_tokens = {
+            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
+            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
+            "end": self.tokenizer.encode("end", add_special_tokens=False)
+        }
+        
+        if self.state == "start":
+            allowed = set()
+            for action in self.possible_actions:
+                tokens = action_tokens[action]
+                if tokens:
+                    allowed.add(tokens[0])
+            return list(allowed)
+            
+        elif self.state == "in_action":
+            allowed = set()
+            for action in self.possible_actions:
+                tokens = action_tokens[action]
+                if tokens and len(self.action_prefix) < len(tokens):
+                    allowed.add(tokens[len(self.action_prefix)])
+            return list(allowed) if allowed else [self.tokenizer.eos_token_id]
+            
+        return [self.tokenizer.eos_token_id]
+
+# NEW: Action-only constraint processor for CoT dynamic_plan
+def create_action_only_constraint_processor(tokenizer, request_id, state_machines_dict):
+    """Create a logits processor that only allows action selection (no parameters)"""
+
+    def action_constraint_processor(prompt_token_ids, generated_token_ids, logits):
+        # Get or create state machine for this request
+        if request_id not in state_machines_dict:
+            state_machines_dict[request_id] = ActionOnlyConstraintStateMachine(tokenizer)
+
+        sm = state_machines_dict[request_id]
+
+        # Update state machine with generated tokens
+        if len(generated_token_ids) > len(sm.generated_tokens):
+            new_tokens = generated_token_ids[len(sm.generated_tokens):]
+            for token in new_tokens:
+                sm.update_state(token)
+
+        # Get allowed tokens and mask logits
+        try:
+            allowed_tokens = sm.allowed_tokens()
+        except Exception as e:
+            print(f"Error in action constraint processing: {e}")
+            return logits
+
+        # Create mask
+        mask = torch.full_like(logits, float('-inf'))
+        for token_id in allowed_tokens:
+            if token_id < len(logits):
+                mask[token_id] = 0.0
+
+        return logits + mask
+
+    return action_constraint_processor

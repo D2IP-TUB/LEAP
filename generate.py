@@ -4,7 +4,7 @@ import re
 
 from vllm import SamplingParams
 
-from constraints import create_constraint_logits_processor
+from constraints import create_action_only_constraint_processor, create_constraint_logits_processor
 from table import serialize_table_to_csv
 
 def build_dynamic_plan_prompt(model_config, question: str, table: Dict[str, Any], action_history: List[str]) -> str:

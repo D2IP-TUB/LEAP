@@ -11,7 +11,7 @@ from eval import to_value_list, check_denotation
 from generate import generate_action_arguments, generate_action_selection, generate_single_action
 from table import apply_action, extract_table_values_for_eval, serialize_table_to_csv
 from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
-from tokenizer_config import ModelConfig
+from model_config import ModelConfig
 
 os.environ["VLLM_USE_V1"] = "0"
 os.environ["VLLM_SERVER_DEV_MODE"] = "1"
@@ -19,8 +19,8 @@ os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 # Configuration
 # model_id = "meta-llama/Llama-2-70b-hf"
 # model_id = "meta-llama/Llama-2-70b-chat-hf"
-# model_id = "gpt2"
-model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+model_id = "gpt2"
+# model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
 # model_id = "mistralai/Mixtral-8x7B-v0.1"
 # model_id = "openai/gpt-oss-120b"
 # model_id = "openai/gpt-oss-20b"
@@ -493,15 +493,14 @@ def main():
             'cot_generation': cot_generation_function
         },
         logging_config=logging_config,
-        tensor_parallel_size=model_config.tensor_parallel_size
     )
     
     # Initialize the server
     num_workers = 1
     server = ProcessParallelVLLM(
         model_id=model_id,
-        num_workers=model_config.num_workers,
-        gpu_allocation=model_config.gpu_allocation,
+        num_workers=num_workers,
+        gpu_allocation=[2, 3, 4, 5],
         generation_config=generation_config
     )
     
