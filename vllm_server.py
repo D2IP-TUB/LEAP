@@ -394,7 +394,7 @@ class ProcessParallelVLLM:
     
     def generate_batch(self, 
                       requests: List[Dict[str, Any]], 
-                      timeout_per_request: int = 100) -> List[Dict[str, Any]]: # raised for debugging
+                      timeout_per_request: int = 180) -> List[Dict[str, Any]]:
         """
         Generate responses for batch of requests
         
