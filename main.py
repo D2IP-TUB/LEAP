@@ -7,6 +7,7 @@ import re
 from typing import List, Tuple, Dict, Any, Optional
 from datasets import load_dataset
 from vllm import SamplingParams
+from model_config import ModelConfig
 from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
 from constraints import create_action_only_constraint_processor, create_constraint_logits_processor
 from eval import to_value_list, check_denotation
@@ -16,6 +17,9 @@ os.environ["VLLM_USE_V1"] = "0"
 
 # Configuration
 model_id = "gpt2"
+
+model_config = ModelConfig(model_id)
+
 output_file = "parallel_results.jsonl"
 
 # Configuration flags
@@ -1081,7 +1085,7 @@ def main():
         max_table_chars=LOGGING_CONFIG['max_table_chars']
     )
     
-    # Create generation configuration with logging
+      # Create generation configuration with logging
     generation_config = create_generation_config(
         use_constraints=USE_GENERATION_CONSTRAINTS,
         use_cot=USE_CHAIN_OF_TABLE,
@@ -1090,15 +1094,16 @@ def main():
             'iterative_generation': iterative_generation_function,
             'cot_generation': cot_generation_function
         },
-        logging_config=logging_config
+        logging_config=logging_config,
+        tensor_parallel_size=model_config.tensor_parallel_size
     )
     
     # Initialize the server
-    num_workers = 4
+    num_workers = 1
     server = ProcessParallelVLLM(
         model_id=model_id,
-        num_workers=num_workers,
-        gpu_allocation=[2, 3, 4, 5],
+        num_workers=model_config.num_workers,
+        gpu_allocation=model_config.gpu_allocation,
         generation_config=generation_config
     )
     
