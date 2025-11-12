@@ -126,7 +126,6 @@ class TableLogger:
             failure_type: Type of failure if unsuccessful
             generation_mode: Generation mode used
             model_type: LLM model used
-
         """
         if not self.enable_logging:
             return
@@ -201,6 +200,7 @@ class TableLogger:
         except Exception as e:
             print(f"Warning: Failed to write log entry: {e}")
     
+    def set_request_metadata(self, request_id: str, metadata: Dict[str, Any]) -> None:#5
         """Set metadata for a request"""
         self.request_metadata[request_id] = metadata
     
@@ -208,14 +208,12 @@ class TableLogger:
         """Get all log entries for a specific request"""
         return self.log_entries.get(request_id, [])
     
-            return {"error": "No logs found for request"}
+    # def analyze_request(self, request_id: str) -> Dict[str, Any]:#7
+    #     """Analyze logs for a specific request"""
     #     logs = self.get_request_logs(request_id)
     #     if not logs:
     #         return {"error": "No logs found for request"}
         
-            "successful_steps": sum(1 for log in logs if log.success),
-            "failed_steps": sum(1 for log in logs if not log.success),
-            "generation_modes": list(set(log.generation_mode for log in logs if log.generation_mode)),
     #     analysis = {
     #         "request_id": request_id,
     #         "total_steps": len(logs),

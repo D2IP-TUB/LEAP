@@ -104,7 +104,7 @@ class TableLogger:
             "columns": table['columns'][:5] + ["..."] if len(table['columns']) > 5 else table['columns']
         }
     
-    def log_table_state(self, #1
+    def log_table_state(self, 
                        request_id: str, 
                        step: int, 
                        action: str, 
@@ -182,13 +182,13 @@ class TableLogger:
         except Exception as e:
             print(f"Warning: Failed to save table CSV: {e}")
     
-    def _clean_filename(self, action: str) -> str:#3
+    def _clean_filename(self, action: str) -> str:
         """Clean action string for use in filename"""
         clean_action = action.replace('(', '_').replace(')', '').replace('[', '').replace(']', '')
         clean_action = clean_action.replace('"', '').replace(',', '_').replace(' ', '_')
         return clean_action[:50]  # Limit length
     
-    def _write_log_entry(self, log_entry: LogEntry) -> None:#4
+    def _write_log_entry(self, log_entry: LogEntry) -> None:
         """Write log entry to file"""
         try:
             log_filename = f"{log_entry.request_id}_log.json"
@@ -305,7 +305,7 @@ class TableLogger:
         
         return summary_data
     
-    def write_summary_report(self, generation_mode: str = None) -> None:#9
+    def write_summary_report(self, generation_mode: str = None) -> None:
         """Write summary report to file"""
         summary_data = self.create_summary_report(generation_mode)
         
@@ -320,7 +320,7 @@ class TableLogger:
         except Exception as e:
             print(f"Error creating summary report: {e}")
     
-    def _print_summary_stats(self, summary_data: Dict[str, Any]) -> None:#10
+    def _print_summary_stats(self, summary_data: Dict[str, Any]) -> None:
         """Print summary statistics to console"""
         print(f"Generation mode: {summary_data.get('generation_mode', 'unknown')}")
         print(f"Total requests: {summary_data.get('total_requests', 0)}")
