@@ -200,15 +200,15 @@ class TableLogger:
         except Exception as e:
             print(f"Warning: Failed to write log entry: {e}")
     
-    def set_request_metadata(self, request_id: str, metadata: Dict[str, Any]) -> None:#5
+    def set_request_metadata(self, request_id: str, metadata: Dict[str, Any]) -> None:
         """Set metadata for a request"""
         self.request_metadata[request_id] = metadata
     
-    def get_request_logs(self, request_id: str) -> List[LogEntry]:#6
+    def get_request_logs(self, request_id: str) -> List[LogEntry]:
         """Get all log entries for a specific request"""
         return self.log_entries.get(request_id, [])
     
-    # def analyze_request(self, request_id: str) -> Dict[str, Any]:#7
+    # def analyze_request(self, request_id: str) -> Dict[str, Any]:
     #     """Analyze logs for a specific request"""
     #     logs = self.get_request_logs(request_id)
     #     if not logs:
@@ -236,7 +236,7 @@ class TableLogger:
         
     #     return analysis
     
-    def create_summary_report(self, generation_mode: str = None) -> Dict[str, Any]:#8
+    def create_summary_report(self, generation_mode: str = None) -> Dict[str, Any]:
         """Create comprehensive summary report of all logged transformations"""
         if not self.enable_logging:
             return {"error": "Logging is disabled"}
@@ -453,7 +453,7 @@ class TableLogger:
             print(f"Error loading logs from file: {e}")
             return []
     
-    # def list_table_files_for_request(self, request_id: str) -> List[str]:#13
+    # def list_table_files_for_request(self, request_id: str) -> List[str]:
     #     """List all table CSV files for a specific request"""
     #     if not self.enable_logging or not self.save_readable_tables:
     #         return []
@@ -464,7 +464,7 @@ class TableLogger:
     #     except Exception:
     #         return []
     
-    # def cleanup_logs(self, older_than_hours: int = 24) -> int:#14 #remove
+    # def cleanup_logs(self, older_than_hours: int = 24) -> int:
     #     """Clean up old log files"""
     #     if not self.enable_logging:
     #         return 0
@@ -482,7 +482,7 @@ class TableLogger:
         
     #     return removed_count
     
-    def get_logging_stats(self) -> Dict[str, Any]:#15
+    def get_logging_stats(self) -> Dict[str, Any]:
         """Get current logging statistics"""
         return {
             "enabled": self.enable_logging,
@@ -495,7 +495,7 @@ class TableLogger:
 
 
 # Factory functions for common configurations
-# def create_production_logger(log_dir: str = "table_logs") -> TableLogger:#16
+# def create_production_logger(log_dir: str = "table_logs") -> TableLogger:
 #     """Create logger for production use with minimal overhead"""
 #     return TableLogger(
 #         log_dir=log_dir,
@@ -507,7 +507,7 @@ class TableLogger:
 #     )
 
 
-# def create_debug_logger(log_dir: str = "table_logs") -> TableLogger:#17
+# def create_debug_logger(log_dir: str = "table_logs") -> TableLogger:
 #     """Create logger for debugging with full details"""
 #     return TableLogger(
 #         log_dir=log_dir,
@@ -519,7 +519,7 @@ class TableLogger:
 #     )
 
 
-# def create_analysis_logger(log_dir: str = "table_logs") -> TableLogger:#18
+# def create_analysis_logger(log_dir: str = "table_logs") -> TableLogger:
 #     """Create logger optimized for post-hoc analysis"""
 #     return TableLogger(
 #         log_dir=log_dir,
