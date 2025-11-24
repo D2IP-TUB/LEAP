@@ -11,7 +11,7 @@ import uuid
 import asyncio
 import multiprocessing as mp
 import queue
-from typing import List, Dict, Any, Optional, Tuple, Callable
+from typing import List, Dict, Any, Callable
 from vllm import AsyncLLMEngine, SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 
@@ -307,11 +307,26 @@ class ProcessParallelVLLM:
     
     def _create_workers(self):
         """Create worker processes with GPU allocation"""
+
+        tensor_parallel_size = self.generation_config["engine_config"]["tensor_parallel_size"]
+
+        if tensor_parallel_size > 1:
+
+            print(f"Spawning workers with {tensor_parallel_size} GPUs allocated.")
+
         for worker_id in range(self.num_workers):
-            gpu_id = [self.available_gpus[worker_id % len(self.available_gpus)]]
+            if tensor_parallel_size > 1:
+                first_gpu = worker_id * tensor_parallel_size
+                final_gpu = first_gpu + tensor_parallel_size
+                gpu_ids = self.available_gpus[first_gpu:final_gpu]
+                print(f"Assigning GPUs {gpu_ids} to worker {worker_id}")
+            else:
+                gpu_ids = [self.available_gpus[worker_id % len(self.available_gpus)]]
+                print(f"Assigning GPU {gpu_ids} to worker {worker_id}")
+
             worker = VLLMWorkerProcess(
                 worker_id=worker_id,
-                gpu_ids=gpu_id,
+                gpu_ids=gpu_ids,
                 model_id=self.model_id,
                 input_queue=self.input_queue,
                 output_queue=self.output_queue,
@@ -513,7 +528,8 @@ def create_generation_config(use_constraints: bool = True,
                            constraint_processors: Dict[str, Callable] = None,
                            generation_functions: Dict[str, Callable] = None,
                            engine_config: Dict[str, Any] = None,
-                           logging_config: Dict[str, Any] = None) -> Dict[str, Any]:
+                           logging_config: Dict[str, Any] = None, 
+                           tensor_parallel_size = 1) -> Dict[str, Any]:
     """
     Create a generation configuration dictionary with logging support
     
@@ -539,7 +555,7 @@ def create_generation_config(use_constraints: bool = True,
             'trust_remote_code': True,
             'max_model_len': 1024,
             'gpu_memory_utilization': 0.8,
-            'tensor_parallel_size': 1,
+            'tensor_parallel_size': tensor_parallel_size, # tensor parralell -> weights split between n GPUs
             'max_num_batched_tokens': 8192,
             'max_num_seqs': 32,
         },
