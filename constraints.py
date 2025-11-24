@@ -1,12 +1,14 @@
 import torch
 
+from tokenizer_config import TokenizerConfig
+
 class ConstraintStateMachine:
     """State machine for constraint processing with optional global action constraints"""
-    def __init__(self, table, tokenizer, digit_token_map, action_history=None, use_global_constraints=True):
+    def __init__(self, table, tokenizer, action_history=None, use_global_constraints=True):
         self.tokenizer = tokenizer
         self.table = table
-        self.digit_token_map = digit_token_map
         self.use_global_constraints = use_global_constraints
+        self.tokenizer_config = TokenizerConfig(self.tokenizer)
         
         # Parse action history to determine previously used action types (only if global constraints are enabled)
         if self.use_global_constraints:
@@ -18,7 +20,7 @@ class ConstraintStateMachine:
         
         num_rows = min(500, len(table['rows']))
         self.valid_params = {
-            "select_row": [str(i) for i in range(num_rows)],
+            "select_row": [f"row {i}" for i in range(num_rows)],
             "select_column": table['columns'],
             "end": []
         }
@@ -29,6 +31,13 @@ class ConstraintStateMachine:
             tokens = tokenizer.encode(quoted, add_special_tokens=False)
             if tokens:
                 self.column_token_map[col] = tokens
+
+        self.row_token_map = {}
+        for row in self.valid_params["select_row"]:
+            quoted = f'"{row}"'
+            tokens = tokenizer.encode(quoted, add_special_tokens=False)
+            if tokens:
+                self.row_token_map[row] = tokens
 
     def _parse_action_history(self, action_history):
         """Parse action history to extract previously used action types"""
@@ -50,7 +59,6 @@ class ConstraintStateMachine:
         self.finished = False
         self.selected_params = set()
         self.current_param = []
-        self.has_parameter = False
         self.param_complete = False
         self.expecting_parameter = False
         
@@ -109,15 +117,11 @@ class ConstraintStateMachine:
             self._handle_paren_close(token)
 
     def _handle_start(self, token):
-        action_tokens = {
-            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
-            "end": self.tokenizer.encode("end", add_special_tokens=False)
-        }
+        
         
         matching_actions = []
         for action in self.possible_actions:  # Use filtered possible_actions
-            tokens = action_tokens[action]
+            tokens = self.tokenizer_config.action_tokens[action]
             if tokens and token == tokens[0]:
                 matching_actions.append(action)
         
@@ -127,17 +131,13 @@ class ConstraintStateMachine:
             self.action_prefix = [token]
 
     def _handle_action(self, token):
-        action_tokens = {
-            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
-            "end": self.tokenizer.encode("end", add_special_tokens=False)
-        }
+        
         
         self.action_prefix.append(token)
         
         completed_actions = []
         for action in self.possible_actions:
-            tokens = action_tokens[action]
+            tokens = self.tokenizer_config.action_tokens[action]
             if tokens and self.action_prefix == tokens:
                 completed_actions.append(action)
         
@@ -152,7 +152,7 @@ class ConstraintStateMachine:
         
         next_possible = []
         for action in self.possible_actions:
-            tokens = action_tokens[action]
+            tokens = self.tokenizer_config.action_tokens[action]
             if tokens and len(self.action_prefix) < len(tokens) and tokens[:len(self.action_prefix)] == self.action_prefix:
                 next_possible.append(action)
         
@@ -166,47 +166,38 @@ class ConstraintStateMachine:
             self.finished = True
             return
             
-        paren_open_id = self.tokenizer.encode("(", add_special_tokens=False)[0]
-        if token == paren_open_id:
+        
+        if token == self.tokenizer_config.paren_open_id:
             self.state = "in_paren_open"
 
     def _handle_paren_open(self, token):
-        list_open_id = self.tokenizer.encode("[", add_special_tokens=False)[0]
-        if token == list_open_id:
+       
+        if token == self.tokenizer_config.list_open_id:
             self.state = "in_params"
             self.current_param = []
             self.param_complete = False
             self.expecting_parameter = True
-            self.current_column = None
 
     def _handle_params(self, token):
-        if self.current_action == "select_column":
-            self._handle_column_param(token)
-        else:
-            self._handle_row_param(token)
 
-    def _handle_column_param(self, token):
-        quote_id = self.tokenizer.encode('"', add_special_tokens=False)[0]
-        comma_id = self.tokenizer.encode(",", add_special_tokens=False)[0]
-        list_close_id = self.tokenizer.encode("]", add_special_tokens=False)[0]
-        
         if not self.current_param and self.expecting_parameter:
-            if token == quote_id:
+            if token == self.tokenizer_config.quote_id:
                 self.current_param.append(token)
-                self.current_column = []
             return
         
-        if self.current_param and self.current_param[0] == quote_id:
-            if token == quote_id:
+        if self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
+            if token in self.tokenizer_config.closing_quotes_tokens:
                 self.current_param.append(token)
                 param_text = self.tokenizer.decode(self.current_param)
                 clean_param = param_text.strip('"')
                 
                 is_valid = False
-                for col, tokens in self.column_token_map.items():
-                    if self.current_param == tokens and col not in self.selected_params:
-                        self.selected_params.add(col)
-                        self.has_parameter = True
+                token_map = self.column_token_map if self.current_action == "select_column" else self.row_token_map
+                
+                for param, tokens in token_map.items():
+                    exp = ((self.tokenizer_config.is_llama_tokenizer and clean_param == param) or self.current_param == tokens) and param not in self.selected_params
+                    if exp:
+                        self.selected_params.add(param)
                         self.param_complete = True
                         self.expecting_parameter = False
                         is_valid = True
@@ -216,48 +207,18 @@ class ConstraintStateMachine:
                     self.param_complete = False
                 
                 self.current_param = []
-                self.current_column = None
             else:
                 self.current_param.append(token)
-                if self.current_column is None:
-                    self.current_column = []
-                self.current_column.append(token)
         elif self.param_complete:
-            if token == comma_id:
+            if token == self.tokenizer_config.comma_id:
                 self.param_complete = False
                 self.expecting_parameter = True
-                self.current_column = None
-            elif token == list_close_id:
-                self.state = "in_paren_close"
-
-    def _handle_row_param(self, token):
-        comma_id = self.tokenizer.encode(",", add_special_tokens=False)[0]
-        list_close_id = self.tokenizer.encode("]", add_special_tokens=False)[0]
-        digit_tokens = [self.tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(10)]
-        
-        if not self.current_param and self.expecting_parameter:
-            if token in digit_tokens:
-                num_str = self.digit_token_map.get(token, str(token))
-                if (num_str in self.valid_params["select_row"] and 
-                    num_str not in self.selected_params):
-                    self.selected_params.add(num_str)
-                    self.has_parameter = True
-                    self.param_complete = True
-                    self.expecting_parameter = False
-                else:
-                    self.param_complete = False
-            return
-        
-        if self.param_complete:
-            if token == comma_id:
-                self.param_complete = False
-                self.expecting_parameter = True
-            elif token == list_close_id:
+            elif token == self.tokenizer_config.list_close_id:
                 self.state = "in_paren_close"
 
     def _handle_paren_close(self, token):
-        paren_close_id = self.tokenizer.encode(")", add_special_tokens=False)[0]
-        if token == paren_close_id:
+        
+        if token == self.tokenizer_config.paren_close_id:
             self.state = "finish"
             self.finished = True
 
@@ -265,24 +226,11 @@ class ConstraintStateMachine:
         if self.finished:
             return [self.tokenizer.eos_token_id]
         
-        action_tokens = {
-            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
-            "end": self.tokenizer.encode("end", add_special_tokens=False)
-        }
-        paren_open_id = self.tokenizer.encode("(", add_special_tokens=False)[0]
-        list_open_id = self.tokenizer.encode("[", add_special_tokens=False)[0]
-        comma_id = self.tokenizer.encode(",", add_special_tokens=False)[0]
-        list_close_id = self.tokenizer.encode("]", add_special_tokens=False)[0]
-        quote_id = self.tokenizer.encode('"', add_special_tokens=False)[0]
-        paren_close_id = self.tokenizer.encode(")", add_special_tokens=False)[0]
-        digit_tokens = [self.tokenizer.encode(str(i), add_special_tokens=False)[0] for i in range(10)]
-        
         if self.state == "start":
             allowed = set()
             # Only allow tokens for actions that are permitted (with or without global constraints)
             for action in self.possible_actions:
-                tokens = action_tokens.get(action, [])
+                tokens = self.tokenizer_config.action_tokens.get(action, [])
                 if tokens:
                     allowed.add(tokens[0])
             return list(allowed)
@@ -290,7 +238,7 @@ class ConstraintStateMachine:
         elif self.state == "in_action":
             allowed = set()
             for action in self.possible_actions:
-                tokens = action_tokens.get(action, [])
+                tokens = self.tokenizer_config.action_tokens.get(action, [])
                 if tokens and len(self.action_prefix) < len(tokens):
                     allowed.add(tokens[len(self.action_prefix)])
             return list(allowed) if allowed else [self.tokenizer.eos_token_id]
@@ -298,56 +246,91 @@ class ConstraintStateMachine:
         elif self.state == "after_action":
             if self.current_action == "end":
                 return [self.tokenizer.eos_token_id]
-            return [paren_open_id]
+            return [self.tokenizer_config.paren_open_id]
         
         elif self.state == "in_paren_open":
-            return [list_open_id]
+            return [self.tokenizer_config.list_open_id]
         
         elif self.state == "in_params":
             allowed = set()
             remaining_params = set(self.valid_params[self.current_action]) - self.selected_params
+            token_map = self.column_token_map if self.current_action == "select_column" else self.row_token_map
             
-            if self.current_action == "select_column":
-                if not self.current_param and self.expecting_parameter:
-                    if remaining_params:
-                        allowed.add(quote_id)
-                elif self.current_param and self.current_param[0] == quote_id:
-                    for col in remaining_params:
-                        full_seq = self.column_token_map[col]
-                        if len(self.current_param) < len(full_seq) and full_seq[:len(self.current_param)] == self.current_param:
-                            allowed.add(full_seq[len(self.current_param)])
-                    
-                    candidate = self.current_param + [quote_id]
-                    for col in remaining_params:
-                        if self.column_token_map[col] == candidate:
-                            allowed.add(quote_id)
-                            break
-                elif self.param_complete:
-                    if remaining_params:
-                        allowed.add(comma_id)
-                    allowed.add(list_close_id)
+            # if self.current_action == "select_column":
+            if not self.current_param and self.expecting_parameter:
+                if remaining_params:
+                    allowed.add(self.tokenizer_config.quote_id)
+            elif self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
+                for param in remaining_params:
+                    full_seq = token_map[param]
+                    if len(self.current_param) < len(full_seq) and full_seq[:len(self.current_param)] == self.current_param:
+                        allowed.add(full_seq[len(self.current_param)])
+                
+                candidate = self.current_param + [self.tokenizer_config.quote_id]
+                for param in remaining_params:
+                    if token_map[param] == candidate:
+                        allowed.add(self.tokenizer_config.quote_id)
+                        break
+            elif self.param_complete:
+                if remaining_params:
+                    allowed.add(self.tokenizer_config.comma_id)
+                allowed.add(self.tokenizer_config.list_close_id)
             
-            else:  # select_row
-                if not self.current_param and self.expecting_parameter:
-                    for digit in digit_tokens:
-                        num_str = self.digit_token_map.get(digit, str(digit))
-                        if num_str in remaining_params:
-                            allowed.add(digit)
-                elif self.param_complete:
-                    if remaining_params:
-                        allowed.add(comma_id)
-                    allowed.add(list_close_id)
-            
-            if self.expecting_parameter:
-                if list_close_id in allowed:
-                    allowed.remove(list_close_id)
-            
-            return list(allowed) if allowed else [self.tokenizer.eos_token_id]
+            if allowed:
+                return list(allowed)  
+            return  [self.tokenizer.eos_token_id]
         
         elif self.state == "in_paren_close":
-            return [paren_close_id]
+            return [self.tokenizer_config.paren_close_id]
         
         return [self.tokenizer.eos_token_id]
+
+def create_constraint_logits_processor(table, tokenizer, request_id, state_machines_dict, 
+                                      action_history=None, use_global_constraints=True):
+    """
+    Create a logits processor function for a specific table with external state storage
+    
+    Args:
+        table: The table data
+        tokenizer: The tokenizer
+        request_id: Unique request identifier
+        state_machines_dict: Dictionary to store state machines
+        action_history: List of previously executed actions (for global constraints)
+        use_global_constraints: Whether to apply global action constraints (default: True)
+    """
+
+    
+    def constraint_logits_processor(prompt_token_ids, generated_token_ids, logits):
+        # Get or create state machine for this request with action history
+        if request_id not in state_machines_dict:
+            state_machines_dict[request_id] = ConstraintStateMachine(
+                table, tokenizer, action_history, use_global_constraints
+            )
+        
+        sm = state_machines_dict[request_id]
+        
+        # Update state machine with generated tokens
+        if len(generated_token_ids) > len(sm.generated_tokens):
+            new_tokens = generated_token_ids[len(sm.generated_tokens):]
+            for token in new_tokens:
+                sm.update_state(token)
+        
+        # Get allowed tokens and mask logits
+        try:
+            allowed_tokens = sm.allowed_tokens()
+        except Exception as e:
+            print(f"Error in constraint processing: {e}")
+            return logits
+        
+        # Create mask
+        mask = torch.full_like(logits, float('-inf'))
+        for token_id in allowed_tokens:
+            if token_id < len(logits):
+                mask[token_id] = 0.0
+        
+        return logits + mask
+    
+    return constraint_logits_processor
 
 # NEW: Action constraint for CoT dynamic_plan step
 class ActionOnlyConstraintStateMachine:
@@ -448,91 +431,36 @@ class ActionOnlyConstraintStateMachine:
             
         return [self.tokenizer.eos_token_id]
 
-
-
-def create_constraint_logits_processor(table, tokenizer, request_id, state_machines_dict, 
-                                      action_history=None, use_global_constraints=True):
-    """
-    Create a logits processor function for a specific table with external state storage
-    
-    Args:
-        table: The table data
-        tokenizer: The tokenizer
-        request_id: Unique request identifier
-        state_machines_dict: Dictionary to store state machines
-        action_history: List of previously executed actions (for global constraints)
-        use_global_constraints: Whether to apply global action constraints (default: True)
-    """
-    
-    # Precompute tokens
-    digit_token_map = {}
-    for i in range(10):
-        tokens = tokenizer.encode(str(i), add_special_tokens=False)
-        if tokens:
-            digit_token_map[tokens[0]] = str(i)
-    
-    def constraint_logits_processor(prompt_token_ids, generated_token_ids, logits):
-        # Get or create state machine for this request with action history
-        if request_id not in state_machines_dict:
-            state_machines_dict[request_id] = ConstraintStateMachine(
-                table, tokenizer, digit_token_map, action_history, use_global_constraints
-            )
-        
-        sm = state_machines_dict[request_id]
-        
-        # Update state machine with generated tokens
-        if len(generated_token_ids) > len(sm.generated_tokens):
-            new_tokens = generated_token_ids[len(sm.generated_tokens):]
-            for token in new_tokens:
-                sm.update_state(token)
-        
-        # Get allowed tokens and mask logits
-        try:
-            allowed_tokens = sm.allowed_tokens()
-        except Exception as e:
-            print(f"Error in constraint processing: {e}")
-            return logits
-        
-        # Create mask
-        mask = torch.full_like(logits, float('-inf'))
-        for token_id in allowed_tokens:
-            if token_id < len(logits):
-                mask[token_id] = 0.0
-        
-        return logits + mask
-    
-    return constraint_logits_processor
-
 # NEW: Action-only constraint processor for CoT dynamic_plan
 def create_action_only_constraint_processor(tokenizer, request_id, state_machines_dict):
     """Create a logits processor that only allows action selection (no parameters)"""
-    
+
     def action_constraint_processor(prompt_token_ids, generated_token_ids, logits):
         # Get or create state machine for this request
         if request_id not in state_machines_dict:
             state_machines_dict[request_id] = ActionOnlyConstraintStateMachine(tokenizer)
-        
+
         sm = state_machines_dict[request_id]
-        
+
         # Update state machine with generated tokens
         if len(generated_token_ids) > len(sm.generated_tokens):
             new_tokens = generated_token_ids[len(sm.generated_tokens):]
             for token in new_tokens:
                 sm.update_state(token)
-        
+
         # Get allowed tokens and mask logits
         try:
             allowed_tokens = sm.allowed_tokens()
         except Exception as e:
             print(f"Error in action constraint processing: {e}")
             return logits
-        
+
         # Create mask
         mask = torch.full_like(logits, float('-inf'))
         for token_id in allowed_tokens:
             if token_id < len(logits):
                 mask[token_id] = 0.0
-        
+
         return logits + mask
-    
+
     return action_constraint_processor
