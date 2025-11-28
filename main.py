@@ -2,7 +2,9 @@ import json
 import multiprocessing as mp
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer
@@ -17,6 +19,7 @@ from prompt_builder import PromptBuilder
 from config_loader import (
     AppConfig,
     DatasetConfig,
+    GenerationConfig as GenerationSettings,
     load_runtime_config,
 )
 
@@ -29,6 +32,14 @@ os.environ["VLLM_USE_V1"] = "0"
 os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 
 CONFIG_PATH = Path(os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
+
+
+@dataclass(frozen=True)
+class RuntimeContext:
+    config: AppConfig
+    prompt_builder: PromptBuilder
+    tokenizer: AutoTokenizer
+    dataset: Any
 
 
 def load_dataset_from_config(dataset_config: DatasetConfig):
@@ -62,25 +73,20 @@ def load_dataset_from_config(dataset_config: DatasetConfig):
     raise ValueError(f"Unsupported dataset loader: {loader}")
 
 
-APP_CONFIG: AppConfig = load_runtime_config(CONFIG_PATH)
+def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
+    app_config: AppConfig = load_runtime_config(config_path)
+    tokenizer = AutoTokenizer.from_pretrained(app_config.model.id)
+    prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=app_config.model.instruct)
+    dataset = load_dataset_from_config(app_config.dataset)
+    return RuntimeContext(
+        config=app_config,
+        prompt_builder=prompt_builder,
+        tokenizer=tokenizer,
+        dataset=dataset,
+    )
 
-model_settings = APP_CONFIG.model
-model_id = model_settings.id
 
-tokenizer = AutoTokenizer.from_pretrained(model_id)
-prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=model_settings.instruct)
-
-output_file = model_settings.results_file
-
-GENERATION_CONFIG = APP_CONFIG.generation
-USE_GENERATION_CONSTRAINTS = GENERATION_CONFIG.use_constraints
-USE_GLOBAL_CONSTRAINTS = GENERATION_CONFIG.use_global_constraints
-USE_CHAIN_OF_TABLE = GENERATION_CONFIG.use_chain_of_table
-
-LOGGING_CONFIG = APP_CONFIG.logging
-dataset = load_dataset_from_config(APP_CONFIG.dataset)
-
-def write_results_to_jsonl(results, examples, output_file):
+def write_results_to_jsonl(results, examples, output_file, generation_config: GenerationSettings):
     """Write results to JSONL file with execution accuracy metrics"""
     with open(output_file, 'w', encoding='utf-8') as f:
         for i, (result, example) in enumerate(zip(results, examples)):
@@ -116,7 +122,7 @@ def write_results_to_jsonl(results, examples, output_file):
                 },
                 "metadata": {
                     "num_steps": len(actions),
-                    "generation_mode": get_generation_mode_string(),
+                    "generation_mode": get_generation_mode_string(generation_config),
                     "evaluation_method": "wikitablequestions_logic_with_dataset_answers"
                 }
             }
@@ -125,13 +131,13 @@ def write_results_to_jsonl(results, examples, output_file):
     print(f"Results written to {output_file}")
 
 
-def get_generation_mode_string():
+def get_generation_mode_string(generation_config: GenerationSettings):
     """Get a descriptive string for the current generation mode"""
-    if USE_CHAIN_OF_TABLE:
-        constraint_desc = "with_constraints" if USE_GENERATION_CONSTRAINTS else "without_constraints"
+    if generation_config.use_chain_of_table:
+        constraint_desc = "with_constraints" if generation_config.use_constraints else "without_constraints"
         return f"chain_of_table_{constraint_desc}"
-    elif USE_GENERATION_CONSTRAINTS:
-        if USE_GLOBAL_CONSTRAINTS:
+    elif generation_config.use_constraints:
+        if generation_config.use_global_constraints:
             return "constrained_with_global"
         else:
             return "constrained_local_only"
@@ -142,25 +148,31 @@ def get_generation_mode_string():
 def main():
     """Main function using the modular vLLM server with comprehensive logging"""
     print("Setting up modular vLLM server with integrated logging...")
+
+    runtime = build_runtime(CONFIG_PATH)
+    app_config = runtime.config
+    model_settings = app_config.model
+    generation_settings = app_config.generation
     
-    iterative_strategy = IterativeGenerationStrategy(prompt_builder=prompt_builder)
-    cot_strategy = ChainOfTableGenerationStrategy(prompt_builder=prompt_builder)
+    iterative_strategy = IterativeGenerationStrategy(prompt_builder=runtime.prompt_builder)
+    cot_strategy = ChainOfTableGenerationStrategy(prompt_builder=runtime.prompt_builder)
     
     # Create logging configuration
+    logging_settings = app_config.logging
     logging_config = create_logging_config(
-        enable_logging=LOGGING_CONFIG['enable_logging'],
-        log_dir=LOGGING_CONFIG['log_dir'],
-        save_readable_tables=LOGGING_CONFIG['save_readable_tables'],
-        compress_logs=LOGGING_CONFIG['compress_logs'],
-        log_format=LOGGING_CONFIG['log_format'],
-        max_table_chars=LOGGING_CONFIG['max_table_chars']
+        enable_logging=logging_settings.enable_logging,
+        log_dir=logging_settings.log_dir,
+        save_readable_tables=logging_settings.save_readable_tables,
+        compress_logs=logging_settings.compress_logs,
+        log_format=logging_settings.log_format,
+        max_table_chars=logging_settings.max_table_chars,
     )
     
       # Create generation configuration with logging
     generation_config = create_generation_config(
-        use_constraints=USE_GENERATION_CONSTRAINTS,
-        use_cot=USE_CHAIN_OF_TABLE,
-        use_global_constraints=USE_GLOBAL_CONSTRAINTS,
+        use_constraints=generation_settings.use_constraints,
+        use_cot=generation_settings.use_chain_of_table,
+        use_global_constraints=generation_settings.use_global_constraints,
         generation_functions={
             'iterative_generation': iterative_strategy.generate_instance,
             'cot_generation': cot_strategy.generate_instance
@@ -172,7 +184,7 @@ def main():
     # Initialize the server
     num_workers = model_settings.hardware.num_workers
     server = ProcessParallelVLLM(
-        model_id=model_id,
+        model_id=model_settings.id,
         num_workers=model_settings.hardware.num_workers,
         gpu_allocation=model_settings.hardware.gpu_allocation,
         generation_config=generation_config
@@ -190,8 +202,9 @@ def main():
         # Prepare requests
         requests = []
         examples = []
-        run_config = APP_CONFIG.run
+        run_config = app_config.run
         max_examples = run_config.max_examples
+        dataset = runtime.dataset
         subset_size = len(dataset) if max_examples is None else min(max_examples, len(dataset))
         
         for i, example in enumerate(dataset):
@@ -213,7 +226,7 @@ def main():
             examples.append(example)
         
         print(f"Processing {len(requests)} questions...")
-        print(f"Generation mode: {get_generation_mode_string()}")
+        print(f"Generation mode: {get_generation_mode_string(generation_settings)}")
         
         # Generate responses with comprehensive logging
         start_time = time.time()
@@ -227,7 +240,12 @@ def main():
         analyze_execution_accuracy(results)
         
         # Write results
-        write_results_to_jsonl(results, examples, output_file)
+        write_results_to_jsonl(
+            results,
+            examples,
+            model_settings.results_file,
+            generation_settings,
+        )
         
         # Print sample results
         print_sample_results(results, examples)
