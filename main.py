@@ -40,16 +40,16 @@ COT_ARGS_TEMPERATURE = 0.7
 LOGGING_CONFIG = {
     'enable_logging': True,
     'log_dir': f"./logs/{model_config.log_dir}",
-    'save_readable_tables': True,
+    'save_readable_tables': False,
     'compress_logs': False,
     'log_format': 'readable',
     'max_table_chars': 10000
 }
 
 # Load dataset
-dataset = load_dataset('wikitablequestions', split='train[:30]', trust_remote_code=True)
+# dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
 # dataset = load_from_disk("./datasets/answerable_questions/train")
-# dataset = load_dataset('json', data_files='./datasets/dataset_simple.json', split='train')
+dataset = load_dataset('json', data_files='./datasets/dataset_simple.json', split='train')
 
 def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
     """Parse action string into (action_name, args) tuple"""

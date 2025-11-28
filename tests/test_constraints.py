@@ -1,0 +1,190 @@
+import pytest
+from transformers import AutoTokenizer
+
+from constraints import (
+    ConstraintStateMachine,
+)
+
+@pytest.fixture(scope="module")
+def gpt2_tokenizer():
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer
+
+def make_table(num_rows=5, columns=None):
+    cols = columns or ["foo", "bar", "baz"]
+    return {"columns": cols, "rows": [{"row": idx} for idx in range(num_rows)]}
+
+def test_initial_allowed_tokens_respect_action_history(gpt2_tokenizer):
+    table = make_table()
+
+    # With no action history and global constraints enabled (default),
+    # only select_row and select_column are allowed initially.
+    machine = ConstraintStateMachine(table, gpt2_tokenizer)
+    allowed = set(machine.allowed_tokens())
+    assert allowed == {
+        machine.tokenizer_config.action_tokens["select_row"][0],
+        machine.tokenizer_config.action_tokens["select_column"][0],
+    }
+
+    # If select_row has been used before, then only select_column is allowed
+    row_history = ConstraintStateMachine(
+        table, gpt2_tokenizer, action_history=["select_row(0)"]
+    )
+    allowed_after_row = set(row_history.allowed_tokens())
+    assert allowed_after_row == {
+        row_history.tokenizer_config.action_tokens["select_column"][0]
+    }
+
+    # If both select_row and select_column were used before, only end is allowed
+    end_only = ConstraintStateMachine(
+        table,
+        gpt2_tokenizer,
+        action_history=["select_row(0)", 'select_column("foo")'],
+    )
+    allowed_end_only = set(end_only.allowed_tokens())
+    assert allowed_end_only == {end_only.tokenizer_config.action_tokens["end"][0]}
+
+
+def test_select_row_multiple_parameters(gpt2_tokenizer):
+    table = make_table(num_rows=3)
+    machine = ConstraintStateMachine(table, gpt2_tokenizer)
+    row_tokens = machine.tokenizer_config.action_tokens["select_row"]
+
+    # Type out the action token-by-token
+    for idx, token in enumerate(row_tokens):
+        assert token in machine.allowed_tokens()
+        machine.update_state(token)
+        if idx + 1 < len(row_tokens):
+            expected = row_tokens[idx + 1]
+            assert expected in machine.allowed_tokens()
+
+    # After action, expect '('
+    assert machine.state == "after_action"
+    assert machine.allowed_tokens() == [machine.tokenizer_config.paren_open_id]
+
+    # Then '['
+    machine.update_state(machine.tokenizer_config.paren_open_id)
+    machine.update_state(machine.tokenizer_config.list_open_id)
+    # Next, the opening quote for a parameter
+    assert machine.tokenizer_config.quote_id in machine.allowed_tokens()
+
+    def feed_row(name):
+        tokens = machine.row_token_map[name]
+        for idx, token in enumerate(tokens):
+            if idx == 0:
+                assert token in machine.allowed_tokens()
+            machine.update_state(token)
+
+    # First parameter
+    feed_row("row 0")
+    allowed_after_first = set(machine.allowed_tokens())
+    assert machine.tokenizer_config.list_close_id in allowed_after_first
+    assert machine.tokenizer_config.comma_id in allowed_after_first
+
+    # Second parameter
+    machine.update_state(machine.tokenizer_config.comma_id)
+    assert machine.selected_params == {"row 0"}
+    assert machine.tokenizer_config.quote_id in machine.allowed_tokens()
+
+    feed_row("row 1")
+    allowed_after_second = set(machine.allowed_tokens())
+    assert machine.tokenizer_config.list_close_id in allowed_after_second
+    assert machine.tokenizer_config.comma_id in allowed_after_second
+
+    # Third parameter
+    machine.update_state(machine.tokenizer_config.comma_id)
+    assert machine.selected_params == {"row 0", "row 1"}
+    assert machine.tokenizer_config.quote_id in machine.allowed_tokens()
+
+    feed_row("row 2")
+    allowed_after_third = set(machine.allowed_tokens())
+    assert machine.tokenizer_config.list_close_id in allowed_after_third
+    assert machine.tokenizer_config.comma_id not in allowed_after_third
+
+    # Close list and paren
+    machine.update_state(machine.tokenizer_config.list_close_id)
+    assert machine.state == "in_paren_close"
+    assert machine.allowed_tokens() == [machine.tokenizer_config.paren_close_id]
+
+    machine.update_state(machine.tokenizer_config.paren_close_id)
+    assert machine.finished
+    assert machine.allowed_tokens() == [gpt2_tokenizer.eos_token_id]
+    assert machine.selected_params == {"row 0", "row 1", "row 2"}
+
+
+def test_select_column_multiple_parameters(gpt2_tokenizer):
+    table = make_table(columns=["foo", "bar", "baz"])
+    machine = ConstraintStateMachine(table, gpt2_tokenizer)
+    col_tokens = machine.tokenizer_config.action_tokens["select_column"]
+
+    # Type out the action token-by-token
+    for idx, token in enumerate(col_tokens):
+        assert token in machine.allowed_tokens()
+        machine.update_state(token)
+        if idx + 1 < len(col_tokens):
+            next_token = col_tokens[idx + 1]
+            assert next_token in machine.allowed_tokens()
+
+    # Open paren and list
+    machine.update_state(machine.tokenizer_config.paren_open_id)
+    machine.update_state(machine.tokenizer_config.list_open_id)
+
+    def feed_column(name):
+        tokens = machine.column_token_map[name]
+        for position, token in enumerate(tokens):
+            assert token in machine.allowed_tokens()
+            machine.update_state(token)
+            if position + 1 < len(tokens):
+                expected = tokens[position + 1]
+                assert expected in machine.allowed_tokens()
+
+    # First column
+    feed_column("foo")
+    allowed_after_first = set(machine.allowed_tokens())
+    assert machine.tokenizer_config.list_close_id in allowed_after_first
+    assert machine.tokenizer_config.comma_id in allowed_after_first
+
+    # Second column
+    machine.update_state(machine.tokenizer_config.comma_id)
+    feed_column("bar")
+    allowed_after_second = set(machine.allowed_tokens())
+    assert machine.tokenizer_config.list_close_id in allowed_after_second
+    assert machine.tokenizer_config.comma_id in allowed_after_second
+
+    # Third column
+    machine.update_state(machine.tokenizer_config.comma_id)
+    feed_column("baz")
+    allowed_after_third = set(machine.allowed_tokens())
+    assert machine.tokenizer_config.list_close_id in allowed_after_third
+    assert machine.tokenizer_config.comma_id not in allowed_after_third
+
+    # Close list and paren
+    machine.update_state(machine.tokenizer_config.list_close_id)
+    assert machine.state == "in_paren_close"
+    assert machine.allowed_tokens() == [machine.tokenizer_config.paren_close_id]
+
+    machine.update_state(machine.tokenizer_config.paren_close_id)
+    assert machine.finished
+    assert machine.selected_params == {"foo", "bar", "baz"}
+
+
+def test_end_action_finishes_when_only_end_allowed(gpt2_tokenizer):
+    table = make_table()
+    machine = ConstraintStateMachine(
+        table,
+        gpt2_tokenizer,
+        action_history=["select_row(0)", 'select_column("foo")'],
+    )
+    end_tokens = machine.tokenizer_config.action_tokens["end"]
+
+    allowed_start = set(machine.allowed_tokens())
+    assert allowed_start == {end_tokens[0]}
+
+    machine.update_state(end_tokens[0])
+    if len(end_tokens) > 1:
+        assert set(machine.allowed_tokens()) == {end_tokens[1]}
+        for token in end_tokens[1:]:
+            machine.update_state(token)
+    assert machine.allowed_tokens() == [gpt2_tokenizer.eos_token_id]

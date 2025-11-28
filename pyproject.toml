@@ -1,0 +1,10 @@
+[project]
+name = "leap"
+version = "0.1.0"
+description = "A fast runner for table reasoning experiments."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "datasets>=4.4.1",
+    "vllm==0.10.0",
+]
