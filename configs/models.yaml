@@ -1,0 +1,57 @@
+models:
+  "meta-llama/Llama-2-70b-hf":
+    log_dir: "table_logs_llama"
+    instruct: false
+    hardware:
+      num_workers: 1
+      tensor_parallel_size: 8
+      gpu_allocation: [0, 1, 2, 3, 4, 5, 6, 7]
+
+  "meta-llama/Llama-2-70b-chat-hf":
+    log_dir: "table_logs_llama"
+    instruct: true
+    hardware:
+      num_workers: 1
+      tensor_parallel_size: 8
+      gpu_allocation: [0, 1, 2, 3, 4, 5, 6, 7]
+
+  "gpt2":
+    log_dir: "table_logs_gpt2"
+    instruct: false
+    hardware:
+      num_workers: 2
+      tensor_parallel_size: 2
+      gpu_allocation: [4, 5, 6, 7]
+
+  "openai/gpt-oss-120b":
+    log_dir: "table_logs_gpt_oss"
+    instruct: false
+    hardware:
+      num_workers: 1
+      tensor_parallel_size: 4
+      gpu_allocation: [1, 2, 3, 4]
+
+  "openai/gpt-oss-20b":
+    log_dir: "table_logs_gpt_oss_20B"
+    instruct: false
+    hardware:
+      num_workers: 2
+      tensor_parallel_size: 2
+      gpu_allocation: [0, 1, 3, 5]
+
+  "mistralai/Mixtral-8x7B-Instruct-v0.1":
+    log_dir: "table_logs_mixtral_instruct"
+    instruct: true
+    hardware:
+      num_workers: 4
+      tensor_parallel_size: 1
+      gpu_allocation: [0, 1, 2, 3]
+
+  "mistralai/Mixtral-8x7B-v0.1":
+    log_dir: "table_logs_mixtral"
+    instruct: false
+    hardware:
+      num_workers: 1
+      tensor_parallel_size: 4
+      gpu_allocation: [0, 1, 2, 3]
+
