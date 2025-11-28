@@ -1,5 +1,5 @@
 from eval import to_value_list, check_denotation
-from table import extract_table_values_for_eval
+from core import Table
 
 def find_matching_answers(target_values, predicted_values):
     """Find which target answers have matches in predicted values"""
@@ -39,9 +39,9 @@ def calculate_execution_accuracy_with_dataset_answers(action_history, final_tabl
         
         # Convert ground truth answers to Value objects using evaluator logic
         target_values = to_value_list(ground_truth_answers)
-        
+
         # Extract and evaluate original table
-        result['original_table_values'] = extract_table_values_for_eval(original_table)
+        result['original_table_values'] = original_table.extract_values()
         original_predicted_values = to_value_list(result['original_table_values'])
         
         # Check if original table contains the answer using evaluator logic
@@ -52,8 +52,8 @@ def calculate_execution_accuracy_with_dataset_answers(action_history, final_tabl
         
         # Check final table
         if final_table:
-            result['final_table_size'] = (len(final_table['rows']), len(final_table['columns']))
-            result['final_table_values'] = extract_table_values_for_eval(final_table)
+            result['final_table_size'] = final_table.get_size()
+            result['final_table_values'] = final_table.extract_values()
             final_predicted_values = to_value_list(result['final_table_values'])
             
             # Check if final table contains the answer using evaluator logic

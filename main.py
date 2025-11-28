@@ -13,9 +13,9 @@ from vllm_server import ProcessParallelVLLM, create_generation_config, create_lo
 from generation_strategies import (
     ChainOfTableGenerationStrategy,
     IterativeGenerationStrategy,
-    parse_action_string,
 )
 from prompt_builder import PromptBuilder
+from core import Table, Action
 from config_loader import (
     AppConfig,
     DatasetConfig,
@@ -30,7 +30,6 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 
 os.environ["VLLM_USE_V1"] = "0"
 os.environ["VLLM_SERVER_DEV_MODE"] = "1"
-
 CONFIG_PATH = Path(os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
 
 
@@ -95,10 +94,9 @@ def write_results_to_jsonl(results, examples, output_file, generation_config: Ge
             
             actions = []
             for action_str in action_history:
-                parsed = parse_action_string(action_str)
-                if parsed:
-                    action_name, args = parsed
-                    actions.append({"action": action_name, "args": args})
+                action = Action.parse(action_str)
+                if action:
+                    actions.append(action.to_dict())
                 else:
                     actions.append({"action": "invalid", "args": [action_str]})
             
@@ -210,18 +208,17 @@ def main():
         for i, example in enumerate(dataset):
             if i >= subset_size:
                 break
-            
-            table = {
-                'columns': example['table']['header'],
-                'rows': example['table']['rows']
-            }
-            
+
+            table = Table(
+                columns=example['table']['header'],
+                rows=example['table']['rows']
+            )
+
             request = {
                 'question': example['question'],
                 'table': table,
                 'ground_truth_answers': example['answers']
             }
-            
             requests.append(request)
             examples.append(example)
         

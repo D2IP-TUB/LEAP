@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Sequence
 
-from table import serialize_table_to_csv
+from core import Table
 
 
 @dataclass
@@ -46,7 +46,7 @@ class PromptBuilder:
         self,
         *,
         question: str,
-        table: dict,
+        table: Table,
         action_history: Sequence[str],
         worker,
         step: int,
@@ -57,7 +57,7 @@ class PromptBuilder:
             if step == 0
             else self.iterative_settings.step_table_chars
         )
-        table_str = serialize_table_to_csv(table, max_chars)
+        table_str = table.to_csv(max_chars=max_chars)
 
         step_prompt = f"Table:\n{table_str}\n\nQuestion: {question}\n"
         if action_history:
@@ -70,7 +70,7 @@ class PromptBuilder:
 
         estimated_length = len(step_prompt) // 4
         if estimated_length > worker.max_model_len - self.iterative_settings.safety_margin_tokens:
-            table_str = serialize_table_to_csv(table, self.iterative_settings.fallback_table_chars)
+            table_str = table.to_csv(max_chars=self.iterative_settings.fallback_table_chars)
             question_short = self._truncate_text(question, self.iterative_settings.question_truncation)
             step_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n"
             instruction_prompt = self._build_iterative_instruction(worker, fallback=True)
@@ -99,12 +99,12 @@ class PromptBuilder:
         self,
         *,
         question: str,
-        table: dict,
+        table: Table,
         action_history: Sequence[str],
         worker,
     ) -> str:
         """Prompt for CoT action selection (dynamic plan)."""
-        table_str = serialize_table_to_csv(table, self.cot_settings.action_table_chars)
+        table_str = table.to_csv(max_chars=self.cot_settings.action_table_chars)
         prompt = f"Table:\n{table_str}\n\n"
         prompt += f"Question: {question}\n\n"
 
@@ -120,7 +120,7 @@ class PromptBuilder:
 
         estimated_length = len(prompt) // 4
         if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
-            table_str = serialize_table_to_csv(table, self.cot_settings.action_fallback_table_chars)
+            table_str = table.to_csv(max_chars=self.cot_settings.action_fallback_table_chars)
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
             prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
             prompt += "Available actions: select_row, select_column, end\n"
@@ -132,13 +132,13 @@ class PromptBuilder:
         self,
         *,
         question: str,
-        table: dict,
+        table: Table,
         action_name: str,
         action_history: Sequence[str],
         worker,
     ) -> str:
         """Prompt for CoT argument generation."""
-        table_str = serialize_table_to_csv(table, self.cot_settings.args_table_chars)
+        table_str = table.to_csv(max_chars=self.cot_settings.args_table_chars)
         prompt = f"Table:\n{table_str}\n\n"
         prompt += f"Question: {question}\n\n"
 
@@ -151,11 +151,11 @@ class PromptBuilder:
         prompt += f"Selected action: {action_name}\n"
 
         if action_name == "select_row":
-            prompt += f"Available rows: 0 to {len(table['rows'])-1}\n"
+            prompt += f"Available rows: 0 to {len(table.rows)-1}\n"
             instruction_prompt = "Which row indices should be selected? Provide the indices as a list, e.g., [0, 1, 2]\n"
             instruction_prompt += "Row indices: "
         elif action_name == "select_column":
-            prompt += f"Available columns: {table['columns']}\n"
+            prompt += f"Available columns: {list(table.columns)}\n"
             instruction_prompt = 'Which columns should be selected? Provide the column names as a list, e.g., ["Name", "Age"]\n'
             instruction_prompt += "Column names: "
         else:
@@ -164,15 +164,15 @@ class PromptBuilder:
 
         estimated_length = len(prompt) // 4
         if estimated_length > worker.max_model_len - self.cot_settings.args_safety_margin_tokens:
-            table_str = serialize_table_to_csv(table, self.cot_settings.args_fallback_table_chars)
+            table_str = table.to_csv(max_chars=self.cot_settings.args_fallback_table_chars)
             question_short = self._truncate_text(question, self.cot_settings.args_question_truncation)
             prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
             prompt += f"Selected action: {action_name}\n"
 
             if action_name == "select_row":
-                instruction_prompt = f"Which row indices (0 to {len(table['rows'])-1})?\nRow indices: "
+                instruction_prompt = f"Which row indices (0 to {len(table.rows)-1})?\nRow indices: "
             else:
-                sample_cols = table["columns"][:3]
+                sample_cols = list(table.columns)[:3]
                 instruction_prompt = f"Which columns from {sample_cols}...?\nColumn names: "
 
         return self._append_instruction(prompt, instruction_prompt)
