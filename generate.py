@@ -139,7 +139,6 @@ async def generate_single_action(worker, prompt, table, request_id, state_machin
 
 
 async def generate_action_selection(
-    model_config,
     worker,
     question,
     table,
@@ -187,7 +186,6 @@ async def generate_action_selection(
         return None
 
 async def generate_action_arguments(
-    model_config,
     worker,
     question,
     table,

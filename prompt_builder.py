@@ -32,11 +32,13 @@ class PromptBuilder:
 
     def __init__(
         self,
-        model_config,
+        tokenizer,
+        is_instruct: bool,
         iterative_settings: IterativePromptSettings | None = None,
         cot_settings: CotPromptSettings | None = None,
     ):
-        self.model_config = model_config
+        self.tokenizer = tokenizer
+        self.is_instruct = is_instruct
         self.iterative_settings = iterative_settings or IterativePromptSettings()
         self.cot_settings = cot_settings or CotPromptSettings()
 
@@ -73,7 +75,7 @@ class PromptBuilder:
             step_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n"
             instruction_prompt = self._build_iterative_instruction(worker, fallback=True)
 
-        return self.model_config.add_instruct_tokens_for_instruct_models(step_prompt, instruction_prompt)
+        return self._append_instruction(step_prompt, instruction_prompt)
 
     def _build_iterative_instruction(self, worker, fallback: bool = False) -> str:
         """Instruction text for iterative generation."""
@@ -124,7 +126,7 @@ class PromptBuilder:
             prompt += "Available actions: select_row, select_column, end\n"
             instruction_prompt = "What action should be performed next?\nAction: "
 
-        return self.model_config.add_instruct_tokens_for_instruct_models(prompt, instruction_prompt)
+        return self._append_instruction(prompt, instruction_prompt)
 
     def build_cot_arguments_prompt(
         self,
@@ -173,5 +175,18 @@ class PromptBuilder:
                 sample_cols = table["columns"][:3]
                 instruction_prompt = f"Which columns from {sample_cols}...?\nColumn names: "
 
-        return self.model_config.add_instruct_tokens_for_instruct_models(prompt, instruction_prompt)
+        return self._append_instruction(prompt, instruction_prompt)
+
+    def _append_instruction(self, prompt: str, instruction_prompt: str) -> str:
+        if self.is_instruct:
+            message = [
+                {"role": "user", "content": instruction_prompt}
+            ]
+            addition = self.tokenizer.apply_chat_template(
+                message,
+                tokenize=False,
+                add_generation_prompt=False
+            ).strip("<s> ")
+            return prompt + addition
+        return prompt + instruction_prompt
 

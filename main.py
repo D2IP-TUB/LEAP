@@ -2,16 +2,21 @@ import json
 import multiprocessing as mp
 import os
 import time
+from copy import deepcopy
+from pathlib import Path
+from typing import Any, Dict
 
-from datasets import load_dataset
+import yaml
+from datasets import load_dataset, load_from_disk
+from transformers import AutoTokenizer
 from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
 
-from model_config import ModelConfig
 from generation_strategies import (
     ChainOfTableGenerationStrategy,
     IterativeGenerationStrategy,
     parse_action_string,
 )
+from prompt_builder import PromptBuilder
 
 import logging
 # shut off llm logging in case not important
@@ -21,37 +26,122 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 os.environ["VLLM_USE_V1"] = "0"
 os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 
-# Configuration
-# model_id = "meta-llama/Llama-2-70b-hf"
-# model_id = "meta-llama/Llama-2-70b-chat-hf"
-# model_id = "gpt2"
-model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
-# model_id = "mistralai/Mixtral-8x7B-v0.1"
-# model_id = "openai/gpt-oss-120b"
-# model_id = "openai/gpt-oss-20b"
+CONFIG_PATH = Path(os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
 
-model_config = ModelConfig(model_id)
 
-output_file = "./logs/results.jsonl"
+def load_app_config(config_path: Path) -> dict:
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
-# Configuration flags
-USE_GENERATION_CONSTRAINTS = False
-USE_GLOBAL_CONSTRAINTS = False
-USE_CHAIN_OF_TABLE = False
-# Logging configuration
-LOGGING_CONFIG = {
-    'enable_logging': True,
-    'log_dir': f"./logs/{model_config.log_dir}",
-    'save_readable_tables': False,
-    'compress_logs': False,
-    'log_format': 'readable',
-    'max_table_chars': 10000
-}
 
-# Load dataset
-dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
-# dataset = load_from_disk("./datasets/answerable_questions/train")
-# dataset = load_dataset('json', data_files='./datasets/dataset_simple.json', split='train')
+def load_model_presets(presets_path: Path) -> Dict[str, Any]:
+    with open(presets_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"Model presets file {presets_path} must define a mapping")
+    return data.get("models", data)
+
+
+def build_model_settings(model_section: Dict[str, Any], presets: Dict[str, Any]) -> Dict[str, Any]:
+    model_id = model_section["id"]
+    preset = deepcopy(presets.get(model_id, {}))
+    if not preset:
+        raise ValueError(f"No model preset found for id '{model_id}'")
+
+    log_dir = model_section.get("log_dir", preset.get("log_dir", f"table_logs_{model_id.replace('/', '_')}"))
+    instruct = model_section.get("instruct", preset.get("instruct", False))
+
+    hardware = preset.get("hardware", {}).copy()
+    override_hw = model_section.get("hardware", {})
+    if override_hw:
+        hardware.update(override_hw)
+
+    required_hw_keys = {"num_workers", "tensor_parallel_size", "gpu_allocation"}
+    missing = [key for key in required_hw_keys if key not in hardware]
+    if missing:
+        raise ValueError(f"Missing hardware fields {missing} for model '{model_id}'")
+
+    return {
+        "log_dir": log_dir,
+        "instruct": instruct,
+        "hardware": hardware,
+    }
+
+
+def resolve_logging_config(raw_logging_config: dict, model_log_dir: str, model_id: str) -> dict:
+    log_dir_template = raw_logging_config.get("log_dir", "./logs/{model_log_dir}")
+    log_dir = log_dir_template.format(
+        model=model_id.replace("/", "_"),
+        model_log_dir=model_log_dir
+    )
+
+    return {
+        'enable_logging': raw_logging_config.get('enable_logging', True),
+        'log_dir': log_dir,
+        'save_readable_tables': raw_logging_config.get('save_readable_tables', False),
+        'compress_logs': raw_logging_config.get('compress_logs', False),
+        'log_format': raw_logging_config.get('log_format', 'readable'),
+        'max_table_chars': raw_logging_config.get('max_table_chars', 10000)
+    }
+
+
+def load_dataset_from_config(dataset_config: dict):
+    loader = dataset_config.get("loader", "huggingface").lower()
+
+    if loader == "huggingface":
+        name = dataset_config["name"]
+        split = dataset_config.get("split")
+        kwargs = {}
+        if split:
+            kwargs["split"] = split
+        if dataset_config.get("trust_remote_code") is not None:
+            kwargs["trust_remote_code"] = dataset_config["trust_remote_code"]
+        return load_dataset(name, **kwargs)
+
+    if loader == "json":
+        data_files = dataset_config.get("data_files")
+        if not data_files:
+            raise ValueError("JSON dataset loader requires 'data_files'")
+        split = dataset_config.get("split")
+        return load_dataset("json", data_files=data_files, split=split)
+
+    if loader == "disk":
+        path = dataset_config.get("path")
+        if not path:
+            raise ValueError("Disk dataset loader requires 'path'")
+        return load_from_disk(path)
+
+    raise ValueError(f"Unsupported dataset loader: {loader}")
+
+
+app_config = load_app_config(CONFIG_PATH)
+
+model_section = app_config.get("model")
+if not model_section or "id" not in model_section:
+    raise ValueError("Configuration must define 'model.id'")
+
+model_id = model_section["id"]
+presets_path = Path(model_section.get("presets_path", "configs/models.yaml"))
+model_presets = load_model_presets(presets_path)
+model_settings = build_model_settings(model_section, model_presets)
+
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=model_settings["instruct"])
+
+output_file = model_section.get("results_file", "./logs/results.jsonl")
+
+GENERATION_CONFIG = app_config.get("generation", {})
+USE_GENERATION_CONSTRAINTS = GENERATION_CONFIG.get("use_constraints", False)
+USE_GLOBAL_CONSTRAINTS = GENERATION_CONFIG.get("use_global_constraints", False)
+USE_CHAIN_OF_TABLE = GENERATION_CONFIG.get("use_chain_of_table", False)
+
+LOGGING_CONFIG = resolve_logging_config(app_config.get("logging", {}), model_settings["log_dir"], model_id)
+
+dataset_config = app_config.get("dataset")
+if not dataset_config:
+    raise ValueError("Configuration must include a 'dataset' section")
+
+dataset = load_dataset_from_config(dataset_config)
 
 def write_results_to_jsonl(results, examples, output_file):
     """Write results to JSONL file with execution accuracy metrics"""
@@ -116,8 +206,8 @@ def main():
     """Main function using the modular vLLM server with comprehensive logging"""
     print("Setting up modular vLLM server with integrated logging...")
     
-    iterative_strategy = IterativeGenerationStrategy(model_config)
-    cot_strategy = ChainOfTableGenerationStrategy(model_config)
+    iterative_strategy = IterativeGenerationStrategy(prompt_builder=prompt_builder)
+    cot_strategy = ChainOfTableGenerationStrategy(prompt_builder=prompt_builder)
     
     # Create logging configuration
     logging_config = create_logging_config(
@@ -139,15 +229,15 @@ def main():
             'cot_generation': cot_strategy.generate_instance
         },
         logging_config=logging_config,
-        tensor_parallel_size=model_config.tensor_parallel_size
+        tensor_parallel_size=model_settings["hardware"]["tensor_parallel_size"]
     )
     
     # Initialize the server
-    num_workers = 1
+    num_workers = model_settings["hardware"]["num_workers"]
     server = ProcessParallelVLLM(
         model_id=model_id,
-        num_workers=model_config.num_workers,
-        gpu_allocation=model_config.gpu_allocation,
+        num_workers=model_settings["hardware"]["num_workers"],
+        gpu_allocation=model_settings["hardware"]["gpu_allocation"],
         generation_config=generation_config
     )
     
@@ -163,7 +253,9 @@ def main():
         # Prepare requests
         requests = []
         examples = []
-        subset_size = min(1000, len(dataset))
+        run_config = app_config.get("run", {})
+        max_examples = run_config.get("max_examples")
+        subset_size = len(dataset) if max_examples is None else min(max_examples, len(dataset))
         
         for i, example in enumerate(dataset):
             if i >= subset_size:

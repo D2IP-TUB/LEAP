@@ -19,18 +19,16 @@ class BaseGenerationStrategy:
 
     def __init__(
         self,
-        model_config,
         *,
+        prompt_builder: PromptBuilder,
         max_failures: int = 3,
         max_validity_failures: int = 3,
         max_steps: int = 10,
-        prompt_builder: Optional[PromptBuilder] = None,
     ) -> None:
-        self.model_config = model_config
         self.max_failures = max_failures
         self.max_validity_failures = max_validity_failures
         self.max_steps = max_steps
-        self.prompt_builder = prompt_builder or PromptBuilder(model_config)
+        self.prompt_builder = prompt_builder
 
     async def generate_instance(
         self,
@@ -45,8 +43,8 @@ class BaseGenerationStrategy:
 class IterativeGenerationStrategy(BaseGenerationStrategy):
     """Iterative action generation with constraint-aware prompting."""
 
-    def __init__(self, model_config, **kwargs) -> None:
-        super().__init__(model_config, **kwargs)
+    def __init__(self, *, prompt_builder: PromptBuilder, **kwargs) -> None:
+        super().__init__(prompt_builder=prompt_builder, **kwargs)
 
     async def generate_instance(
         self,
@@ -195,13 +193,13 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
 
     def __init__(
         self,
-        model_config,
         *,
+        prompt_builder: PromptBuilder,
         action_temperature: float = DEFAULT_COT_ACTION_TEMPERATURE,
         args_temperature: float = DEFAULT_COT_ARGS_TEMPERATURE,
         **kwargs,
     ) -> None:
-        super().__init__(model_config, **kwargs)
+        super().__init__(prompt_builder=prompt_builder, **kwargs)
         self.action_temperature = action_temperature
         self.args_temperature = args_temperature
 
@@ -237,7 +235,6 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
         ):
             try:
                 action_name = await generate_action_selection(
-                    self.model_config,
                     worker,
                     question,
                     current_table,
@@ -277,7 +274,6 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                     break
 
                 args = await generate_action_arguments(
-                    self.model_config,
                     worker,
                     question,
                     current_table,
