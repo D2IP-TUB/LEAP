@@ -37,7 +37,7 @@ output_file = "./logs/results.jsonl"
 # Configuration flags
 USE_GENERATION_CONSTRAINTS = False
 USE_GLOBAL_CONSTRAINTS = False
-USE_CHAIN_OF_TABLE = True
+USE_CHAIN_OF_TABLE = False
 # Logging configuration
 LOGGING_CONFIG = {
     'enable_logging': True,
