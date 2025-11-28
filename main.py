@@ -13,6 +13,11 @@ from generate import generate_action_arguments, generate_action_selection, gener
 from model_config import ModelConfig
 from table import apply_action, extract_table_values_for_eval, serialize_table_to_csv
 
+import logging
+# shut off llm logging in case not important
+logging.getLogger("vllm").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+
 os.environ["VLLM_USE_V1"] = "0"
 os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 
