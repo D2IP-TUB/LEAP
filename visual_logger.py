@@ -3,9 +3,11 @@ import json
 import pandas as pd
 import math
 from typing import List, Dict, Any
+from model_config import ModelConfig
 
-LOG_DIR = "table_logs"
-RESULTS_FILE = "parallel_results.jsonl"
+model_config = ModelConfig("gpt2")
+LOG_DIR = f"./logs/{model_config.log_dir}"
+RESULTS_FILE = "./logs/results.jsonl"
 OUTPUT_FILE = "data.json"
 
 
