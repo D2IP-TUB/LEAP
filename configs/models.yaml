@@ -43,7 +43,7 @@ models:
     log_dir: "table_logs_mixtral_instruct"
     instruct: true
     hardware:
-      num_workers: 4
+      num_workers: 2
       tensor_parallel_size: 1
       gpu_allocation: [0, 1, 2, 3]
 

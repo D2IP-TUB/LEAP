@@ -5,14 +5,14 @@ This module handles all table transformation logging, analysis, and reporting
 functionality that was previously embedded in the main processing logic.
 """
 
-import json
 import csv
-import io
+import json
 import time
-import os
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 from pathlib import Path
+
+from core import Table
 
 
 @dataclass
@@ -77,41 +77,31 @@ class TableLogger:
             self.log_dir.mkdir(parents=True, exist_ok=True)
             print(f"Created table logging directory: {self.log_dir}")
     
-    def serialize_table_to_csv(self, table: Dict[str, Any], max_chars: int = None) -> str:
-        """Convert table to CSV string with limited characters"""
+    def serialize_table_to_csv(self, table: Table, max_chars: int = None) -> str:
+        """Convert table to CSV string with limited characters."""
         if max_chars is None:
             max_chars = self.max_table_chars
-        
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(table['columns'])
-        
-        char_count = len(','.join(table['columns']))
-        for i, row in enumerate(table['rows']):
-            if i >= 10 or char_count > max_chars:
-                break
-            row_str = ','.join(str(cell) for cell in row)
-            if char_count + len(row_str) > max_chars:
-                break
-            writer.writerow(row)
-            char_count += len(row_str)
-        return output.getvalue().strip()
+
+        return table.to_csv(max_chars=max_chars, max_rows=10, crop=True)
     
-    def get_table_summary(self, table: Dict[str, Any]) -> Dict[str, Any]:
-        """Get a compact summary of table dimensions"""
+    def get_table_summary(self, table: Table) -> Dict[str, Any]:
+        """Get a compact summary of table dimensions."""
+        num_rows, num_cols = table.get_size()
+        columns = list(table.columns)
+
         return {
-            "num_rows": len(table['rows']),
-            "num_columns": len(table['columns']),
-            "columns": table['columns'][:5] + ["..."] if len(table['columns']) > 5 else table['columns']
+            "num_rows": num_rows,
+            "num_columns": num_cols,
+            "columns": columns[:5] + ["..."] if len(columns) > 5 else columns
         }
     
-    def log_table_state(self, 
-                       request_id: str, 
-                       step: int, 
-                       action: str, 
-                       table: Dict[str, Any],
-                       success: bool = True, 
-                       failure_type: Optional[str] = None, 
+    def log_table_state(self,
+                       request_id: str,
+                       step: int,
+                       action: str,
+                       table: Table,
+                       success: bool = True,
+                       failure_type: Optional[str] = None,
                        generation_mode: Optional[str] = None) -> None:
         """
         Log table state with comprehensive information

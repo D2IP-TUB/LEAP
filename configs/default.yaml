@@ -23,8 +23,8 @@ run:
   max_examples: 1000
 
 generation:
-  use_constraints: false
-  use_global_constraints: false
+  use_constraints: true
+  use_global_constraints: true
   use_chain_of_table: false
 
 logging:

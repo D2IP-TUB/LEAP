@@ -8,7 +8,7 @@ from generate import (
     generate_single_action,
 )
 from prompt_builder import PromptBuilder
-from table import apply_action
+from core import Action, Table
 
 DEFAULT_COT_ACTION_TEMPERATURE = 0.3
 DEFAULT_COT_ARGS_TEMPERATURE = 0.7
@@ -54,11 +54,11 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
         logging_callback: Optional[Callable] = None,
     ) -> Dict[str, Any]:
         question = request["question"]
-        table = request["table"]
+        original_table: Table = request["table"]
+        current_table: Table = original_table
         ground_truth_answers = request["ground_truth_answers"]
         request_id = request["request_id"]
 
-        current_table = table
         action_history: List[str] = []
         failures = 0
         validity_failures = 0
@@ -95,8 +95,8 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                     action_history,
                 )
 
-                parsed_action = parse_action_string(action_str)
-                if not parsed_action:
+                action = Action.parse(action_str)
+                if not action:
                     validity_failures += 1
                     print(
                         f"Step {step}: Failed to generate valid action from: {action_str}"
@@ -113,32 +113,30 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                         )
                     continue
 
-                action_name, args = parsed_action
-
-                if action_name == "end":
-                    action_history.append("end()")
+                if action.name == "end":
+                    action_history.append(action.to_string())
                     if logging_callback:
                         logging_callback(
                             request_id,
                             step + 1,
-                            "end()",
+                            action.to_string(),
                             current_table,
                             generation_mode=generation_mode,
                         )
                     break
 
-                new_table = apply_action(current_table, action_name, args)
+                new_table = action.apply_to_table(current_table)
 
                 if not new_table:
                     validity_failures += 1
                     print(
-                        f"Step {step}: Failed to apply action: {action_name}({args})"
+                        f"Step {step}: Failed to apply action: {action.to_string()}"
                     )
                     if logging_callback:
                         logging_callback(
                             request_id,
                             step + 1,
-                            f"{action_name}({args})",
+                            action.to_string(),
                             current_table,
                             success=False,
                             failure_type="validity_failure",
@@ -147,17 +145,17 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                     continue
 
                 current_table = new_table
-                action_history.append(f"{action_name}({args})")
+                action_history.append(action.to_string())
                 failures = 0
                 validity_failures = 0
                 step += 1
-                print(f"Step {step}: Applied {action_name}({args})")
+                print(f"Step {step}: Applied {action.to_string()}")
 
                 if logging_callback:
                     logging_callback(
                         request_id,
                         step,
-                        f"{action_name}({args})",
+                        action.to_string(),
                         current_table,
                         success=True,
                         generation_mode=generation_mode,
@@ -178,12 +176,12 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                     )
 
         accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-            action_history, current_table, ground_truth_answers, table
+            action_history, current_table, ground_truth_answers, original_table
         )
 
         return {
             "action_history": action_history,
-            "final_table": current_table,
+            "final_table": current_table,  # Table object
             "execution_accuracy_metrics": accuracy_metrics,
         }
 
@@ -211,11 +209,11 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
         logging_callback: Optional[Callable] = None,
     ) -> Dict[str, Any]:
         question = request["question"]
-        table = request["table"]
+        original_table: Table = request["table"]
+        current_table: Table = original_table
         ground_truth_answers = request["ground_truth_answers"]
         request_id = request["request_id"]
 
-        current_table = table
         action_history: List[str] = []
         failures = 0
         validity_failures = 0
@@ -262,12 +260,13 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                     continue
 
                 if action_name == "end":
-                    action_history.append("end()")
+                    action = Action("end", [])
+                    action_history.append(action.to_string())
                     if logging_callback:
                         logging_callback(
                             request_id,
                             step + 1,
-                            "end()",
+                            action.to_string(),
                             current_table,
                             generation_mode=generation_mode,
                         )
@@ -303,18 +302,21 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                         )
                     continue
 
-                new_table = apply_action(current_table, action_name, args)
+                # Create Action object from action_name and args
+                action = Action(action_name, args)
+
+                new_table = action.apply_to_table(current_table)
 
                 if not new_table:
                     validity_failures += 1
                     print(
-                        f"Step {step}: Failed to apply action: {action_name}({args})"
+                        f"Step {step}: Failed to apply action: {action.to_string()}"
                     )
                     if logging_callback:
                         logging_callback(
                             request_id,
                             step + 1,
-                            f"{action_name}({args})",
+                            action.to_string(),
                             current_table,
                             success=False,
                             failure_type="validity_failure",
@@ -323,17 +325,17 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                     continue
 
                 current_table = new_table
-                action_history.append(f"{action_name}({args})")
+                action_history.append(action.to_string())
                 failures = 0
                 validity_failures = 0
                 step += 1
-                print(f"Step {step}: Applied {action_name}({args}) [CoT]")
+                print(f"Step {step}: Applied {action.to_string()} [CoT]")
 
                 if logging_callback:
                     logging_callback(
                         request_id,
                         step,
-                        f"{action_name}({args})",
+                        action.to_string(),
                         current_table,
                         success=True,
                         generation_mode=generation_mode,
@@ -354,47 +356,11 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                     )
 
         accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-            action_history, current_table, ground_truth_answers, table
+            action_history, current_table, ground_truth_answers, original_table
         )
 
         return {
             "action_history": action_history,
-            "final_table": current_table,
+            "final_table": current_table,  # Table object
             "execution_accuracy_metrics": accuracy_metrics,
         }
-
-
-def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
-    """Parse action string into (action_name, args) tuple."""
-    try:
-        action_str = action_str.strip()
-        if action_str == "end" or action_str.startswith("end("):
-            return "end", []
-
-        if "(" not in action_str:
-            return None
-
-        action_name, args_str = action_str.split("(", 1)
-        action_name = action_name.strip()
-        args_str = args_str.rstrip(")").replace("row ", "").strip()
-
-        if args_str.startswith("[") and args_str.endswith("]"):
-            args_str = args_str.replace("\\", "\\\\")
-            args_list = ast_literal_eval(args_str)
-            return action_name, args_list
-
-        if "," in args_str:
-            args_list = [arg.strip() for arg in args_str.split(",")]
-        else:
-            args_list = [args_str]
-
-        return action_name, args_list
-    except Exception:
-        return None
-
-
-def ast_literal_eval(args_str: str):
-    """Wrapper to keep literal_eval localized for easier mocking/testing."""
-    import ast
-
-    return ast.literal_eval(args_str)

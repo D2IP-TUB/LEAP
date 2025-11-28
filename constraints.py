@@ -1,10 +1,11 @@
 import torch
 
 from tokenizer_config import TokenizerConfig
+from core import Table
 
 class ConstraintStateMachine:
     """State machine for constraint processing with optional global action constraints"""
-    def __init__(self, table, tokenizer, action_history=None, use_global_constraints=True):
+    def __init__(self, table: Table, tokenizer, action_history=None, use_global_constraints=True):
         self.tokenizer = tokenizer
         self.table = table
         self.use_global_constraints = use_global_constraints
@@ -17,11 +18,14 @@ class ConstraintStateMachine:
             self.previously_used_actions = set()
         
         self.reset()
-        
-        num_rows = min(500, len(table['rows']))
+
+        # Extract table dimensions
+        num_rows = min(500, len(table.rows))
+        columns = list(table.columns)
+
         self.valid_params = {
             "select_row": [f"row {i}" for i in range(num_rows)],
-            "select_column": table['columns'],
+            "select_column": columns,
             "end": []
         }
         
