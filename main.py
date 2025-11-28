@@ -1,17 +1,17 @@
-from typing import List, Tuple,Optional
-import ast
 import json
 import multiprocessing as mp
 import os
 import time
 
-from datasets import load_dataset, load_from_disk
+from datasets import load_dataset
 from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
 
-from eval import to_value_list, check_denotation
-from generate import generate_action_arguments, generate_action_selection, generate_single_action
 from model_config import ModelConfig
-from table import apply_action, extract_table_values_for_eval, serialize_table_to_csv
+from generation_strategies import (
+    ChainOfTableGenerationStrategy,
+    IterativeGenerationStrategy,
+    parse_action_string,
+)
 
 import logging
 # shut off llm logging in case not important
@@ -24,8 +24,8 @@ os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 # Configuration
 # model_id = "meta-llama/Llama-2-70b-hf"
 # model_id = "meta-llama/Llama-2-70b-chat-hf"
-model_id = "gpt2"
-# model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+# model_id = "gpt2"
+model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
 # model_id = "mistralai/Mixtral-8x7B-v0.1"
 # model_id = "openai/gpt-oss-120b"
 # model_id = "openai/gpt-oss-20b"
@@ -35,12 +35,9 @@ model_config = ModelConfig(model_id)
 output_file = "./logs/results.jsonl"
 
 # Configuration flags
-USE_GENERATION_CONSTRAINTS = True
-USE_GLOBAL_CONSTRAINTS = True
-USE_CHAIN_OF_TABLE = False
-COT_ACTION_TEMPERATURE = 0.3
-COT_ARGS_TEMPERATURE = 0.7
-
+USE_GENERATION_CONSTRAINTS = False
+USE_GLOBAL_CONSTRAINTS = False
+USE_CHAIN_OF_TABLE = True
 # Logging configuration
 LOGGING_CONFIG = {
     'enable_logging': True,
@@ -52,368 +49,9 @@ LOGGING_CONFIG = {
 }
 
 # Load dataset
-# dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
+dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
 # dataset = load_from_disk("./datasets/answerable_questions/train")
-dataset = load_dataset('json', data_files='./datasets/dataset_simple.json', split='train')
-
-def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
-    """Parse action string into (action_name, args) tuple"""
-    try:
-        # Handle 'end' action separately
-        action_str = action_str.strip()
-        if action_str == "end" or action_str.startswith("end("):
-            return "end", []
-        
-        # Parse actions with arguments
-        if '(' not in action_str:
-            return None
-            
-        action_name, args_str = action_str.split('(', 1)
-        action_name = action_name.strip()
-        args_str = args_str.rstrip(')').replace('row ', '').strip()
-        # Extract list arguments
-        if args_str.startswith('[') and args_str.endswith(']'):
-            args_str = args_str.replace("\\", "\\\\")
-
-            args_list = ast.literal_eval(args_str)
-            return action_name, args_list
-        
-        # Handle simple arguments
-        if ',' in args_str:
-            args_list = [arg.strip() for arg in args_str.split(',')]
-        else:
-            args_list = [args_str]
-        
-        return action_name, args_list
-    except:
-        return None
-
-def calculate_execution_accuracy_with_dataset_answers(action_history, final_table, ground_truth_answers, original_table):
-    """Calculate execution accuracy using WikiTableQuestions evaluator logic"""
-    result = {
-        'execution_accuracy': 0.0,
-        'terminated_properly': False,
-        'answer_found_in_final': False,
-        'answer_found_in_original': False,
-        'final_table_values': [],
-        'original_table_values': [],
-        'matched_answers_final': [],
-        'matched_answers_original': [],
-        'execution_error': None,
-        'num_actions': len(action_history),
-        'final_table_size': None,
-        'evaluation_method': 'wikitablequestions_logic'
-    }
-    
-    try:
-        # Check if sequence terminated properly
-        result['terminated_properly'] = (
-            len(action_history) > 1 and  # Must have more than just one action
-            action_history[-1].startswith('end') and  # Last action must be end
-            not all(action.startswith('end') for action in action_history[:-1])  # Not all prior actions are end
-        )
-        
-        # Convert ground truth answers to Value objects using evaluator logic
-        target_values = to_value_list(ground_truth_answers)
-        
-        # Extract and evaluate original table
-        result['original_table_values'] = extract_table_values_for_eval(original_table)
-        original_predicted_values = to_value_list(result['original_table_values'])
-        
-        # Check if original table contains the answer using evaluator logic
-        result['answer_found_in_original'] = check_denotation(target_values, original_predicted_values)
-        if result['answer_found_in_original']:
-            # Find which answers matched in original table
-            result['matched_answers_original'] = find_matching_answers(target_values, original_predicted_values)
-        
-        # Check final table
-        if final_table:
-            result['final_table_size'] = (len(final_table['rows']), len(final_table['columns']))
-            result['final_table_values'] = extract_table_values_for_eval(final_table)
-            final_predicted_values = to_value_list(result['final_table_values'])
-            
-            # Check if final table contains the answer using evaluator logic
-            result['answer_found_in_final'] = check_denotation(target_values, final_predicted_values)
-            if result['answer_found_in_final']:
-                # Find which answers matched in final table
-                result['matched_answers_final'] = find_matching_answers(target_values, final_predicted_values)
-            
-            # Calculate execution accuracy
-            if result['terminated_properly'] and result['answer_found_in_final']:
-                result['execution_accuracy'] = 1.0
-            else:
-                result['execution_accuracy'] = 0.0
-        else:
-            result['execution_error'] = "No final table produced"
-    
-    except Exception as e:
-        result['execution_error'] = str(e)
-    
-    return result
-
-def find_matching_answers(target_values, predicted_values):
-    """Find which target answers have matches in predicted values"""
-    matched = []
-    for target in target_values:
-        for predicted in predicted_values:
-            if target.match(predicted):
-                # Get the normalized string representation
-                matched.append(target.normalized)
-                break
-    return matched
-
-# Generation functions with integrated logging via callback
-async def iterative_generation_function(request, worker, state_machines, logging_callback=None):
-    """Generate actions iteratively with comprehensive logging via callback"""
-    question = request['question']
-    table = request['table']
-    ground_truth_answers = request['ground_truth_answers']
-    request_id = request['request_id']
-    
-    current_table = table
-    action_history = []
-    failures = 0
-    validity_failures = 0
-    max_failures = 3
-    max_validity_failures = 3
-    step = 0
-    max_steps = 10
-    
-    generation_mode = worker._get_generation_mode_string()
-    
-    # Log initial table state
-    if logging_callback:
-        logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
-    
-    while (failures < max_failures and 
-           validity_failures < max_validity_failures and 
-           step < max_steps):
-        
-        step_id = f"{request_id}_step{step}"
-        
-        # Build prompt
-        max_chars = 1500 if step == 0 else 1000
-        # table_str = serialize_table_to_csv(current_table, max_chars, crop=False)
-        table_str = serialize_table_to_csv(current_table, max_chars)
-        step_prompt = f"Table:\n{table_str}\n\n"
-        step_prompt += f"Question: {question}\n"
-        
-        if action_history:
-            step_prompt += "Actions taken so far:\n"
-            for i, action in enumerate(action_history):
-                step_prompt += f"{i+1}. {action}\n"
-            step_prompt += "\n"
-        
-        if worker.use_constraints:
-            instruction_prompt = "Next action: "
-        else:
-            instruction_prompt = "What should be the next action to answer this question? Choose from: select_row([row_indices]), select_column([\"column_names\"]), or end(). Next action: "
-        # Truncate if needed
-        estimated_length = len(step_prompt) // 4
-        if estimated_length > worker.max_model_len - 100:
-            table_str = serialize_table_to_csv(current_table, 500)
-            question_short = question[:100] + "..." if len(question) > 100 else question
-            step_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n"
-            if worker.use_constraints:
-                instruction_prompt = "Next action: "
-            else:
-                instruction_prompt = "What should be the next action? Choose from: select_row([row_indices]), select_column([\"column_names\"]), or end(). Next action: "
-        
-        step_prompt = model_config.add_instruct_tokens_for_instruct_models(step_prompt, instruction_prompt)        
-        
-        try:
-            # Generate action
-            action_str = await generate_single_action(worker, step_prompt, current_table, step_id, state_machines, action_history)
-            
-            # Parse action
-            if worker.use_constraints:
-                parsed_action = parse_action_string(action_str)
-            else:
-                parsed_action = parse_action_string(action_str)
-                # Could add extraction fallback here
-            if not parsed_action:
-                validity_failures += 1
-                print(f"Step {step}: Failed to generate valid action from: {action_str}")
-                if logging_callback:
-                    logging_callback(
-                        request_id, step + 1, f"validity_failed:{action_str}", 
-                        current_table, success=False, failure_type="validity_failure",
-                        generation_mode=generation_mode
-                    )
-                continue
-                
-            action_name, args = parsed_action
-            
-            if action_name == "end":
-                action_history.append("end()")
-                if logging_callback:
-                    logging_callback(request_id, step + 1, "end()", current_table, generation_mode=generation_mode)
-                break
-                
-            # Apply action
-            new_table = apply_action(current_table, action_name, args)
-            
-            if not new_table:
-                validity_failures += 1
-                print(f"Step {step}: Failed to apply action: {action_name}({args})")
-                if logging_callback:
-                    logging_callback(
-                        request_id, step + 1, f"{action_name}({args})", 
-                        current_table, success=False, failure_type="validity_failure",
-                        generation_mode=generation_mode
-                    )
-                continue
-                
-            # Action successful
-            current_table = new_table
-            action_history.append(f"{action_name}({args})")
-            failures = 0
-            validity_failures = 0
-            step += 1
-            print(f"Step {step}: Applied {action_name}({args})")
-            
-            # Log successful transformation
-            if logging_callback:
-                logging_callback(
-                    request_id, step, f"{action_name}({args})", 
-                    current_table, success=True,
-                    generation_mode=generation_mode
-                )
-            
-        except Exception as e:
-            failures += 1
-            print(f"Step {step}: Generation error: {str(e)}")
-            if logging_callback:
-                logging_callback(
-                    request_id, step + 1, f"generation_error:{str(e)}", 
-                    current_table, success=False, failure_type="generation_error",
-                    generation_mode=generation_mode
-                )
-    
-    # Calculate accuracy
-    accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-        action_history, current_table, ground_truth_answers, table
-    )
-    
-    return {
-        'action_history': action_history,
-        'final_table': current_table,
-        'execution_accuracy_metrics': accuracy_metrics
-    }
-
-
-async def cot_generation_function(request, worker, state_machines, logging_callback=None):
-    """Chain-of-Table generation function with comprehensive logging via callback"""
-    question = request['question']
-    table = request['table']
-    ground_truth_answers = request['ground_truth_answers']
-    request_id = request['request_id']
-    
-    current_table = table
-    action_history = []
-    failures = 0
-    validity_failures = 0
-    max_failures = 3
-    max_validity_failures = 3
-    step = 0
-    max_steps = 10
-    
-    generation_mode = "CoT"
-    
-    # Log initial table state
-    if logging_callback:
-        logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
-    
-    while (failures < max_failures and 
-           validity_failures < max_validity_failures and 
-           step < max_steps):
-        
-        try:
-            # Step 1: Dynamic Plan - Select action
-            action_name = await generate_action_selection(model_config, worker, question, current_table, action_history, request_id, state_machines, step, COT_ACTION_TEMPERATURE)
-            
-            if not action_name:
-                validity_failures += 1
-                print(f"Step {step}: Failed to select valid action")
-                if logging_callback:
-                    logging_callback(
-                        request_id, step + 1, "action_selection_failed", 
-                        current_table, success=False, failure_type="validity_failure",
-                        generation_mode=generation_mode
-                    )
-                continue
-            
-            if action_name == "end":
-                action_history.append("end()")
-                if logging_callback:
-                    logging_callback(request_id, step + 1, "end()", current_table, generation_mode=generation_mode)
-                break
-            
-            # Step 2: Generate Args
-            args = await generate_action_arguments(model_config, worker, question, current_table, action_name, action_history, request_id, state_machines, step, COT_ARGS_TEMPERATURE)
-            
-            if args is None:
-                validity_failures += 1
-                print(f"Step {step}: Failed to generate valid arguments for {action_name}")
-                if logging_callback:
-                    logging_callback(
-                        request_id, step + 1, f"{action_name}_args_failed", 
-                        current_table, success=False, failure_type="validity_failure",
-                        generation_mode=generation_mode
-                    )
-                continue
-            
-            # Apply action
-            new_table = apply_action(current_table, action_name, args)
-            
-            if not new_table:
-                validity_failures += 1
-                print(f"Step {step}: Failed to apply action: {action_name}({args})")
-                if logging_callback:
-                    logging_callback(
-                        request_id, step + 1, f"{action_name}({args})", 
-                        current_table, success=False, failure_type="validity_failure",
-                        generation_mode=generation_mode
-                    )
-                continue
-            
-            # Action successful
-            current_table = new_table
-            action_history.append(f"{action_name}({args})")
-            failures = 0
-            validity_failures = 0
-            step += 1
-            print(f"Step {step}: Applied {action_name}({args}) [CoT]")
-            
-            # Log successful transformation
-            if logging_callback:
-                logging_callback(
-                    request_id, step, f"{action_name}({args})", 
-                    current_table, success=True,
-                    generation_mode=generation_mode
-                )
-            
-        except Exception as e:
-            failures += 1
-            print(f"Step {step}: Generation error in CoT: {str(e)}")
-            if logging_callback:
-                logging_callback(
-                    request_id, step + 1, f"cot_generation_error:{str(e)}", 
-                    current_table, success=False, failure_type="generation_error",
-                    generation_mode=generation_mode
-                )
-    
-    # Calculate accuracy
-    accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-        action_history, current_table, ground_truth_answers, table
-    )
-    
-    return {
-        'action_history': action_history,
-        'final_table': current_table,
-        'execution_accuracy_metrics': accuracy_metrics
-    }
-
+# dataset = load_dataset('json', data_files='./datasets/dataset_simple.json', split='train')
 
 def write_results_to_jsonl(results, examples, output_file):
     """Write results to JSONL file with execution accuracy metrics"""
@@ -478,6 +116,9 @@ def main():
     """Main function using the modular vLLM server with comprehensive logging"""
     print("Setting up modular vLLM server with integrated logging...")
     
+    iterative_strategy = IterativeGenerationStrategy(model_config)
+    cot_strategy = ChainOfTableGenerationStrategy(model_config)
+    
     # Create logging configuration
     logging_config = create_logging_config(
         enable_logging=LOGGING_CONFIG['enable_logging'],
@@ -494,8 +135,8 @@ def main():
         use_cot=USE_CHAIN_OF_TABLE,
         use_global_constraints=USE_GLOBAL_CONSTRAINTS,
         generation_functions={
-            'iterative_generation': iterative_generation_function,
-            'cot_generation': cot_generation_function
+            'iterative_generation': iterative_strategy.generate_instance,
+            'cot_generation': cot_strategy.generate_instance
         },
         logging_config=logging_config,
         tensor_parallel_size=model_config.tensor_parallel_size

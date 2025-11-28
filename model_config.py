@@ -54,8 +54,8 @@ model_configs = {
     "mistralai/Mixtral-8x7B-Instruct-v0.1":  {
         "log_dir": 'table_logs_mixtral_instruct',
         "hardware_config": {
-            "num_workers": 1,
-            "tensor_parallel_size": 4,
+            "num_workers": 4,
+            "tensor_parallel_size": 1,
             "gpu_allocation": [0, 1, 2, 3]
         },
         "instruct": True
