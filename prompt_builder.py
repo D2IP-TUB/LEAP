@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List, Sequence
+
+from table import serialize_table_to_csv
+
+
+@dataclass
+class IterativePromptSettings:
+    initial_table_chars: int = 1500
+    step_table_chars: int = 1000
+    fallback_table_chars: int = 500
+    question_truncation: int = 100
+    safety_margin_tokens: int = 100
+
+
+@dataclass
+class CotPromptSettings:
+    action_table_chars: int = 1000
+    action_fallback_table_chars: int = 500
+    action_question_truncation: int = 80
+    action_safety_margin_tokens: int = 50
+    args_table_chars: int = 1200
+    args_fallback_table_chars: int = 600
+    args_question_truncation: int = 80
+    args_safety_margin_tokens: int = 100
+
+
+class PromptBuilder:
+    """Centralized helper for constructing model prompts."""
+
+    def __init__(
+        self,
+        model_config,
+        iterative_settings: IterativePromptSettings | None = None,
+        cot_settings: CotPromptSettings | None = None,
+    ):
+        self.model_config = model_config
+        self.iterative_settings = iterative_settings or IterativePromptSettings()
+        self.cot_settings = cot_settings or CotPromptSettings()
+
+    def build_iterative_prompt(
+        self,
+        *,
+        question: str,
+        table: dict,
+        action_history: Sequence[str],
+        worker,
+        step: int,
+    ) -> str:
+        """Create a constraint-aware prompt for iterative generation."""
+        max_chars = (
+            self.iterative_settings.initial_table_chars
+            if step == 0
+            else self.iterative_settings.step_table_chars
+        )
+        table_str = serialize_table_to_csv(table, max_chars)
+
+        step_prompt = f"Table:\n{table_str}\n\nQuestion: {question}\n"
+        if action_history:
+            step_prompt += "Actions taken so far:\n"
+            for idx, action in enumerate(action_history):
+                step_prompt += f"{idx + 1}. {action}\n"
+            step_prompt += "\n"
+
+        instruction_prompt = self._build_iterative_instruction(worker)
+
+        estimated_length = len(step_prompt) // 4
+        if estimated_length > worker.max_model_len - self.iterative_settings.safety_margin_tokens:
+            table_str = serialize_table_to_csv(table, self.iterative_settings.fallback_table_chars)
+            question_short = self._truncate_text(question, self.iterative_settings.question_truncation)
+            step_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n"
+            instruction_prompt = self._build_iterative_instruction(worker, fallback=True)
+
+        return self.model_config.add_instruct_tokens_for_instruct_models(step_prompt, instruction_prompt)
+
+    def _build_iterative_instruction(self, worker, fallback: bool = False) -> str:
+        """Instruction text for iterative generation."""
+        if worker.use_constraints:
+            return "Next action: "
+
+        base = (
+            'What should be the next action to answer this question? Choose from: '
+            'select_row([row_indices]), select_column(["column_names"]), or end(). '
+            "Next action: "
+        )
+        if fallback:
+            return base.replace("What should be the next action to answer this question? ", "What should be the next action? ")
+        return base
+
+    @staticmethod
+    def _truncate_text(text: str, limit: int) -> str:
+        return text[:limit] + "..." if len(text) > limit else text
+
+    def build_cot_action_prompt(
+        self,
+        *,
+        question: str,
+        table: dict,
+        action_history: Sequence[str],
+        worker,
+    ) -> str:
+        """Prompt for CoT action selection (dynamic plan)."""
+        table_str = serialize_table_to_csv(table, self.cot_settings.action_table_chars)
+        prompt = f"Table:\n{table_str}\n\n"
+        prompt += f"Question: {question}\n\n"
+
+        if action_history:
+            prompt += "Actions taken so far:\n"
+            for idx, action in enumerate(action_history):
+                prompt += f"{idx+1}. {action}\n"
+            prompt += "\n"
+
+        prompt += "Available actions: select_row, select_column, end\n"
+        instruction_prompt = "What action should be performed next to answer the question?\n"
+        instruction_prompt += "Action: "
+
+        estimated_length = len(prompt) // 4
+        if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
+            table_str = serialize_table_to_csv(table, self.cot_settings.action_fallback_table_chars)
+            question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
+            prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
+            prompt += "Available actions: select_row, select_column, end\n"
+            instruction_prompt = "What action should be performed next?\nAction: "
+
+        return self.model_config.add_instruct_tokens_for_instruct_models(prompt, instruction_prompt)
+
+    def build_cot_arguments_prompt(
+        self,
+        *,
+        question: str,
+        table: dict,
+        action_name: str,
+        action_history: Sequence[str],
+        worker,
+    ) -> str:
+        """Prompt for CoT argument generation."""
+        table_str = serialize_table_to_csv(table, self.cot_settings.args_table_chars)
+        prompt = f"Table:\n{table_str}\n\n"
+        prompt += f"Question: {question}\n\n"
+
+        if action_history:
+            prompt += "Actions taken so far:\n"
+            for idx, action in enumerate(action_history):
+                prompt += f"{idx+1}. {action}\n"
+            prompt += "\n"
+
+        prompt += f"Selected action: {action_name}\n"
+
+        if action_name == "select_row":
+            prompt += f"Available rows: 0 to {len(table['rows'])-1}\n"
+            instruction_prompt = "Which row indices should be selected? Provide the indices as a list, e.g., [0, 1, 2]\n"
+            instruction_prompt += "Row indices: "
+        elif action_name == "select_column":
+            prompt += f"Available columns: {table['columns']}\n"
+            instruction_prompt = 'Which columns should be selected? Provide the column names as a list, e.g., ["Name", "Age"]\n'
+            instruction_prompt += "Column names: "
+        else:
+            prompt += "No arguments needed for end action.\n"
+            instruction_prompt = "Arguments: "
+
+        estimated_length = len(prompt) // 4
+        if estimated_length > worker.max_model_len - self.cot_settings.args_safety_margin_tokens:
+            table_str = serialize_table_to_csv(table, self.cot_settings.args_fallback_table_chars)
+            question_short = self._truncate_text(question, self.cot_settings.args_question_truncation)
+            prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
+            prompt += f"Selected action: {action_name}\n"
+
+            if action_name == "select_row":
+                instruction_prompt = f"Which row indices (0 to {len(table['rows'])-1})?\nRow indices: "
+            else:
+                sample_cols = table["columns"][:3]
+                instruction_prompt = f"Which columns from {sample_cols}...?\nColumn names: "
+
+        return self.model_config.add_instruct_tokens_for_instruct_models(prompt, instruction_prompt)
+

@@ -5,61 +5,6 @@ import re
 from vllm import SamplingParams
 
 from constraints import create_action_only_constraint_processor, create_constraint_logits_processor
-from table import serialize_table_to_csv
-
-def build_dynamic_plan_prompt(model_config, question: str, table: Dict[str, Any], action_history: List[str]) -> str:
-    """Build prompt for dynamic_plan step in CoT"""
-    max_chars = 1000
-    table_str = serialize_table_to_csv(table, max_chars)
-    
-    prompt = f"Table:\n{table_str}\n\n"
-    prompt += f"Question: {question}\n\n"
-    
-    if action_history:
-        prompt += "Actions taken so far:\n"
-        for i, action in enumerate(action_history):
-            prompt += f"{i+1}. {action}\n"
-        prompt += "\n"
-    
-    prompt += "Available actions: select_row, select_column, end\n"
-    instruction_prompt = "What action should be performed next to answer the question?\n"
-    instruction_prompt += "Action: "
-
-    prompt = model_config.add_instruct_tokens_for_instruct_models(prompt, instruction_prompt)
-    
-    return prompt
-
-def build_generate_args_prompt(model_config, question: str, table: Dict[str, Any], action_name: str, action_history: List[str]) -> str:
-    """Build prompt for generate_args step in CoT"""
-    max_chars = 1200
-    table_str = serialize_table_to_csv(table, max_chars)
-    
-    prompt = f"Table:\n{table_str}\n\n"
-    prompt += f"Question: {question}\n\n"
-    
-    if action_history:
-        prompt += "Actions taken so far:\n"
-        for i, action in enumerate(action_history):
-            prompt += f"{i+1}. {action}\n"
-        prompt += "\n"
-    
-    prompt += f"Selected action: {action_name}\n"
-    
-    if action_name == "select_row":
-        prompt += f"Available rows: 0 to {len(table['rows'])-1}\n"
-        instruction_prompt = "Which row indices should be selected? Provide the indices as a list, e.g., [0, 1, 2]\n"
-        instruction_prompt += "Row indices: "
-    elif action_name == "select_column":
-        prompt += f"Available columns: {table['columns']}\n"
-        instruction_prompt = "Which columns should be selected? Provide the column names as a list, e.g., [\"Name\", \"Age\"]\n"
-        instruction_prompt += "Column names: "
-    else:
-        prompt += "No arguments needed for end action.\n"
-        instruction_prompt = "Arguments: "
-
-    prompt = model_config.add_instruct_tokens_for_instruct_models(prompt, instruction_prompt)
-    
-    return prompt
 
 def extract_arguments_from_text(text: str, action_name: str, table: Dict[str, Any]) -> Optional[List]:
     """Extract arguments for a specific action from free-form text"""
@@ -193,20 +138,26 @@ async def generate_single_action(worker, prompt, table, request_id, state_machin
         return ""
 
 
-async def generate_action_selection(model_config, worker, question, table, action_history, request_id, state_machines, step, temperature):
+async def generate_action_selection(
+    model_config,
+    worker,
+    question,
+    table,
+    action_history,
+    request_id,
+    state_machines,
+    step,
+    temperature,
+    prompt_builder,
+):
     """CoT Step 1: Dynamic Plan - Select which action to perform"""
     step_id = f"{request_id}_action_step{step}"
-    
-    prompt = build_dynamic_plan_prompt(model_config, question, table, action_history)
-    
-    estimated_length = len(prompt) // 4
-    if estimated_length > worker.max_model_len - 50:
-        table_str = serialize_table_to_csv(table, 500)
-        question_short = question[:80] + "..." if len(question) > 80 else question
-        prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
-        prompt += "Available actions: select_row, select_column, end\n"
-        instruction_prompt = "What action should be performed next?\nAction: "
-        prompt = model_config.add_instruct_tokens_for_instruct_models(prompt, instruction_prompt)
+    prompt = prompt_builder.build_cot_action_prompt(
+        question=question,
+        table=table,
+        action_history=action_history,
+        worker=worker,
+    )
     
     try:
         if worker.use_constraints:
@@ -235,29 +186,32 @@ async def generate_action_selection(model_config, worker, question, table, actio
         print(f"Action selection error in worker {worker.worker_id}: {e}")
         return None
 
-async def generate_action_arguments(model_config, worker, question, table, action_name, action_history, request_id, state_machines, step, temperature):
+async def generate_action_arguments(
+    model_config,
+    worker,
+    question,
+    table,
+    action_name,
+    action_history,
+    request_id,
+    state_machines,
+    step,
+    temperature,
+    prompt_builder,
+):
     """CoT Step 2: Generate Args - Generate arguments for the selected action"""
     step_id = f"{request_id}_args_step{step}"
     
     if action_name == "end":
         return []
     
-    prompt = build_generate_args_prompt(model_config, question, table, action_name, action_history)
-    
-    estimated_length = len(prompt) // 4
-    if estimated_length > worker.max_model_len - 100:
-        table_str = serialize_table_to_csv(table, 600)
-        question_short = question[:80] + "..." if len(question) > 80 else question
-        
-        prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
-        prompt += f"Selected action: {action_name}\n"
-        
-        if action_name == "select_row":
-            instruction_prompt = f"Which row indices (0 to {len(table['rows'])-1})?\nRow indices: "
-        else:  # select_column
-            instruction_prompt = f"Which columns from {table['columns'][:3]}...?\nColumn names: "
-
-        prompt = model_config.add_instruct_tokens_for_instruct_models(prompt, instruction_prompt)
+    prompt = prompt_builder.build_cot_arguments_prompt(
+        question=question,
+        table=table,
+        action_name=action_name,
+        action_history=action_history,
+        worker=worker,
+    )
     
     try:
         sampling_params = SamplingParams(
