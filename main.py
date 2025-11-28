@@ -2,11 +2,8 @@ import json
 import multiprocessing as mp
 import os
 import time
-from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict
 
-import yaml
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer
 from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
@@ -17,6 +14,11 @@ from generation_strategies import (
     parse_action_string,
 )
 from prompt_builder import PromptBuilder
+from config_loader import (
+    AppConfig,
+    DatasetConfig,
+    load_runtime_config,
+)
 
 import logging
 # shut off llm logging in case not important
@@ -29,84 +31,30 @@ os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 CONFIG_PATH = Path(os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
 
 
-def load_app_config(config_path: Path) -> dict:
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def load_model_presets(presets_path: Path) -> Dict[str, Any]:
-    with open(presets_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    if not isinstance(data, dict):
-        raise ValueError(f"Model presets file {presets_path} must define a mapping")
-    return data.get("models", data)
-
-
-def build_model_settings(model_section: Dict[str, Any], presets: Dict[str, Any]) -> Dict[str, Any]:
-    model_id = model_section["id"]
-    preset = deepcopy(presets.get(model_id, {}))
-    if not preset:
-        raise ValueError(f"No model preset found for id '{model_id}'")
-
-    log_dir = model_section.get("log_dir", preset.get("log_dir", f"table_logs_{model_id.replace('/', '_')}"))
-    instruct = model_section.get("instruct", preset.get("instruct", False))
-
-    hardware = preset.get("hardware", {}).copy()
-    override_hw = model_section.get("hardware", {})
-    if override_hw:
-        hardware.update(override_hw)
-
-    required_hw_keys = {"num_workers", "tensor_parallel_size", "gpu_allocation"}
-    missing = [key for key in required_hw_keys if key not in hardware]
-    if missing:
-        raise ValueError(f"Missing hardware fields {missing} for model '{model_id}'")
-
-    return {
-        "log_dir": log_dir,
-        "instruct": instruct,
-        "hardware": hardware,
-    }
-
-
-def resolve_logging_config(raw_logging_config: dict, model_log_dir: str, model_id: str) -> dict:
-    log_dir_template = raw_logging_config.get("log_dir", "./logs/{model_log_dir}")
-    log_dir = log_dir_template.format(
-        model=model_id.replace("/", "_"),
-        model_log_dir=model_log_dir
-    )
-
-    return {
-        'enable_logging': raw_logging_config.get('enable_logging', True),
-        'log_dir': log_dir,
-        'save_readable_tables': raw_logging_config.get('save_readable_tables', False),
-        'compress_logs': raw_logging_config.get('compress_logs', False),
-        'log_format': raw_logging_config.get('log_format', 'readable'),
-        'max_table_chars': raw_logging_config.get('max_table_chars', 10000)
-    }
-
-
-def load_dataset_from_config(dataset_config: dict):
-    loader = dataset_config.get("loader", "huggingface").lower()
+def load_dataset_from_config(dataset_config: DatasetConfig):
+    loader = dataset_config.loader.lower()
 
     if loader == "huggingface":
-        name = dataset_config["name"]
-        split = dataset_config.get("split")
+        if not dataset_config.name:
+            raise ValueError("HuggingFace dataset loader requires 'name'")
+        name = dataset_config.name
+        split = dataset_config.split
         kwargs = {}
         if split:
             kwargs["split"] = split
-        if dataset_config.get("trust_remote_code") is not None:
-            kwargs["trust_remote_code"] = dataset_config["trust_remote_code"]
+        if dataset_config.trust_remote_code is not None:
+            kwargs["trust_remote_code"] = dataset_config.trust_remote_code
         return load_dataset(name, **kwargs)
 
     if loader == "json":
-        data_files = dataset_config.get("data_files")
+        data_files = dataset_config.data_files
         if not data_files:
             raise ValueError("JSON dataset loader requires 'data_files'")
-        split = dataset_config.get("split")
+        split = dataset_config.split
         return load_dataset("json", data_files=data_files, split=split)
 
     if loader == "disk":
-        path = dataset_config.get("path")
+        path = dataset_config.path
         if not path:
             raise ValueError("Disk dataset loader requires 'path'")
         return load_from_disk(path)
@@ -114,34 +62,23 @@ def load_dataset_from_config(dataset_config: dict):
     raise ValueError(f"Unsupported dataset loader: {loader}")
 
 
-app_config = load_app_config(CONFIG_PATH)
+APP_CONFIG: AppConfig = load_runtime_config(CONFIG_PATH)
 
-model_section = app_config.get("model")
-if not model_section or "id" not in model_section:
-    raise ValueError("Configuration must define 'model.id'")
-
-model_id = model_section["id"]
-presets_path = Path(model_section.get("presets_path", "configs/models.yaml"))
-model_presets = load_model_presets(presets_path)
-model_settings = build_model_settings(model_section, model_presets)
+model_settings = APP_CONFIG.model
+model_id = model_settings.id
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=model_settings["instruct"])
+prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=model_settings.instruct)
 
-output_file = model_section.get("results_file", "./logs/results.jsonl")
+output_file = model_settings.results_file
 
-GENERATION_CONFIG = app_config.get("generation", {})
-USE_GENERATION_CONSTRAINTS = GENERATION_CONFIG.get("use_constraints", False)
-USE_GLOBAL_CONSTRAINTS = GENERATION_CONFIG.get("use_global_constraints", False)
-USE_CHAIN_OF_TABLE = GENERATION_CONFIG.get("use_chain_of_table", False)
+GENERATION_CONFIG = APP_CONFIG.generation
+USE_GENERATION_CONSTRAINTS = GENERATION_CONFIG.use_constraints
+USE_GLOBAL_CONSTRAINTS = GENERATION_CONFIG.use_global_constraints
+USE_CHAIN_OF_TABLE = GENERATION_CONFIG.use_chain_of_table
 
-LOGGING_CONFIG = resolve_logging_config(app_config.get("logging", {}), model_settings["log_dir"], model_id)
-
-dataset_config = app_config.get("dataset")
-if not dataset_config:
-    raise ValueError("Configuration must include a 'dataset' section")
-
-dataset = load_dataset_from_config(dataset_config)
+LOGGING_CONFIG = APP_CONFIG.logging
+dataset = load_dataset_from_config(APP_CONFIG.dataset)
 
 def write_results_to_jsonl(results, examples, output_file):
     """Write results to JSONL file with execution accuracy metrics"""
@@ -229,15 +166,15 @@ def main():
             'cot_generation': cot_strategy.generate_instance
         },
         logging_config=logging_config,
-        tensor_parallel_size=model_settings["hardware"]["tensor_parallel_size"]
+        tensor_parallel_size=model_settings.hardware.tensor_parallel_size
     )
     
     # Initialize the server
-    num_workers = model_settings["hardware"]["num_workers"]
+    num_workers = model_settings.hardware.num_workers
     server = ProcessParallelVLLM(
         model_id=model_id,
-        num_workers=model_settings["hardware"]["num_workers"],
-        gpu_allocation=model_settings["hardware"]["gpu_allocation"],
+        num_workers=model_settings.hardware.num_workers,
+        gpu_allocation=model_settings.hardware.gpu_allocation,
         generation_config=generation_config
     )
     
@@ -253,8 +190,8 @@ def main():
         # Prepare requests
         requests = []
         examples = []
-        run_config = app_config.get("run", {})
-        max_examples = run_config.get("max_examples")
+        run_config = APP_CONFIG.run
+        max_examples = run_config.max_examples
         subset_size = len(dataset) if max_examples is None else min(max_examples, len(dataset))
         
         for i, example in enumerate(dataset):
