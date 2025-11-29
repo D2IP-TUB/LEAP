@@ -20,6 +20,7 @@ from config_loader import (
     AppConfig,
     DatasetConfig,
     GenerationConfig as GenerationSettings,
+    get_model_id,
     load_runtime_config,
 )
 
@@ -73,8 +74,13 @@ def load_dataset_from_config(dataset_config: DatasetConfig):
 
 
 def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
-    app_config: AppConfig = load_runtime_config(config_path)
-    tokenizer = AutoTokenizer.from_pretrained(app_config.model.id)
+    # Load tokenizer first
+    model_id = get_model_id(config_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+
+    # Now load the full config with tokenizer
+    app_config: AppConfig = load_runtime_config(config_path, tokenizer)
+
     prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=app_config.model.instruct)
     dataset = load_dataset_from_config(app_config.dataset)
     return RuntimeContext(
@@ -171,6 +177,7 @@ def main():
         use_constraints=generation_settings.use_constraints,
         use_cot=generation_settings.use_chain_of_table,
         use_global_constraints=generation_settings.use_global_constraints,
+        tokenizer_config=model_settings.tokenizer_config,
         generation_functions={
             'iterative_generation': iterative_strategy.generate_instance,
             'cot_generation': cot_strategy.generate_instance

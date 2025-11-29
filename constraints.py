@@ -1,15 +1,15 @@
 import torch
 
-from tokenizer_config import TokenizerConfig
+from config_loader import TokenizerConfig
 from core import Table
 
 class ConstraintStateMachine:
     """State machine for constraint processing with optional global action constraints"""
-    def __init__(self, table: Table, tokenizer, action_history=None, use_global_constraints=True):
+    def __init__(self, table: Table, tokenizer, tokenizer_config: TokenizerConfig, action_history=None, use_global_constraints=True):
         self.tokenizer = tokenizer
         self.table = table
         self.use_global_constraints = use_global_constraints
-        self.tokenizer_config = TokenizerConfig(self.tokenizer)
+        self.tokenizer_config = tokenizer_config
         
         # Parse action history to determine previously used action types (only if global constraints are enabled)
         if self.use_global_constraints:
@@ -289,26 +289,27 @@ class ConstraintStateMachine:
         
         return [self.tokenizer.eos_token_id]
 
-def create_constraint_logits_processor(table, tokenizer, request_id, state_machines_dict, 
+def create_constraint_logits_processor(table, tokenizer, tokenizer_config: TokenizerConfig, request_id, state_machines_dict,
                                       action_history=None, use_global_constraints=True):
     """
     Create a logits processor function for a specific table with external state storage
-    
+
     Args:
         table: The table data
         tokenizer: The tokenizer
+        tokenizer_config: TokenizerConfig instance
         request_id: Unique request identifier
         state_machines_dict: Dictionary to store state machines
         action_history: List of previously executed actions (for global constraints)
         use_global_constraints: Whether to apply global action constraints (default: True)
     """
 
-    
+
     def constraint_logits_processor(prompt_token_ids, generated_token_ids, logits):
         # Get or create state machine for this request with action history
         if request_id not in state_machines_dict:
             state_machines_dict[request_id] = ConstraintStateMachine(
-                table, tokenizer, action_history, use_global_constraints
+                table, tokenizer, tokenizer_config, action_history, use_global_constraints
             )
         
         sm = state_machines_dict[request_id]

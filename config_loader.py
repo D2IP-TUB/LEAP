@@ -15,11 +15,25 @@ class HardwareConfig:
 
 
 @dataclass(frozen=True)
+class TokenizerConfig:
+    is_llama_tokenizer: bool
+    comma_id: int
+    list_open_id: int
+    list_close_id: int
+    paren_open_id: int
+    paren_close_id: int
+    quote_id: int
+    closing_quotes_tokens: List[int]
+    action_tokens: Dict[str, List[int]]
+
+
+@dataclass(frozen=True)
 class ModelConfig:
     id: str
     instruct: bool
     log_dir: str
     hardware: HardwareConfig
+    tokenizer_config: TokenizerConfig
     results_file: str
 
 
@@ -64,7 +78,32 @@ class AppConfig:
     logging: LoggingConfig
 
 
-def load_runtime_config(config_path: Path) -> AppConfig:
+def get_model_id(config_path: Path) -> str:
+    """Get the model ID from config without loading everything.
+
+    Args:
+        config_path: Path to the main config file
+
+    Returns:
+        The model ID string
+    """
+    raw_config = _load_app_config(config_path)
+    model_section = raw_config.get("model")
+    if not model_section or "id" not in model_section:
+        raise ValueError("Configuration must define 'model.id'")
+    return model_section["id"]
+
+
+def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
+    """Load runtime configuration from YAML files.
+
+    Args:
+        config_path: Path to the main config file
+        tokenizer: Transformers tokenizer instance for the model
+
+    Returns:
+        AppConfig with all configuration loaded and validated
+    """
     raw_config = _load_app_config(config_path)
 
     model_section = raw_config.get("model")
@@ -73,7 +112,7 @@ def load_runtime_config(config_path: Path) -> AppConfig:
 
     presets_path = Path(model_section.get("presets_path", "configs/models.yaml"))
     model_presets = _load_model_presets(presets_path)
-    model_config = _build_model_config(model_section, model_presets)
+    model_config = _build_model_config(model_section, model_presets, tokenizer)
 
     logging_section = raw_config.get("logging", {})
     logging_config = _build_logging_config(logging_section, model_config.log_dir, model_config.id)
@@ -117,7 +156,58 @@ def _load_model_presets(presets_path: Path) -> Dict[str, Any]:
     return data.get("models", data)
 
 
-def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any]) -> ModelConfig:
+def _build_tokenizer_config(tokenizer_section: Dict[str, Any], tokenizer) -> TokenizerConfig:
+    """Build TokenizerConfig from preset data and tokenizer instance."""
+    from transformers import PreTrainedTokenizerBase
+
+    if not isinstance(tokenizer, PreTrainedTokenizerBase):
+        raise ValueError("tokenizer must be a transformers tokenizer instance")
+
+    is_llama_tokenizer = tokenizer_section.get("llama_tokenizer", False)
+
+    # Helper to get token ID with optional override
+    def _get_scalar_id(symbol: str, override_key: str | None = None) -> int:
+        token_ids_overrides = tokenizer_section.get("token_ids", {})
+        if override_key is not None and override_key in token_ids_overrides:
+            return int(token_ids_overrides[override_key])
+        token = tokenizer.encode(symbol, add_special_tokens=False)[-1]
+        return int(token)
+
+    comma_id = _get_scalar_id(",", "comma_id")
+    list_open_id = _get_scalar_id("[", "list_open_id")
+    list_close_id = _get_scalar_id("]")
+    paren_open_id = _get_scalar_id("(")
+    paren_close_id = _get_scalar_id(")")
+    quote_id = _get_scalar_id('"')
+
+    # Build closing quote tokens
+    closing_quote_token_ids = dict(tokenizer_section.get("closing_quote_token_ids", {}))
+    if "closing_quote_id" not in closing_quote_token_ids:
+        closing_quote_token_ids["closing_quote_id"] = quote_id
+
+    closing_quotes_tokens = [int(v) for v in closing_quote_token_ids.values()]
+
+    # Build action tokens
+    action_tokens = {
+        "select_row": tokenizer.encode("select_row", add_special_tokens=False),
+        "select_column": tokenizer.encode("select_column", add_special_tokens=False),
+        "end": tokenizer.encode("end", add_special_tokens=False),
+    }
+
+    return TokenizerConfig(
+        is_llama_tokenizer=is_llama_tokenizer,
+        comma_id=comma_id,
+        list_open_id=list_open_id,
+        list_close_id=list_close_id,
+        paren_open_id=paren_open_id,
+        paren_close_id=paren_close_id,
+        quote_id=quote_id,
+        closing_quotes_tokens=closing_quotes_tokens,
+        action_tokens=action_tokens,
+    )
+
+
+def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any], tokenizer) -> ModelConfig:
     model_id = model_section["id"]
     preset = dict(presets.get(model_id, {}))
     if not preset:
@@ -143,6 +233,13 @@ def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any]) 
         gpu_allocation=list(hardware_defaults["gpu_allocation"]),
     )
 
+    # Build tokenizer config
+    tokenizer_section = preset.get("tokenizer", {})
+    if not tokenizer_section:
+        raise ValueError(f"Missing tokenizer configuration for model '{model_id}'")
+
+    tokenizer_config = _build_tokenizer_config(tokenizer_section, tokenizer)
+
     results_file = model_section.get("results_file", "./logs/results.jsonl")
 
     return ModelConfig(
@@ -150,6 +247,7 @@ def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any]) 
         instruct=instruct,
         log_dir=log_dir,
         hardware=hardware_config,
+        tokenizer_config=tokenizer_config,
         results_file=results_file,
     )
 
