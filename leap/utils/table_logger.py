@@ -12,7 +12,7 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-from core import Table
+from leap.core import Table
 
 
 @dataclass

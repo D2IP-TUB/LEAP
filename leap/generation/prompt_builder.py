@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Sequence
 
-from core import Table
+from leap.core import Table
 
 
 @dataclass

@@ -1,8 +1,8 @@
 from typing import Optional
 
 from vllm import SamplingParams
-from core import Action, Table
-from constraints import create_action_only_constraint_processor, create_constraint_logits_processor
+from leap.core import Action, Table
+from leap.inference.constraints import create_action_only_constraint_processor, create_constraint_logits_processor
 
 
 async def generate_single_action(worker, prompt, table: Table, request_id, state_machines, action_history=None):

@@ -1,7 +1,7 @@
 import pytest
 from transformers import AutoTokenizer
 
-from constraints import (
+from leap.inference.constraints import (
     ConstraintStateMachine,
 )
 

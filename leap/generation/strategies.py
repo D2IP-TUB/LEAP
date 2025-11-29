@@ -1,14 +1,14 @@
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from Evaluation import calculate_execution_accuracy_with_dataset_answers
-from generate import (
+from leap.evaluation.evaluator import calculate_execution_accuracy_with_dataset_answers
+from leap.generation.generate import (
     generate_action_arguments,
     generate_action_selection,
     generate_single_action,
 )
-from prompt_builder import PromptBuilder
-from core import Action, Table
+from leap.generation.prompt_builder import PromptBuilder
+from leap.core import Action, Table
 
 DEFAULT_COT_ACTION_TEMPERATURE = 0.3
 DEFAULT_COT_ARGS_TEMPERATURE = 0.7
