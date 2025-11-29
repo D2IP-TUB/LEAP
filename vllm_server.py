@@ -51,6 +51,7 @@ class VLLMWorkerProcess(mp.Process):
         # Extract generation config
         self.use_constraints = self.generation_config.get('use_constraints', True)
         self.use_cot = self.generation_config.get('use_cot', False)
+        self.tokenizer_config = self.generation_config.get('tokenizer_config')
         self.constraint_processors = self.generation_config.get('constraint_processors', {})
         self.generation_functions = self.generation_config.get('generation_functions', {})
         
@@ -525,10 +526,11 @@ class ProcessParallelVLLM:
 def create_generation_config(use_constraints: bool = True,
                            use_cot: bool = False,
                            use_global_constraints: bool = True,  # NEW parameter
+                           tokenizer_config = None,  # NEW parameter
                            constraint_processors: Dict[str, Callable] = None,
                            generation_functions: Dict[str, Callable] = None,
                            engine_config: Dict[str, Any] = None,
-                           logging_config: Dict[str, Any] = None, 
+                           logging_config: Dict[str, Any] = None,
                            tensor_parallel_size = 1) -> Dict[str, Any]:
     """
     Create a generation configuration dictionary with logging support
@@ -549,6 +551,7 @@ def create_generation_config(use_constraints: bool = True,
         'use_constraints': use_constraints,
         'use_cot': use_cot,
         'use_global_constraints': use_global_constraints,  # NEW field
+        'tokenizer_config': tokenizer_config,  # NEW field
         'constraint_processors': constraint_processors or {},
         'generation_functions': generation_functions or {},
         'engine_config': engine_config or {

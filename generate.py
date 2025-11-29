@@ -24,7 +24,7 @@ async def generate_single_action(worker, prompt, table: Table, request_id, state
 
             # Pass action_history to the constraint processor
             constraint_processor = create_constraint_logits_processor(
-                table, worker.tokenizer, request_id, state_machines,
+                table, worker.tokenizer, worker.tokenizer_config, request_id, state_machines,
                 action_history, use_global_constraints
             )
 
