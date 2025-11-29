@@ -1,7 +1,7 @@
 import torch
 
-from config_loader import TokenizerConfig
-from core import Table
+from leap.config.loader import TokenizerConfig
+from leap.core import Table
 
 class ConstraintStateMachine:
     """State machine for constraint processing with optional global action constraints"""

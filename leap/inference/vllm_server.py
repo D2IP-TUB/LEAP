@@ -16,7 +16,7 @@ from vllm import AsyncLLMEngine, SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 
 # Import the table logger
-from table_logger import TableLogger
+from leap.utils.table_logger import TableLogger
 
 
 class VLLMWorkerProcess(mp.Process):

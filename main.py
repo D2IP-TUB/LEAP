@@ -8,15 +8,15 @@ from typing import Any
 
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer
-from vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
 
-from generation_strategies import (
+from leap.inference.vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
+from leap.generation.strategies import (
     ChainOfTableGenerationStrategy,
     IterativeGenerationStrategy,
 )
-from prompt_builder import PromptBuilder
-from core import Table, Action
-from config_loader import (
+from leap.generation.prompt_builder import PromptBuilder
+from leap.core import Table, Action
+from leap.config.loader import (
     AppConfig,
     DatasetConfig,
     GenerationConfig as GenerationSettings,
