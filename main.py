@@ -15,7 +15,7 @@ from leap.generation.strategies import (
     IterativeGenerationStrategy,
 )
 from leap.generation.prompt_builder import PromptBuilder
-from leap.core import Table, Action
+from leap.core import Table, Action, InferenceRequest, InferenceResult
 from leap.config.loader import (
     AppConfig,
     DatasetConfig,
@@ -91,39 +91,27 @@ def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
     )
 
 
-def write_results_to_jsonl(results, examples, output_file, generation_config: GenerationSettings):
+def write_results_to_jsonl(results: list[InferenceResult], output_file, generation_config: GenerationSettings):
     """Write results to JSONL file with execution accuracy metrics"""
     with open(output_file, 'w', encoding='utf-8') as f:
-        for i, (result, example) in enumerate(zip(results, examples)):
-            action_history = result.get('action_history', [])
-            metrics = result.get('execution_accuracy_metrics', {})
-            
+        for i, result in enumerate(results):
             actions = []
-            for action_str in action_history:
+            for action_str in result.action_history:
                 action = Action.parse(action_str)
                 if action:
                     actions.append(action.to_dict())
                 else:
                     actions.append({"action": "invalid", "args": [action_str]})
-            
+
             # Create entry with WikiTableQuestions logic-based execution accuracy metrics
+            # All data comes from the self-contained result
             entry = {
                 "id": f"nt-{i+1}",
-                "question": example['question'],
-                "ground_truth_answers": example['answers'],
+                "question": result.question,
+                "ground_truth_answers": result.ground_truth_answers,
                 "actions": actions,
-                "execution_accuracy": metrics.get('execution_accuracy', 0.0),
-                "execution_metrics": {
-                    "answer_found_in_final": metrics.get('answer_found_in_final', False),
-                    "answer_found_in_original": metrics.get('answer_found_in_original', False),
-                    "terminated_properly": metrics.get('terminated_properly', False),
-                    "matched_answers_final": metrics.get('matched_answers_final', []),
-                    "matched_answers_original": metrics.get('matched_answers_original', []),
-                    "num_actions": metrics.get('num_actions', 0),
-                    "final_table_size": metrics.get('final_table_size'),
-                    "execution_error": metrics.get('execution_error'),
-                    "evaluation_method": metrics.get('evaluation_method', 'wikitablequestions_logic')
-                },
+                "execution_accuracy": result.execution_accuracy,
+                "execution_metrics": result.execution_metrics.to_dict(),  # Use to_dict() method
                 "metadata": {
                     "num_steps": len(actions),
                     "generation_mode": get_generation_mode_string(generation_config),
@@ -206,53 +194,47 @@ def main():
         
         # Prepare requests
         requests = []
-        examples = []
         run_config = app_config.run
         max_examples = run_config.max_examples
         dataset = runtime.dataset
         subset_size = len(dataset) if max_examples is None else min(max_examples, len(dataset))
-        
+
         for i, example in enumerate(dataset):
             if i >= subset_size:
                 break
 
-            table = Table(
-                columns=example['table']['header'],
-                rows=example['table']['rows']
-            )
+            # Use typed request builder
+            inference_request = InferenceRequest.from_example(example, index=i)
 
-            request = {
-                'question': example['question'],
-                'table': table,
-                'ground_truth_answers': example['answers']
-            }
-            requests.append(request)
-            examples.append(example)
+            # Convert to dict for queue
+            requests.append(inference_request.to_dict())
         
         print(f"Processing {len(requests)} questions...")
         print(f"Generation mode: {get_generation_mode_string(generation_settings)}")
         
         # Generate responses with comprehensive logging
         start_time = time.time()
-        results = server.generate_batch(requests)
+        results_dicts = server.generate_batch(requests)
         end_time = time.time()
-        
+
+        # Convert dicts to typed results
+        results = [InferenceResult.from_dict(r) for r in results_dicts]
+
         print(f"Total time: {end_time - start_time:.2f} seconds")
         print(f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds")
-        
+
         # Analyze results
         analyze_execution_accuracy(results)
-        
+
         # Write results
         write_results_to_jsonl(
             results,
-            examples,
             model_settings.results_file,
             generation_settings,
         )
-        
+
         # Print sample results
-        print_sample_results(results, examples)
+        print_sample_results(results)
         
         # Demonstrate logging analysis
         demonstrate_logging_analysis(server, results)
@@ -262,23 +244,23 @@ def main():
         server.shutdown()
 
 
-def analyze_execution_accuracy(results):
+def analyze_execution_accuracy(results: list[InferenceResult]):
     """Analyze and print execution accuracy metrics"""
     execution_accuracies = []
     answer_found_rates = []
     proper_termination_rates = []
     baseline_rates = []
-    
+
     print(f"\n{'='*80}")
     print("EXECUTION ACCURACY ANALYSIS")
     print(f"{'='*80}")
-    
+
     for result in results:
-        metrics = result.get('execution_accuracy_metrics', {})
-        execution_accuracies.append(metrics.get('execution_accuracy', 0.0))
-        answer_found_rates.append(1.0 if metrics.get('answer_found_in_final', False) else 0.0)
-        proper_termination_rates.append(1.0 if metrics.get('terminated_properly', False) else 0.0)
-        baseline_rates.append(1.0 if metrics.get('answer_found_in_original', False) else 0.0)
+        metrics = result.execution_metrics
+        execution_accuracies.append(metrics.execution_accuracy)
+        answer_found_rates.append(1.0 if metrics.answer_found_in_final else 0.0)
+        proper_termination_rates.append(1.0 if metrics.terminated_properly else 0.0)
+        baseline_rates.append(1.0 if metrics.answer_found_in_original else 0.0)
     
     if execution_accuracies:
         overall_execution_accuracy = sum(execution_accuracies) / len(execution_accuracies)
@@ -300,36 +282,35 @@ def analyze_execution_accuracy(results):
         print(f"Successful Cases: {success_cases}/{len(execution_accuracies)} ({success_cases/len(execution_accuracies)*100:.1f}%)")
 
 
-def print_sample_results(results, examples):
+def print_sample_results(results: list[InferenceResult]):
     """Print sample results for inspection"""
     print(f"\n{'='*80}")
     print("SAMPLE RESULTS")
     print(f"{'='*80}")
-    
+
     for i in range(min(5, len(results))):
         result = results[i]
-        action_history = result.get('action_history', [])
-        metrics = result.get('execution_accuracy_metrics', {})
-        
+        metrics = result.execution_metrics
+
         print(f"\nExample {i+1}:")
-        print("Question:", examples[i]['question'])
-        print("Ground Truth Answers:", examples[i]['answers'])
+        print("Question:", result.question)
+        print("Ground Truth Answers:", result.ground_truth_answers)
         print("Actions:")
-        for j, action in enumerate(action_history):
+        for j, action in enumerate(result.action_history):
             print(f"  Step {j+1}: {action}")
-        
-        print(f"Execution Accuracy: {metrics.get('execution_accuracy', 0.0):.1f}")
-        print(f"Answer Found in Final: {metrics.get('answer_found_in_final', False)}")
-        print(f"Answer Found in Original: {metrics.get('answer_found_in_original', False)}")
-        print(f"Terminated Properly: {metrics.get('terminated_properly', False)}")
-        
-        if metrics.get('matched_answers_final'):
-            print(f"Matched Answers: {metrics['matched_answers_final']}")
-        
-        if metrics.get('final_table_size'):
-            rows, cols = metrics['final_table_size']
+
+        print(f"Execution Accuracy: {metrics.execution_accuracy:.1f}")
+        print(f"Answer Found in Final: {metrics.answer_found_in_final}")
+        print(f"Answer Found in Original: {metrics.answer_found_in_original}")
+        print(f"Terminated Properly: {metrics.terminated_properly}")
+
+        if metrics.matched_answers_final:
+            print(f"Matched Answers: {metrics.matched_answers_final}")
+
+        if metrics.final_table_size:
+            rows, cols = metrics.final_table_size
             print(f"Final Table Size: {rows} rows × {cols} columns")
-        
+
         print("-" * 80)
 
 

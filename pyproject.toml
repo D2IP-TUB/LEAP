@@ -9,3 +9,9 @@ dependencies = [
     "vllm==0.10.0",
     "PyYAML>=6.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+    "pytest-cov>=7.0.0",
+]

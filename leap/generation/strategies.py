@@ -8,7 +8,7 @@ from leap.generation.generate import (
     generate_single_action,
 )
 from leap.generation.prompt_builder import PromptBuilder
-from leap.core import Action, Table
+from leap.core import Action, Table, InferenceRequest, InferenceResult
 
 DEFAULT_COT_ACTION_TEMPERATURE = 0.3
 DEFAULT_COT_ARGS_TEMPERATURE = 0.7
@@ -48,16 +48,16 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
 
     async def generate_instance(
         self,
-        request: Dict[str, Any],
+        request: InferenceRequest,
         worker,
         state_machines,
         logging_callback: Optional[Callable] = None,
-    ) -> Dict[str, Any]:
-        question = request["question"]
-        original_table: Table = request["table"]
+    ) -> InferenceResult:
+        question = request.question
+        original_table: Table = request.table
         current_table: Table = original_table
-        ground_truth_answers = request["ground_truth_answers"]
-        request_id = request["request_id"]
+        ground_truth_answers = request.ground_truth_answers
+        request_id = request.request_id
 
         action_history: List[str] = []
         failures = 0
@@ -175,15 +175,24 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                         generation_mode=generation_mode,
                     )
 
+                # If this is a critical error (like max_model_len exceeded), break the loop
+                error_str = str(exc).lower()
+                if "max_model_len" in error_str or "maximum model length" in error_str:
+                    print(f"Critical error detected: {exc}. Stopping generation for this instance.")
+                    break
+
         accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
             action_history, current_table, ground_truth_answers, original_table
         )
 
-        return {
-            "action_history": action_history,
-            "final_table": current_table,  # Table object
-            "execution_accuracy_metrics": accuracy_metrics,
-        }
+        return InferenceResult(
+            action_history=action_history,
+            final_table=current_table,
+            execution_metrics=accuracy_metrics,
+            request_id=request_id,
+            question=question,
+            ground_truth_answers=ground_truth_answers,
+        )
 
 
 class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
@@ -203,16 +212,16 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
 
     async def generate_instance(
         self,
-        request: Dict[str, Any],
+        request: InferenceRequest,
         worker,
         state_machines,
         logging_callback: Optional[Callable] = None,
-    ) -> Dict[str, Any]:
-        question = request["question"]
-        original_table: Table = request["table"]
+    ) -> InferenceResult:
+        question = request.question
+        original_table: Table = request.table
         current_table: Table = original_table
-        ground_truth_answers = request["ground_truth_answers"]
-        request_id = request["request_id"]
+        ground_truth_answers = request.ground_truth_answers
+        request_id = request.request_id
 
         action_history: List[str] = []
         failures = 0
@@ -355,12 +364,21 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                         generation_mode=generation_mode,
                     )
 
+                # If this is a critical error (like max_model_len exceeded), break the loop
+                error_str = str(exc).lower()
+                if "max_model_len" in error_str or "maximum model length" in error_str:
+                    print(f"Critical error detected: {exc}. Stopping generation for this instance.")
+                    break
+
         accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
             action_history, current_table, ground_truth_answers, original_table
         )
 
-        return {
-            "action_history": action_history,
-            "final_table": current_table,  # Table object
-            "execution_accuracy_metrics": accuracy_metrics,
-        }
+        return InferenceResult(
+            action_history=action_history,
+            final_table=current_table,
+            execution_metrics=accuracy_metrics,
+            request_id=request_id,
+            question=question,
+            ground_truth_answers=ground_truth_answers,
+        )
