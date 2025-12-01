@@ -4,62 +4,121 @@ Essential tests for vLLM server components
 import pytest
 import multiprocessing as mp
 from unittest.mock import Mock, MagicMock, patch
-from leap.inference.vllm_server import (
-    ProcessParallelVLLM,
-    VLLMWorkerProcess,
-    create_generation_config,
-    create_logging_config,
-)
+from leap.inference.vllm_server import ProcessParallelVLLM, VLLMWorkerProcess
+from leap.config.loader import GenerationConfig, TokenizerConfig, LoggingConfig
+
+
+# Test helper functions to create typed configs
+def create_test_generation_config(
+    use_constraints: bool = True,
+    use_cot: bool = False,
+    use_global_constraints: bool = True
+) -> GenerationConfig:
+    """Helper to create GenerationConfig for tests"""
+    return GenerationConfig(
+        use_constraints=use_constraints,
+        use_chain_of_table=use_cot,
+        use_global_constraints=use_global_constraints
+    )
+
+
+def create_test_server(
+    model_id: str = "gpt2",
+    num_workers: int = 2,
+    gpu_allocation=None,
+    **kwargs
+) -> ProcessParallelVLLM:
+    """Helper to create ProcessParallelVLLM with all required configs"""
+    return ProcessParallelVLLM(
+        model_id=model_id,
+        num_workers=num_workers,
+        gpu_allocation=gpu_allocation,
+        generation_config=kwargs.get('generation_config', create_test_generation_config()),
+        tokenizer_config=kwargs.get('tokenizer_config', create_test_tokenizer_config()),
+        logging_config=kwargs.get('logging_config', create_test_logging_config()),
+        generation_functions=kwargs.get('generation_functions', {}),
+        tensor_parallel_size=kwargs.get('tensor_parallel_size', 1)
+    )
+
+
+def create_test_tokenizer_config() -> TokenizerConfig:
+    """Helper to create minimal TokenizerConfig for tests"""
+    return TokenizerConfig(
+        is_llama_tokenizer=False,
+        comma_id=11,
+        list_open_id=58,
+        list_close_id=60,
+        paren_open_id=1306,
+        paren_close_id=1572,
+        quote_id=1,
+        closing_quotes_tokens=[1],
+        action_tokens={}
+    )
+
+
+def create_test_logging_config(
+    enable_logging: bool = True,
+    log_dir: str = "table_logs",
+    save_readable_tables: bool = True,
+    compress_logs: bool = False,
+    log_format: str = "readable",
+    max_table_chars: int = 10000
+) -> LoggingConfig:
+    """Helper to create LoggingConfig for tests"""
+    return LoggingConfig(
+        enable_logging=enable_logging,
+        log_dir=log_dir,
+        save_readable_tables=save_readable_tables,
+        compress_logs=compress_logs,
+        log_format=log_format,
+        max_table_chars=max_table_chars
+    )
 
 
 class TestGenerationConfigCreation:
     """Test configuration helper functions"""
 
-    def test_create_generation_config_defaults(self):
+    def test_create_test_generation_config_defaults(self):
         """Test creating generation config with defaults"""
-        config = create_generation_config()
+        config = create_test_generation_config()
 
-        assert config['use_constraints'] is True
-        assert config['use_cot'] is False
-        assert config['use_global_constraints'] is True
-        assert 'engine_config' in config
-        assert 'logging_config' in config
+        assert config.use_constraints is True
+        assert config.use_chain_of_table is False
+        assert config.use_global_constraints is True
 
-    def test_create_generation_config_custom(self):
+    def test_create_test_generation_config_custom(self):
         """Test creating generation config with custom values"""
-        config = create_generation_config(
+        config = create_test_generation_config(
             use_constraints=False,
             use_cot=True,
-            use_global_constraints=False,
-            tensor_parallel_size=2
+            use_global_constraints=False
         )
 
-        assert config['use_constraints'] is False
-        assert config['use_cot'] is True
-        assert config['use_global_constraints'] is False
-        assert config['engine_config']['tensor_parallel_size'] == 2
+        assert config.use_constraints is False
+        assert config.use_chain_of_table is True
+        assert config.use_global_constraints is False
 
-    def test_create_logging_config_defaults(self):
+    def test_create_test_logging_config_defaults(self):
         """Test creating logging config with defaults"""
-        config = create_logging_config()
+        config = create_test_logging_config()
 
-        assert config['enable_logging'] is True
-        assert config['log_dir'] == "table_logs"
-        assert config['save_readable_tables'] is True
-        assert config['compress_logs'] is False
-        assert config['log_format'] == "readable"
+        assert config.enable_logging is True
+        assert config.log_dir == "table_logs"
+        assert config.save_readable_tables is True
+        assert config.compress_logs is False
+        assert config.log_format == "readable"
 
-    def test_create_logging_config_custom(self):
+    def test_create_test_logging_config_custom(self):
         """Test creating logging config with custom values"""
-        config = create_logging_config(
+        config = create_test_logging_config(
             enable_logging=False,
             log_dir="custom_logs",
             compress_logs=True
         )
 
-        assert config['enable_logging'] is False
-        assert config['log_dir'] == "custom_logs"
-        assert config['compress_logs'] is True
+        assert config.enable_logging is False
+        assert config.log_dir == "custom_logs"
+        assert config.compress_logs is True
 
 
 class TestProcessParallelVLLM:
@@ -67,10 +126,10 @@ class TestProcessParallelVLLM:
 
     def test_initialization_default_gpus(self):
         """Test initialization with default GPU allocation"""
-        server = ProcessParallelVLLM(
+        server = create_test_server(
             model_id="gpt2",
             num_workers=2,
-            generation_config=create_generation_config()
+            generation_config=create_test_generation_config()
         )
 
         assert server.model_id == "gpt2"
@@ -82,22 +141,22 @@ class TestProcessParallelVLLM:
     def test_initialization_custom_gpus(self):
         """Test initialization with custom GPU allocation"""
         gpu_allocation = [0, 1, 2, 3]
-        server = ProcessParallelVLLM(
+        server = create_test_server(
             model_id="gpt2",
             num_workers=2,
             gpu_allocation=gpu_allocation,
-            generation_config=create_generation_config()
+            generation_config=create_test_generation_config()
         )
 
         assert server.available_gpus == gpu_allocation
 
     def test_worker_creation(self):
         """Test that workers are created correctly"""
-        server = ProcessParallelVLLM(
+        server = create_test_server(
             model_id="gpt2",
             num_workers=3,
             gpu_allocation=[0, 1, 2],
-            generation_config=create_generation_config()
+            generation_config=create_test_generation_config()
         )
 
         assert len(server.workers) == 3
@@ -108,46 +167,45 @@ class TestProcessParallelVLLM:
 
     def test_is_ready_initially_false(self):
         """Test that server is not ready initially"""
-        server = ProcessParallelVLLM(
+        server = create_test_server(
             model_id="gpt2",
             num_workers=2,
-            generation_config=create_generation_config()
+            generation_config=create_test_generation_config()
         )
 
         assert not server.is_ready()
 
     def test_get_worker_count(self):
         """Test getting worker count"""
-        server = ProcessParallelVLLM(
+        server = create_test_server(
             model_id="gpt2",
             num_workers=4,
-            generation_config=create_generation_config()
+            generation_config=create_test_generation_config()
         )
 
         assert server.get_worker_count() == 4
 
     def test_get_generation_config(self):
         """Test getting generation configuration"""
-        config = create_generation_config(use_constraints=False, use_cot=True)
-        server = ProcessParallelVLLM(
+        config = create_test_generation_config(use_constraints=False, use_cot=True)
+        server = create_test_server(
             model_id="gpt2",
             num_workers=2,
             generation_config=config
         )
 
         retrieved_config = server.get_generation_config()
-        assert retrieved_config['use_constraints'] is False
-        assert retrieved_config['use_cot'] is True
+        assert retrieved_config.use_constraints is False
+        assert retrieved_config.use_chain_of_table is True
 
     def test_logging_stats_when_disabled(self):
         """Test getting logging stats when logging is disabled"""
-        config = create_generation_config()
-        config['logging_config']['enable_logging'] = False
+        logging_config = create_test_logging_config(enable_logging=False)
 
-        server = ProcessParallelVLLM(
+        server = create_test_server(
             model_id="gpt2",
             num_workers=2,
-            generation_config=config
+            logging_config=logging_config
         )
 
         stats = server.get_logging_stats()
@@ -155,10 +213,10 @@ class TestProcessParallelVLLM:
 
     def test_generate_batch_raises_when_not_ready(self):
         """Test that generate_batch raises error when workers not ready"""
-        server = ProcessParallelVLLM(
+        server = create_test_server(
             model_id="gpt2",
             num_workers=2,
-            generation_config=create_generation_config()
+            generation_config=create_test_generation_config()
         )
 
         with pytest.raises(RuntimeError, match="Workers not ready"):
@@ -172,7 +230,7 @@ class TestVLLMWorkerProcess:
         """Test worker process initialization"""
         input_queue = mp.Queue()
         output_queue = mp.Queue()
-        generation_config = create_generation_config(
+        generation_config = create_test_generation_config(
             use_constraints=True,
             use_cot=False
         )
@@ -183,7 +241,11 @@ class TestVLLMWorkerProcess:
             model_id="gpt2",
             input_queue=input_queue,
             output_queue=output_queue,
-            generation_config=generation_config
+            generation_config=generation_config,
+            tokenizer_config=create_test_tokenizer_config(),
+            logging_config=create_test_logging_config(),
+            generation_functions={},
+            tensor_parallel_size=1
         )
 
         assert worker.worker_id == 0
@@ -196,7 +258,7 @@ class TestVLLMWorkerProcess:
         """Test generation mode string for constrained mode"""
         input_queue = mp.Queue()
         output_queue = mp.Queue()
-        generation_config = create_generation_config(
+        generation_config = create_test_generation_config(
             use_constraints=True,
             use_cot=False
         )
@@ -207,7 +269,11 @@ class TestVLLMWorkerProcess:
             model_id="gpt2",
             input_queue=input_queue,
             output_queue=output_queue,
-            generation_config=generation_config
+            generation_config=generation_config,
+            tokenizer_config=create_test_tokenizer_config(),
+            logging_config=create_test_logging_config(),
+            generation_functions={},
+            tensor_parallel_size=1
         )
 
         mode = worker._get_generation_mode_string()
@@ -217,7 +283,7 @@ class TestVLLMWorkerProcess:
         """Test generation mode string for chain-of-table mode"""
         input_queue = mp.Queue()
         output_queue = mp.Queue()
-        generation_config = create_generation_config(
+        generation_config = create_test_generation_config(
             use_constraints=True,
             use_cot=True
         )
@@ -228,7 +294,11 @@ class TestVLLMWorkerProcess:
             model_id="gpt2",
             input_queue=input_queue,
             output_queue=output_queue,
-            generation_config=generation_config
+            generation_config=generation_config,
+            tokenizer_config=create_test_tokenizer_config(),
+            logging_config=create_test_logging_config(),
+            generation_functions={},
+            tensor_parallel_size=1
         )
 
         mode = worker._get_generation_mode_string()
@@ -238,7 +308,7 @@ class TestVLLMWorkerProcess:
         """Test generation mode string for unconstrained mode"""
         input_queue = mp.Queue()
         output_queue = mp.Queue()
-        generation_config = create_generation_config(
+        generation_config = create_test_generation_config(
             use_constraints=False,
             use_cot=False
         )
@@ -249,7 +319,11 @@ class TestVLLMWorkerProcess:
             model_id="gpt2",
             input_queue=input_queue,
             output_queue=output_queue,
-            generation_config=generation_config
+            generation_config=generation_config,
+            tokenizer_config=create_test_tokenizer_config(),
+            logging_config=create_test_logging_config(),
+            generation_functions={},
+            tensor_parallel_size=1
         )
 
         mode = worker._get_generation_mode_string()
@@ -261,12 +335,11 @@ class TestTensorParallelAllocation:
 
     def test_single_gpu_allocation(self):
         """Test GPU allocation without tensor parallelism"""
-        config = create_generation_config(tensor_parallel_size=1)
-        server = ProcessParallelVLLM(
+        server = create_test_server(
             model_id="gpt2",
             num_workers=3,
             gpu_allocation=[0, 1, 2, 3, 4, 5],
-            generation_config=config
+            tensor_parallel_size=1
         )
 
         # Each worker should get one GPU
@@ -274,12 +347,11 @@ class TestTensorParallelAllocation:
 
     def test_multi_gpu_tensor_parallel(self):
         """Test GPU allocation with tensor parallelism"""
-        config = create_generation_config(tensor_parallel_size=2)
-        server = ProcessParallelVLLM(
+        server = create_test_server(
             model_id="gpt2",
             num_workers=2,
             gpu_allocation=[0, 1, 2, 3],
-            generation_config=config
+            tensor_parallel_size=2
         )
 
         # Each worker should get 2 GPUs for tensor parallelism

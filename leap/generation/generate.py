@@ -20,7 +20,7 @@ async def generate_single_action(worker, prompt, table: Table, request_id, state
     try:
         if worker.use_constraints:
             # Get global constraints setting from worker's generation config
-            use_global_constraints = worker.generation_config.get('use_global_constraints', True)
+            use_global_constraints = worker.use_global_constraints
 
             # Pass action_history to the constraint processor
             constraint_processor = create_constraint_logits_processor(
