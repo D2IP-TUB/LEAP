@@ -209,6 +209,16 @@ class VLLMWorkerProcess(mp.Process):
             # Convert typed → dict at boundary (for queue)
             return result.to_dict()
 
+        except asyncio.CancelledError:
+            # Task was cancelled - this should not crash the worker
+            # Return error result instead of propagating
+            print(f"Worker {self.worker_id} request {request_dict.get('request_id')} was cancelled")
+            return {
+                'error': 'Request cancelled',
+                'request_id': request_dict.get('request_id'),
+                'question': request_dict.get('question'),
+                'ground_truth_answers': request_dict.get('ground_truth_answers'),
+            }
         except Exception as e:
             # If an error occurs during generation, create a failed result
             print(f"Worker {self.worker_id} error processing request {request_dict.get('request_id')}: {e}")
@@ -256,16 +266,34 @@ class VLLMWorkerProcess(mp.Process):
         Raises:
             Exception: Re-raises exceptions from vLLM to allow proper error handling upstream
         """
-        result_generator = self.engine.generate(prompt, sampling_params, request_id)
+        try:
+            result_generator = self.engine.generate(prompt, sampling_params, request_id)
 
-        final_result = None
-        async for result in result_generator:
-            final_result = result
+            final_result = None
+            async for result in result_generator:
+                final_result = result
 
-        if final_result and final_result.outputs:
-            return final_result.outputs[0].text.strip()
-        else:
-            return ""
+            if final_result and final_result.outputs:
+                return final_result.outputs[0].text.strip()
+            else:
+                return ""
+        except asyncio.CancelledError:
+            # CancelledError should propagate for proper asyncio cancellation
+            # Abort the request but don't suppress the cancellation
+            try:
+                await self.engine.abort(request_id)
+            except Exception:
+                pass
+            raise
+        except Exception as e:
+            # Abort the request to clean up vLLM engine state
+            # This prevents the engine from getting stuck on failed requests
+            try:
+                await self.engine.abort(request_id)
+            except Exception:
+                pass  # Ignore abort errors
+            # Re-raise so _process_single_request can handle it gracefully
+            raise
 
 
 class ProcessParallelVLLM:
