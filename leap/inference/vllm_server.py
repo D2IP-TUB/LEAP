@@ -11,35 +11,44 @@ import uuid
 import asyncio
 import multiprocessing as mp
 import queue
-from typing import List, Dict, Any, Callable
+from typing import List, Dict, Any, Callable, Optional
 from vllm import AsyncLLMEngine, SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 
 # Import the table logger
 from leap.utils.table_logger import TableLogger
 from leap.core import InferenceRequest, InferenceResult
+from leap.config.loader import GenerationConfig, TokenizerConfig, LoggingConfig
 
 
 class VLLMWorkerProcess(mp.Process):
     """Individual worker process for vLLM inference with logging support"""
-    
-    def __init__(self, 
-                 worker_id: int, 
-                 gpu_ids: List[int], 
+
+    def __init__(self,
+                 worker_id: int,
+                 gpu_ids: List[int],
                  model_id: str,
-                 input_queue: mp.Queue, 
+                 input_queue: mp.Queue,
                  output_queue: mp.Queue,
-                 generation_config: Dict[str, Any] = None):
+                 generation_config: GenerationConfig,
+                 tokenizer_config: TokenizerConfig,
+                 logging_config: LoggingConfig,
+                 generation_functions: Dict[str, Callable],
+                 tensor_parallel_size: int = 1):
         """
         Initialize vLLM worker process
-        
+
         Args:
             worker_id: Unique identifier for this worker
             gpu_ids: List of GPU IDs to use for this worker
             model_id: HuggingFace model identifier
             input_queue: Queue for receiving inference requests
             output_queue: Queue for sending results back
-            generation_config: Configuration for generation behavior and logging
+            generation_config: GenerationConfig from leap.config.loader
+            tokenizer_config: TokenizerConfig from leap.config.loader
+            logging_config: LoggingConfig from leap.config.loader
+            generation_functions: Dict mapping strategy names to functions
+            tensor_parallel_size: Number of GPUs for tensor parallelism
         """
         super().__init__()
         self.worker_id = worker_id
@@ -47,19 +56,19 @@ class VLLMWorkerProcess(mp.Process):
         self.model_id = model_id
         self.input_queue = input_queue
         self.output_queue = output_queue
-        self.generation_config = generation_config or {}
-        
-        # Extract generation config
-        self.use_constraints = self.generation_config.get('use_constraints', True)
-        self.use_cot = self.generation_config.get('use_cot', False)
-        self.tokenizer_config = self.generation_config.get('tokenizer_config')
-        self.constraint_processors = self.generation_config.get('constraint_processors', {})
-        self.generation_functions = self.generation_config.get('generation_functions', {})
-        
-        # Logging configuration - use shared logger
-        self.logging_config = self.generation_config.get('logging_config', {})
-        self.logger = None  # Will use shared logger from main process
-        
+
+        # Store typed configs directly
+        self.generation_config = generation_config
+        self.tokenizer_config = tokenizer_config
+        self.logging_config = logging_config
+        self.generation_functions = generation_functions
+        self.tensor_parallel_size = tensor_parallel_size
+
+        # Extract commonly used fields for convenience
+        self.use_constraints = generation_config.use_constraints
+        self.use_cot = generation_config.use_chain_of_table
+        self.use_global_constraints = generation_config.use_global_constraints
+
         # vLLM components
         self.engine = None
         self.tokenizer = None
@@ -110,18 +119,16 @@ class VLLMWorkerProcess(mp.Process):
         """Initialize the vLLM engine"""
         print(f"Worker {self.worker_id}: Starting model loading...")
         start_time = time.time()
-        
-        # Get engine configuration from generation config
-        engine_config = self.generation_config.get('engine_config', {})
-        
+
+        # Use typed config instead of dict
         engine_args = AsyncEngineArgs(
             model=self.model_id,
-            trust_remote_code=engine_config.get('trust_remote_code', True),
-            max_model_len=engine_config.get('max_model_len', 1024),
-            gpu_memory_utilization=engine_config.get('gpu_memory_utilization', 0.8),
-            tensor_parallel_size=engine_config.get('tensor_parallel_size', 1),
-            max_num_batched_tokens=engine_config.get('max_num_batched_tokens', 8192),
-            max_num_seqs=engine_config.get('max_num_seqs', 32),
+            trust_remote_code=True,
+            max_model_len=1024,
+            gpu_memory_utilization=0.8,
+            tensor_parallel_size=self.tensor_parallel_size,
+            max_num_batched_tokens=8192,
+            max_num_seqs=32,
         )
         
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
@@ -217,7 +224,7 @@ class VLLMWorkerProcess(mp.Process):
     def _send_log_entry(self, request_id: str, step: int, action: str, table: Dict[str, Any],
                        success: bool = True, failure_type: str = None, generation_mode: str = None):
         """Send logging data back to main process via output queue"""
-        if self.logging_config.get('enable_logging', False):
+        if self.logging_config.enable_logging:
             log_data = {
                 'request_id': request_id,
                 'step': step, 
@@ -263,31 +270,52 @@ class VLLMWorkerProcess(mp.Process):
 
 class ProcessParallelVLLM:
     """Process-based parallel vLLM engine with integrated logging"""
-    
-    def __init__(self, 
-                 model_id: str, 
-                 num_workers: int = 4,
-                 gpu_allocation: List[int] = None,
-                 generation_config: Dict[str, Any] = None):
+
+    def __init__(self,
+                 model_id: str,
+                 num_workers: int,
+                 gpu_allocation: Optional[List[int]] = None,
+                 generation_config: GenerationConfig = None,
+                 tokenizer_config: TokenizerConfig = None,
+                 logging_config: LoggingConfig = None,
+                 generation_functions: Dict[str, Callable] = None,
+                 tensor_parallel_size: int = 1):
         """
         Initialize parallel vLLM engine
-        
+
         Args:
             model_id: HuggingFace model identifier
             num_workers: Number of worker processes
-            gpu_allocation: List of GPU IDs to use (auto-detected if None)
-            generation_config: Configuration for generation behavior and logging
+            gpu_allocation: Optional list of GPU IDs to use (auto-detected if None)
+            generation_config: GenerationConfig from leap.config.loader
+            tokenizer_config: TokenizerConfig from leap.config.loader
+            logging_config: LoggingConfig from leap.config.loader
+            generation_functions: Dict mapping strategy names to functions
+            tensor_parallel_size: Number of GPUs for tensor parallelism
         """
         self.model_id = model_id
         self.num_workers = num_workers
-        self.generation_config = generation_config or {}
-        
-        # GPU allocation
+
+        # Auto-detect GPUs if not specified
         if gpu_allocation is None:
-            # Default GPU allocation - adjust based on your system
-            self.available_gpus = [1, 2, 3, 4, 5, 6, 7]
+            import subprocess
+            try:
+                result = subprocess.run(['nvidia-smi', '--list-gpus'],
+                                      capture_output=True, text=True, check=True)
+                num_gpus = len(result.stdout.strip().split('\n'))
+                self.available_gpus = list(range(num_gpus))
+            except:
+                # Fallback if nvidia-smi not available
+                self.available_gpus = list(range(8))  # Assume 8 GPUs max
         else:
             self.available_gpus = gpu_allocation
+
+        # Store typed configs
+        self.generation_config = generation_config
+        self.tokenizer_config = tokenizer_config
+        self.logging_config = logging_config
+        self.generation_functions = generation_functions or {}
+        self.tensor_parallel_size = tensor_parallel_size
         
         # Process management
         self.workers = []
@@ -304,33 +332,27 @@ class ProcessParallelVLLM:
     
     def _init_main_logger(self):
         """Initialize main logger for coordination and summary"""
-        logging_config = self.generation_config.get('logging_config', {})
-        if logging_config.get('enable_logging', False):
-            log_dir = logging_config.get('log_dir', 'table_logs')
-            
+        if self.logging_config.enable_logging:
             self.main_logger = TableLogger(
-                log_dir=log_dir,
+                log_dir=self.logging_config.log_dir,
                 enable_logging=True,
-                save_readable_tables=logging_config.get('save_readable_tables', True),
-                compress_logs=logging_config.get('compress_logs', False),
-                log_format=logging_config.get('log_format', 'readable'),
-                max_table_chars=logging_config.get('max_table_chars', 10000)
+                save_readable_tables=self.logging_config.save_readable_tables,
+                compress_logs=self.logging_config.compress_logs,
+                log_format=self.logging_config.log_format,
+                max_table_chars=self.logging_config.max_table_chars
             )
-            print(f"Main logger initialized: {log_dir}")
+            print(f"Main logger initialized: {self.logging_config.log_dir}")
     
     def _create_workers(self):
         """Create worker processes with GPU allocation"""
 
-        tensor_parallel_size = self.generation_config["engine_config"]["tensor_parallel_size"]
-
-        if tensor_parallel_size > 1:
-
-            print(f"Spawning workers with {tensor_parallel_size} GPUs allocated.")
+        if self.tensor_parallel_size > 1:
+            print(f"Spawning workers with {self.tensor_parallel_size} GPUs allocated.")
 
         for worker_id in range(self.num_workers):
-            if tensor_parallel_size > 1:
-                first_gpu = worker_id * tensor_parallel_size
-                final_gpu = first_gpu + tensor_parallel_size
+            if self.tensor_parallel_size > 1:
+                first_gpu = worker_id * self.tensor_parallel_size
+                final_gpu = first_gpu + self.tensor_parallel_size
                 gpu_ids = self.available_gpus[first_gpu:final_gpu]
                 print(f"Assigning GPUs {gpu_ids} to worker {worker_id}")
             else:
@@ -343,7 +365,11 @@ class ProcessParallelVLLM:
                 model_id=self.model_id,
                 input_queue=self.input_queue,
                 output_queue=self.output_queue,
-                generation_config=self.generation_config
+                generation_config=self.generation_config,
+                tokenizer_config=self.tokenizer_config,
+                logging_config=self.logging_config,
+                generation_functions=self.generation_functions,
+                tensor_parallel_size=self.tensor_parallel_size,
             )
             self.workers.append(worker)
     
@@ -395,9 +421,9 @@ class ProcessParallelVLLM:
     
     def _get_generation_mode_description(self) -> str:
         """Get description of current generation mode"""
-        use_cot = self.generation_config.get('use_cot', False)
-        use_constraints = self.generation_config.get('use_constraints', True)
-        
+        use_cot = self.generation_config.use_chain_of_table
+        use_constraints = self.generation_config.use_constraints
+
         if use_cot:
             return "Chain-of-Table (dynamic_plan + generate_args)"
         elif use_constraints:
@@ -523,9 +549,9 @@ class ProcessParallelVLLM:
         """Get number of workers"""
         return self.num_workers
     
-    def get_generation_config(self) -> Dict[str, Any]:
+    def get_generation_config(self) -> GenerationConfig:
         """Get current generation configuration"""
-        return self.generation_config.copy()
+        return self.generation_config
     
     def get_logging_stats(self) -> Dict[str, Any]:
         """Get logging statistics"""
@@ -535,88 +561,6 @@ class ProcessParallelVLLM:
             return {"enabled": False}
 
 
-def create_generation_config(use_constraints: bool = True,
-                           use_cot: bool = False,
-                           use_global_constraints: bool = True,  # NEW parameter
-                           tokenizer_config = None,  # NEW parameter
-                           constraint_processors: Dict[str, Callable] = None,
-                           generation_functions: Dict[str, Callable] = None,
-                           engine_config: Dict[str, Any] = None,
-                           logging_config: Dict[str, Any] = None,
-                           tensor_parallel_size = 1) -> Dict[str, Any]:
-    """
-    Create a generation configuration dictionary with logging support
-    
-    Args:
-        use_constraints: Whether to use constrained generation
-        use_cot: Whether to use Chain-of-Table approach
-        use_global_constraints: Whether to apply global action constraints (no duplicates, end rules)
-        constraint_processors: Dictionary of constraint processor functions
-        generation_functions: Dictionary of generation functions
-        engine_config: vLLM engine configuration
-        logging_config: Logging configuration
-        
-    Returns:
-        Configuration dictionary
-    """
-    config = {
-        'use_constraints': use_constraints,
-        'use_cot': use_cot,
-        'use_global_constraints': use_global_constraints,  # NEW field
-        'tokenizer_config': tokenizer_config,  # NEW field
-        'constraint_processors': constraint_processors or {},
-        'generation_functions': generation_functions or {},
-        'engine_config': engine_config or {
-            'trust_remote_code': True,
-            'max_model_len': 1024,
-            'gpu_memory_utilization': 0.8,
-            'tensor_parallel_size': tensor_parallel_size, # tensor parralell -> weights split between n GPUs
-            'max_num_batched_tokens': 8192,
-            'max_num_seqs': 32,
-        },
-        'logging_config': logging_config or {
-            'enable_logging': True,
-            'log_dir': 'table_logs',
-            'save_readable_tables': True,
-            'compress_logs': False,
-            'log_format': 'readable',
-            'max_table_chars': 10000
-        }
-    }
-    
-    return config
-
-
-def create_logging_config(enable_logging: bool = True,
-                         log_dir: str = "table_logs",
-                         save_readable_tables: bool = True,
-                         compress_logs: bool = False,
-                         log_format: str = "readable",
-                         max_table_chars: int = 10000) -> Dict[str, Any]:
-    """
-    Create a logging configuration dictionary
-    
-    Args:
-        enable_logging: Whether to enable logging
-        log_dir: Directory for log files
-        save_readable_tables: Whether to save full tables as CSV
-        compress_logs: Whether to compress log files
-        log_format: Format for logs ("json", "csv", "readable", "pickle")
-        max_table_chars: Maximum characters for table serialization
-        
-    Returns:
-        Logging configuration dictionary
-    """
-    return {
-        'enable_logging': enable_logging,
-        'log_dir': log_dir,
-        'save_readable_tables': save_readable_tables,
-        'compress_logs': compress_logs,
-        'log_format': log_format,
-        'max_table_chars': max_table_chars
-    }
-
-
 # Example usage and configuration helpers
 def setup_standard_vllm_server(model_id: str,
                               num_workers: int = 4,
@@ -624,10 +568,11 @@ def setup_standard_vllm_server(model_id: str,
                               use_constraints: bool = True,
                               use_cot: bool = False,
                               enable_logging: bool = True,
-                              log_dir: str = "table_logs") -> ProcessParallelVLLM:
+                              log_dir: str = "table_logs",
+                              generation_functions: Dict[str, Callable] = None) -> ProcessParallelVLLM:
     """
     Setup a standard vLLM server with common configuration and logging
-    
+
     Args:
         model_id: HuggingFace model identifier
         num_workers: Number of worker processes
@@ -636,28 +581,44 @@ def setup_standard_vllm_server(model_id: str,
         use_cot: Whether to use Chain-of-Table approach
         enable_logging: Whether to enable comprehensive logging
         log_dir: Directory for log files
-        
+        generation_functions: Dictionary mapping strategy names to generation functions
+
     Returns:
         Configured ProcessParallelVLLM instance
     """
-    logging_config = create_logging_config(
-        enable_logging=enable_logging,
-        log_dir=log_dir,
-        save_readable_tables=True,
-        log_format="readable"
-    )
-    
-    generation_config = create_generation_config(
+    from dataclasses import replace
+    from leap.config.loader import load_runtime_config, get_model_id
+    from pathlib import Path
+    from transformers import AutoTokenizer
+
+    # Load typed configs from the standard config system
+    config_path = Path("configs/default.yaml")
+    model_id_from_config = get_model_id(config_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_id_from_config)
+    app_config = load_runtime_config(config_path, tokenizer)
+
+    # Override specific settings using dataclass replace (since they're frozen)
+    generation_config = replace(
+        app_config.generation,
         use_constraints=use_constraints,
-        use_cot=use_cot,
-        logging_config=logging_config
+        use_chain_of_table=use_cot
     )
-    
+
+    logging_config = replace(
+        app_config.logging,
+        enable_logging=enable_logging,
+        log_dir=log_dir
+    )
+
     return ProcessParallelVLLM(
         model_id=model_id,
         num_workers=num_workers,
         gpu_allocation=gpu_allocation,
-        generation_config=generation_config
+        generation_config=generation_config,
+        tokenizer_config=app_config.model.tokenizer_config,
+        logging_config=logging_config,
+        generation_functions=generation_functions or {},
+        tensor_parallel_size=app_config.model.hardware.tensor_parallel_size
     )
 
 

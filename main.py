@@ -9,7 +9,7 @@ from typing import Any
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer
 
-from leap.inference.vllm_server import ProcessParallelVLLM, create_generation_config, create_logging_config
+from leap.inference.vllm_server import ProcessParallelVLLM
 from leap.generation.strategies import (
     ChainOfTableGenerationStrategy,
     IterativeGenerationStrategy,
@@ -148,39 +148,21 @@ def main():
     
     iterative_strategy = IterativeGenerationStrategy(prompt_builder=runtime.prompt_builder)
     cot_strategy = ChainOfTableGenerationStrategy(prompt_builder=runtime.prompt_builder)
-    
-    # Create logging configuration
-    logging_settings = app_config.logging
-    logging_config = create_logging_config(
-        enable_logging=logging_settings.enable_logging,
-        log_dir=logging_settings.log_dir,
-        save_readable_tables=logging_settings.save_readable_tables,
-        compress_logs=logging_settings.compress_logs,
-        log_format=logging_settings.log_format,
-        max_table_chars=logging_settings.max_table_chars,
-    )
-    
-      # Create generation configuration with logging
-    generation_config = create_generation_config(
-        use_constraints=generation_settings.use_constraints,
-        use_cot=generation_settings.use_chain_of_table,
-        use_global_constraints=generation_settings.use_global_constraints,
+
+    # Initialize the server with typed configs (no more dicts!)
+    num_workers = model_settings.hardware.num_workers
+    server = ProcessParallelVLLM(
+        model_id=model_settings.id,
+        num_workers=num_workers,
+        gpu_allocation=model_settings.hardware.gpu_allocation,
+        generation_config=generation_settings,
         tokenizer_config=model_settings.tokenizer_config,
+        logging_config=app_config.logging,
         generation_functions={
             'iterative_generation': iterative_strategy.generate_instance,
             'cot_generation': cot_strategy.generate_instance
         },
-        logging_config=logging_config,
         tensor_parallel_size=model_settings.hardware.tensor_parallel_size
-    )
-    
-    # Initialize the server
-    num_workers = model_settings.hardware.num_workers
-    server = ProcessParallelVLLM(
-        model_id=model_settings.id,
-        num_workers=model_settings.hardware.num_workers,
-        gpu_allocation=model_settings.hardware.gpu_allocation,
-        generation_config=generation_config
     )
     
     try:
