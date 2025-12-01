@@ -17,6 +17,7 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 
 # Import the table logger
 from leap.utils.table_logger import TableLogger
+from leap.core import InferenceRequest, InferenceResult
 
 
 class VLLMWorkerProcess(mp.Process):
@@ -147,18 +148,14 @@ class VLLMWorkerProcess(mp.Process):
                 
                 if request is None:  # Shutdown signal
                     break
-                
+
                 # Process the request using configured generation function
-                try:
-                    result = await self._process_single_request(request, state_machines)
-                    
-                    # Send result back
-                    self.output_queue.put(('result', request['request_id'], result))
-                    
-                except Exception as e:
-                    print(f"Worker {self.worker_id} error processing request: {e}")
-                    self.output_queue.put(('error', request['request_id'], str(e)))
-                
+                # Error handling is done inside _process_single_request
+                result = await self._process_single_request(request, state_machines)
+
+                # Send result back (result may contain error info)
+                self.output_queue.put(('result', request['request_id'], result))
+
                 # Clean up state machines for this request
                 request_id = request['request_id']
                 to_delete = [key for key in state_machines if key.startswith(request_id)]
@@ -168,37 +165,54 @@ class VLLMWorkerProcess(mp.Process):
             except Exception as e:
                 print(f"Worker {self.worker_id} error in main loop: {e}")
     
-    async def _process_single_request(self, request: Dict[str, Any], state_machines: Dict) -> Dict[str, Any]:
+    async def _process_single_request(self, request_dict: Dict[str, Any], state_machines: Dict) -> Dict[str, Any]:
         """
         Process a single request using the configured generation function with logging
-        
+
         Args:
-            request: Request dictionary containing all necessary data
+            request_dict: Request dictionary from queue
             state_machines: Shared state machines for constraint processing
-            
+
         Returns:
-            Result dictionary
+            Result dictionary for queue
         """
-        request_id = request['request_id']
-        generation_mode = self._get_generation_mode_string()
-        
-        # Get the appropriate generation function
-        if self.use_cot:
-            generation_func = self.generation_functions.get('cot_generation')
-        else:
-            generation_func = self.generation_functions.get('iterative_generation')
-        
-        if not generation_func:
-            raise ValueError(f"No generation function configured for mode: {generation_mode}")
-        
-        # Call the generation function with worker context and logging
-        # Instead of using separate loggers, send logging data back to main process
-        return await generation_func(
-            request=request,
-            worker=self,
-            state_machines=state_machines,
-            logging_callback=self._send_log_entry  # Send logs back to main process
-        )
+        try:
+            # Convert dict → typed at boundary
+            request = InferenceRequest.from_dict(request_dict)
+
+            generation_mode = self._get_generation_mode_string()
+
+            # Get the appropriate generation function
+            if self.use_cot:
+                generation_func = self.generation_functions.get('cot_generation')
+            else:
+                generation_func = self.generation_functions.get('iterative_generation')
+
+            if not generation_func:
+                raise ValueError(f"No generation function configured for mode: {generation_mode}")
+
+            # Call the generation function with typed request
+            result: InferenceResult = await generation_func(
+                request=request,
+                worker=self,
+                state_machines=state_machines,
+                logging_callback=self._send_log_entry  # Send logs back to main process
+            )
+
+            # Convert typed → dict at boundary (for queue)
+            return result.to_dict()
+
+        except Exception as e:
+            # If an error occurs during generation, create a failed result
+            print(f"Worker {self.worker_id} error processing request {request_dict.get('request_id')}: {e}")
+
+            # Return a minimal error result that can be converted to InferenceResult
+            return {
+                'error': str(e),
+                'request_id': request_dict.get('request_id'),
+                'question': request_dict.get('question'),
+                'ground_truth_answers': request_dict.get('ground_truth_answers'),
+            }
     
     def _send_log_entry(self, request_id: str, step: int, action: str, table: Dict[str, Any],
                        success: bool = True, failure_type: str = None, generation_mode: str = None):
@@ -217,35 +231,33 @@ class VLLMWorkerProcess(mp.Process):
             # Send log entry back to main process
             self.output_queue.put(('log_entry', request_id, log_data))
     
-    async def generate_text(self, 
-                          prompt: str, 
-                          request_id: str, 
+    async def generate_text(self,
+                          prompt: str,
+                          request_id: str,
                           sampling_params: SamplingParams) -> str:
         """
         Generate text using the vLLM engine
-        
+
         Args:
             prompt: Input prompt
             request_id: Unique request identifier
             sampling_params: Sampling parameters for generation
-            
+
         Returns:
             Generated text
+
+        Raises:
+            Exception: Re-raises exceptions from vLLM to allow proper error handling upstream
         """
-        try:
-            result_generator = self.engine.generate(prompt, sampling_params, request_id)
-            
-            final_result = None
-            async for result in result_generator:
-                final_result = result
-            
-            if final_result and final_result.outputs:
-                return final_result.outputs[0].text.strip()
-            else:
-                return ""
-                
-        except Exception as e:
-            print(f"Generation error in worker {self.worker_id}: {e}")
+        result_generator = self.engine.generate(prompt, sampling_params, request_id)
+
+        final_result = None
+        async for result in result_generator:
+            final_result = result
+
+        if final_result and final_result.outputs:
+            return final_result.outputs[0].text.strip()
+        else:
             return ""
 
 
