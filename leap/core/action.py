@@ -3,7 +3,7 @@
 import ast
 import re
 from dataclasses import dataclass
-from typing import Any, List, Optional, Dict, Tuple
+from typing import Any, List, Optional, Dict
 
 from .table import Table
 
@@ -151,7 +151,7 @@ class Action:
                         valid_indices = [idx for idx in indices if 0 <= idx < len(table.rows)]
                         if valid_indices:
                             return valid_indices
-                    except:
+                    except Exception:
                         continue
 
             # Fallback: extract all numbers
@@ -162,7 +162,7 @@ class Action:
                     valid_indices = [idx for idx in indices if 0 <= idx < len(table.rows)]
                     if valid_indices:
                         return valid_indices[:5]  # Limit to 5
-                except:
+                except Exception:
                     pass
 
         elif action_name == "select_column":

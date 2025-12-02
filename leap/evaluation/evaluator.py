@@ -1,5 +1,5 @@
 from leap.evaluation.metrics import to_value_list, check_denotation
-from leap.core import Table, ExecutionMetrics
+from leap.core import ExecutionMetrics
 
 def find_matching_answers(target_values, predicted_values):
     """Find which target answers have matches in predicted values"""

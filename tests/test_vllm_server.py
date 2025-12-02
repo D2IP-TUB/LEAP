@@ -3,7 +3,6 @@ Essential tests for vLLM server components
 """
 import pytest
 import multiprocessing as mp
-from unittest.mock import Mock, MagicMock, patch
 from leap.inference.vllm_server import ProcessParallelVLLM, VLLMWorkerProcess
 from leap.config.loader import GenerationConfig, TokenizerConfig, LoggingConfig
 

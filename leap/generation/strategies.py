@@ -1,5 +1,5 @@
 
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 from leap.evaluation.evaluator import calculate_execution_accuracy_with_dataset_answers
 from leap.generation.generate import (

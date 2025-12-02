@@ -54,7 +54,10 @@ A target item T matches a predicted item P if one of the following is true:
 """
 __version__ = '1.0.2'
 
-import sys, os, re, argparse
+import sys
+import os
+import re
+import argparse
 import unicodedata
 from math import isnan, isinf
 from abc import ABC, abstractmethod
@@ -179,12 +182,12 @@ class NumberValue(Value):
         """
         try:
             return int(text)
-        except:
+        except Exception:
             try:
                 amount = float(text)
                 assert not isnan(amount) and not isinf(amount)
                 return amount
-            except:
+            except Exception:
                 return None
 
 
@@ -248,7 +251,7 @@ class DateValue(Value):
             assert month == -1 or 1 <= month <= 12
             assert day == -1 or 1 <= day <= 31
             return (year, month, day)
-        except:
+        except Exception:
             return None
 
 

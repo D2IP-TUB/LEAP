@@ -1,4 +1,3 @@
-from typing import Optional
 
 from vllm import SamplingParams
 from leap.core import Action, Table

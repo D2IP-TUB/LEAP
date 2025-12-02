@@ -15,7 +15,7 @@ from leap.generation.strategies import (
     IterativeGenerationStrategy,
 )
 from leap.generation.prompt_builder import PromptBuilder
-from leap.core import Table, Action, InferenceRequest, InferenceResult
+from leap.core import Action, InferenceRequest, InferenceResult
 from leap.config.loader import (
     AppConfig,
     DatasetConfig,
@@ -305,14 +305,14 @@ def demonstrate_logging_analysis(server, results):
     
     # Show logging statistics
     stats = server.get_logging_stats()
-    print(f"Logging Statistics:")
+    print("Logging Statistics:")
     print(f"  Directory: {stats.get('log_dir', 'N/A')}")
     print(f"  Requests logged: {stats.get('requests_logged', 0)}")
     print(f"  Total log entries: {stats.get('total_entries', 0)}")
     print(f"  Save readable tables: {stats.get('save_readable_tables', False)}")
     
     # Try to analyze logs for first few requests (they would have been logged during processing)
-    print(f"\nSample request analysis:")
+    print("\nSample request analysis:")
     
     # Note: In a real scenario, we would have the actual request IDs from the processing
     # For demonstration, we show what the analysis would look like
