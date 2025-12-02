@@ -26,6 +26,7 @@ from leap.generation.strategies import (
     IterativeGenerationStrategy,
 )
 from leap.inference.vllm_server import ProcessParallelVLLM
+from leap.utils.profiler import get_aggregate_profiler
 
 # shut off llm logging in case not important
 logging.getLogger("vllm").setLevel(logging.ERROR)
@@ -205,6 +206,16 @@ def main():
         print(f"Total time: {end_time - start_time:.2f} seconds")
         print(f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds")
 
+        # Collect profiling data from results
+        profiler = get_aggregate_profiler()
+        for result in results:
+            if result.profiling_data:
+                profiler.add_request_profile(
+                    result.profiling_data["total_time"],
+                    result.profiling_data["operation_timings"],
+                    result.profiling_data["num_steps"],
+                )
+
         # Analyze results
         analyze_execution_accuracy(results)
 
@@ -220,6 +231,9 @@ def main():
 
         # Demonstrate logging analysis
         demonstrate_logging_analysis(server, results)
+
+        # Print performance profiling summary (already collected above)
+        get_aggregate_profiler().print_summary()
 
     finally:
         # Shutdown will automatically generate summary report

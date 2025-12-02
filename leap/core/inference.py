@@ -161,6 +161,7 @@ class InferenceResult:
     request_id: Optional[str] = None
     question: Optional[str] = None  # Original question from request
     ground_truth_answers: Optional[List[str]] = None  # Expected answers from request
+    profiling_data: Optional[Dict[str, Any]] = None  # Profiling timings from worker
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "InferenceResult":
@@ -210,6 +211,7 @@ class InferenceResult:
             request_id=data.get("request_id"),
             question=data.get("question"),
             ground_truth_answers=data.get("ground_truth_answers"),
+            profiling_data=data.get("profiling_data"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -225,6 +227,7 @@ class InferenceResult:
             "request_id": self.request_id,
             "question": self.question,
             "ground_truth_answers": self.ground_truth_answers,
+            "profiling_data": self.profiling_data,
         }
 
     def get_actions(self) -> List[Action]:
