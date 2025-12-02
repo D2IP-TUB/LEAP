@@ -1,12 +1,12 @@
 """Core abstractions for LEAP"""
 
-from .table import Table
 from .action import Action
 from .inference import (
     ExecutionMetrics,
     InferenceRequest,
     InferenceResult,
 )
+from .table import Table
 
 __all__ = [
     "Table",

@@ -1,11 +1,11 @@
 import pytest
 from transformers import AutoTokenizer
 
+from leap.config.loader import TokenizerConfig
+from leap.core import Table
 from leap.inference.constraints import (
     ConstraintStateMachine,
 )
-from leap.config.loader import TokenizerConfig
-from leap.core import Table
 
 
 @pytest.fixture(scope="module")
@@ -30,9 +30,7 @@ def tokenizer_config(gpt2_tokenizer):
         closing_quotes_tokens=gpt2_tokenizer.encode('"', add_special_tokens=False),
         action_tokens={
             "select_row": gpt2_tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": gpt2_tokenizer.encode(
-                "select_column", add_special_tokens=False
-            ),
+            "select_column": gpt2_tokenizer.encode("select_column", add_special_tokens=False),
             "end": gpt2_tokenizer.encode("end", add_special_tokens=False),
         },
     )
@@ -43,9 +41,7 @@ def make_table(num_rows=5, columns=None):
     return Table(columns=cols, rows=[["val" for _ in cols] for _ in range(num_rows)])
 
 
-def test_initial_allowed_tokens_respect_action_history(
-    gpt2_tokenizer, tokenizer_config
-):
+def test_initial_allowed_tokens_respect_action_history(gpt2_tokenizer, tokenizer_config):
     table = make_table()
 
     # With no action history and global constraints enabled (default),
@@ -58,13 +54,9 @@ def test_initial_allowed_tokens_respect_action_history(
     }
 
     # If select_row has been used before, then only select_column is allowed
-    row_history = ConstraintStateMachine(
-        table, gpt2_tokenizer, tokenizer_config, action_history=["select_row(0)"]
-    )
+    row_history = ConstraintStateMachine(table, gpt2_tokenizer, tokenizer_config, action_history=["select_row(0)"])
     allowed_after_row = set(row_history.allowed_tokens())
-    assert allowed_after_row == {
-        row_history.tokenizer_config.action_tokens["select_column"][0]
-    }
+    assert allowed_after_row == {row_history.tokenizer_config.action_tokens["select_column"][0]}
 
     # If both select_row and select_column were used before, only end is allowed
     end_only = ConstraintStateMachine(

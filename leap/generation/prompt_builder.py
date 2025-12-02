@@ -52,11 +52,7 @@ class PromptBuilder:
         step: int,
     ) -> str:
         """Create a constraint-aware prompt for iterative generation."""
-        max_chars = (
-            self.iterative_settings.initial_table_chars
-            if step == 0
-            else self.iterative_settings.step_table_chars
-        )
+        max_chars = self.iterative_settings.initial_table_chars if step == 0 else self.iterative_settings.step_table_chars
         table_str = table.to_csv(max_chars=max_chars)
 
         step_prompt = f"Table:\n{table_str}\n\nQuestion: {question}\n"
@@ -69,20 +65,11 @@ class PromptBuilder:
         instruction_prompt = self._build_iterative_instruction(worker)
 
         estimated_length = len(step_prompt) // 4
-        if (
-            estimated_length
-            > worker.max_model_len - self.iterative_settings.safety_margin_tokens
-        ):
-            table_str = table.to_csv(
-                max_chars=self.iterative_settings.fallback_table_chars
-            )
-            question_short = self._truncate_text(
-                question, self.iterative_settings.question_truncation
-            )
+        if estimated_length > worker.max_model_len - self.iterative_settings.safety_margin_tokens:
+            table_str = table.to_csv(max_chars=self.iterative_settings.fallback_table_chars)
+            question_short = self._truncate_text(question, self.iterative_settings.question_truncation)
             step_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n"
-            instruction_prompt = self._build_iterative_instruction(
-                worker, fallback=True
-            )
+            instruction_prompt = self._build_iterative_instruction(worker, fallback=True)
 
         return self._append_instruction(step_prompt, instruction_prompt)
 
@@ -127,22 +114,13 @@ class PromptBuilder:
             prompt += "\n"
 
         prompt += "Available actions: select_row, select_column, end\n"
-        instruction_prompt = (
-            "What action should be performed next to answer the question?\n"
-        )
+        instruction_prompt = "What action should be performed next to answer the question?\n"
         instruction_prompt += "Action: "
 
         estimated_length = len(prompt) // 4
-        if (
-            estimated_length
-            > worker.max_model_len - self.cot_settings.action_safety_margin_tokens
-        ):
-            table_str = table.to_csv(
-                max_chars=self.cot_settings.action_fallback_table_chars
-            )
-            question_short = self._truncate_text(
-                question, self.cot_settings.action_question_truncation
-            )
+        if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
+            table_str = table.to_csv(max_chars=self.cot_settings.action_fallback_table_chars)
+            question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
             prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
             prompt += "Available actions: select_row, select_column, end\n"
             instruction_prompt = "What action should be performed next?\nAction: "
@@ -184,36 +162,23 @@ class PromptBuilder:
             instruction_prompt = "Arguments: "
 
         estimated_length = len(prompt) // 4
-        if (
-            estimated_length
-            > worker.max_model_len - self.cot_settings.args_safety_margin_tokens
-        ):
-            table_str = table.to_csv(
-                max_chars=self.cot_settings.args_fallback_table_chars
-            )
-            question_short = self._truncate_text(
-                question, self.cot_settings.args_question_truncation
-            )
+        if estimated_length > worker.max_model_len - self.cot_settings.args_safety_margin_tokens:
+            table_str = table.to_csv(max_chars=self.cot_settings.args_fallback_table_chars)
+            question_short = self._truncate_text(question, self.cot_settings.args_question_truncation)
             prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
             prompt += f"Selected action: {action_name}\n"
 
             if action_name == "select_row":
-                instruction_prompt = (
-                    f"Which row indices (0 to {len(table.rows) - 1})?\nRow indices: "
-                )
+                instruction_prompt = f"Which row indices (0 to {len(table.rows) - 1})?\nRow indices: "
             else:
                 sample_cols = list(table.columns)[:3]
-                instruction_prompt = (
-                    f"Which columns from {sample_cols}...?\nColumn names: "
-                )
+                instruction_prompt = f"Which columns from {sample_cols}...?\nColumn names: "
 
         return self._append_instruction(prompt, instruction_prompt)
 
     def _append_instruction(self, prompt: str, instruction_prompt: str) -> str:
         if self.is_instruct:
             message = [{"role": "user", "content": instruction_prompt}]
-            addition = self.tokenizer.apply_chat_template(
-                message, tokenize=False, add_generation_prompt=False
-            ).strip("<s> ")
+            addition = self.tokenizer.apply_chat_template(message, tokenize=False, add_generation_prompt=False).strip("<s> ")
             return prompt + addition
         return prompt + instruction_prompt

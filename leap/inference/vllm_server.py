@@ -5,20 +5,22 @@ This module contains the worker process and parallel engine classes for running
 vLLM inference across multiple GPUs with comprehensive table logging support.
 """
 
-import os
-import time
-import uuid
 import asyncio
 import multiprocessing as mp
+import os
 import queue
-from typing import List, Dict, Any, Callable, Optional
+import time
+import uuid
+from typing import Any, Callable, Dict, List, Optional
+
 from vllm import AsyncLLMEngine, SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 
+from leap.config.loader import GenerationConfig, LoggingConfig, TokenizerConfig
+from leap.core import ExecutionMetrics, InferenceRequest, InferenceResult, Table
+
 # Import the table logger
 from leap.utils.table_logger import TableLogger
-from leap.core import InferenceRequest, InferenceResult, Table, ExecutionMetrics
-from leap.config.loader import GenerationConfig, TokenizerConfig, LoggingConfig
 
 
 class VLLMWorkerProcess(mp.Process):
@@ -84,9 +86,7 @@ class VLLMWorkerProcess(mp.Process):
             os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, self.gpu_ids))
 
             generation_mode = self._get_generation_mode_string()
-            print(
-                f"Worker {self.worker_id} starting with GPUs: {self.gpu_ids}, mode: {generation_mode}"
-            )
+            print(f"Worker {self.worker_id} starting with GPUs: {self.gpu_ids}, mode: {generation_mode}")
 
             # Initialize logger for this worker - DON'T create separate logger
             # Workers will send logging data back to main process
@@ -112,9 +112,7 @@ class VLLMWorkerProcess(mp.Process):
     def _get_generation_mode_string(self) -> str:
         """Get descriptive string for generation mode"""
         if self.use_cot:
-            constraint_desc = (
-                "with_constraints" if self.use_constraints else "without_constraints"
-            )
+            constraint_desc = "with_constraints" if self.use_constraints else "without_constraints"
             return f"chain_of_table_{constraint_desc}"
         elif self.use_constraints:
             return "constrained"
@@ -144,9 +142,7 @@ class VLLMWorkerProcess(mp.Process):
         self.max_model_len = self.engine.engine.model_config.max_model_len
 
         load_time = time.time() - start_time
-        print(
-            f"Worker {self.worker_id}: Model loaded in {load_time:.2f} seconds, max_model_len={self.max_model_len}"
-        )
+        print(f"Worker {self.worker_id}: Model loaded in {load_time:.2f} seconds, max_model_len={self.max_model_len}")
 
     async def _process_requests(self):
         """Process incoming requests"""
@@ -172,18 +168,14 @@ class VLLMWorkerProcess(mp.Process):
                 self.output_queue.put(("result", request.request_id, result))
 
                 # Clean up state machines for this request
-                to_delete = [
-                    key for key in state_machines if key.startswith(request.request_id)
-                ]
+                to_delete = [key for key in state_machines if key.startswith(request.request_id)]
                 for key in to_delete:
                     del state_machines[key]
 
             except Exception as e:
                 print(f"Worker {self.worker_id} error in main loop: {e}")
 
-    async def _process_single_request(
-        self, request: InferenceRequest, state_machines: Dict
-    ) -> InferenceResult:
+    async def _process_single_request(self, request: InferenceRequest, state_machines: Dict) -> InferenceResult:
         """
         Process a single request using the configured generation function with logging
 
@@ -204,9 +196,7 @@ class VLLMWorkerProcess(mp.Process):
                 generation_func = self.generation_functions.get("iterative_generation")
 
             if not generation_func:
-                raise ValueError(
-                    f"No generation function configured for mode: {generation_mode}"
-                )
+                raise ValueError(f"No generation function configured for mode: {generation_mode}")
 
             # Call the generation function with typed request
             result: InferenceResult = await generation_func(
@@ -242,9 +232,7 @@ class VLLMWorkerProcess(mp.Process):
             )
         except Exception as e:
             # If an error occurs during generation, create a failed result
-            print(
-                f"Worker {self.worker_id} error processing request {request.request_id}: {e}"
-            )
+            print(f"Worker {self.worker_id} error processing request {request.request_id}: {e}")
 
             # Return an error result object
             return InferenceResult(
@@ -290,9 +278,7 @@ class VLLMWorkerProcess(mp.Process):
             # Send log entry back to main process
             self.output_queue.put(("log_entry", request_id, log_data))
 
-    async def generate_text(
-        self, prompt: str, request_id: str, sampling_params: SamplingParams
-    ) -> str:
+    async def generate_text(self, prompt: str, request_id: str, sampling_params: SamplingParams) -> str:
         """
         Generate text using the vLLM engine
 
@@ -507,9 +493,7 @@ class ProcessParallelVLLM:
         else:
             return "Unconstrained generation with post-processing"
 
-    def generate_batch(
-        self, requests: List[InferenceRequest], timeout_per_request: int = 180
-    ) -> List[InferenceResult]:
+    def generate_batch(self, requests: List[InferenceRequest], timeout_per_request: int = 180) -> List[InferenceResult]:
         """
         Generate responses for batch of requests
 
@@ -544,9 +528,7 @@ class ProcessParallelVLLM:
 
         while completed < total_requests:
             try:
-                msg_type, req_id, data = self.output_queue.get(
-                    timeout=timeout_per_request
-                )
+                msg_type, req_id, data = self.output_queue.get(timeout=timeout_per_request)
                 if msg_type == "result":
                     # data is already an InferenceResult object
                     results[req_id] = data
@@ -587,9 +569,7 @@ class ProcessParallelVLLM:
                     )
                     completed += 1
             except queue.Empty:
-                print(
-                    f"Timeout waiting for results (completed {completed}/{total_requests})"
-                )
+                print(f"Timeout waiting for results (completed {completed}/{total_requests})")
                 break
 
         # Return results in original order, with default error results for missing ones
@@ -705,9 +685,11 @@ def setup_standard_vllm_server(
         Configured ProcessParallelVLLM instance
     """
     from dataclasses import replace
-    from leap.config.loader import load_runtime_config, get_model_id
     from pathlib import Path
+
     from transformers import AutoTokenizer
+
+    from leap.config.loader import get_model_id, load_runtime_config
 
     # Load typed configs from the standard config system
     config_path = Path("configs/default.yaml")
@@ -722,9 +704,7 @@ def setup_standard_vllm_server(
         use_chain_of_table=use_cot,
     )
 
-    logging_config = replace(
-        app_config.logging, enable_logging=enable_logging, log_dir=log_dir
-    )
+    logging_config = replace(app_config.logging, enable_logging=enable_logging, log_dir=log_dir)
 
     return ProcessParallelVLLM(
         model_id=model_id,
@@ -762,9 +742,7 @@ if __name__ == "__main__":
             requests = [
                 InferenceRequest(
                     question="What is the capital of France?",
-                    table=Table(
-                        columns=["Country", "Capital"], rows=[["France", "Paris"]]
-                    ),
+                    table=Table(columns=["Country", "Capital"], rows=[["France", "Paris"]]),
                     ground_truth_answers=["Paris"],
                 ),
                 InferenceRequest(

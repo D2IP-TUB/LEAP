@@ -2,10 +2,12 @@
 Essential tests for vLLM server components
 """
 
-import pytest
 import multiprocessing as mp
+
+import pytest
+
+from leap.config.loader import GenerationConfig, LoggingConfig, TokenizerConfig
 from leap.inference.vllm_server import ProcessParallelVLLM, VLLMWorkerProcess
-from leap.config.loader import GenerationConfig, TokenizerConfig, LoggingConfig
 
 
 # Test helper functions to create typed configs
@@ -22,17 +24,13 @@ def create_test_generation_config(
     )
 
 
-def create_test_server(
-    model_id: str = "gpt2", num_workers: int = 2, gpu_allocation=None, **kwargs
-) -> ProcessParallelVLLM:
+def create_test_server(model_id: str = "gpt2", num_workers: int = 2, gpu_allocation=None, **kwargs) -> ProcessParallelVLLM:
     """Helper to create ProcessParallelVLLM with all required configs"""
     return ProcessParallelVLLM(
         model_id=model_id,
         num_workers=num_workers,
         gpu_allocation=gpu_allocation,
-        generation_config=kwargs.get(
-            "generation_config", create_test_generation_config()
-        ),
+        generation_config=kwargs.get("generation_config", create_test_generation_config()),
         tokenizer_config=kwargs.get("tokenizer_config", create_test_tokenizer_config()),
         logging_config=kwargs.get("logging_config", create_test_logging_config()),
         generation_functions=kwargs.get("generation_functions", {}),
@@ -87,9 +85,7 @@ class TestGenerationConfigCreation:
 
     def test_create_test_generation_config_custom(self):
         """Test creating generation config with custom values"""
-        config = create_test_generation_config(
-            use_constraints=False, use_cot=True, use_global_constraints=False
-        )
+        config = create_test_generation_config(use_constraints=False, use_cot=True, use_global_constraints=False)
 
         assert config.use_constraints is False
         assert config.use_chain_of_table is True
@@ -107,9 +103,7 @@ class TestGenerationConfigCreation:
 
     def test_create_test_logging_config_custom(self):
         """Test creating logging config with custom values"""
-        config = create_test_logging_config(
-            enable_logging=False, log_dir="custom_logs", compress_logs=True
-        )
+        config = create_test_logging_config(enable_logging=False, log_dir="custom_logs", compress_logs=True)
 
         assert config.enable_logging is False
         assert config.log_dir == "custom_logs"
@@ -183,9 +177,7 @@ class TestProcessParallelVLLM:
     def test_get_generation_config(self):
         """Test getting generation configuration"""
         config = create_test_generation_config(use_constraints=False, use_cot=True)
-        server = create_test_server(
-            model_id="gpt2", num_workers=2, generation_config=config
-        )
+        server = create_test_server(model_id="gpt2", num_workers=2, generation_config=config)
 
         retrieved_config = server.get_generation_config()
         assert retrieved_config.use_constraints is False
@@ -195,9 +187,7 @@ class TestProcessParallelVLLM:
         """Test getting logging stats when logging is disabled"""
         logging_config = create_test_logging_config(enable_logging=False)
 
-        server = create_test_server(
-            model_id="gpt2", num_workers=2, logging_config=logging_config
-        )
+        server = create_test_server(model_id="gpt2", num_workers=2, logging_config=logging_config)
 
         stats = server.get_logging_stats()
         assert stats["enabled"] is False
@@ -221,9 +211,7 @@ class TestVLLMWorkerProcess:
         """Test worker process initialization"""
         input_queue = mp.Queue()
         output_queue = mp.Queue()
-        generation_config = create_test_generation_config(
-            use_constraints=True, use_cot=False
-        )
+        generation_config = create_test_generation_config(use_constraints=True, use_cot=False)
 
         worker = VLLMWorkerProcess(
             worker_id=0,
@@ -248,9 +236,7 @@ class TestVLLMWorkerProcess:
         """Test generation mode string for constrained mode"""
         input_queue = mp.Queue()
         output_queue = mp.Queue()
-        generation_config = create_test_generation_config(
-            use_constraints=True, use_cot=False
-        )
+        generation_config = create_test_generation_config(use_constraints=True, use_cot=False)
 
         worker = VLLMWorkerProcess(
             worker_id=0,
@@ -272,9 +258,7 @@ class TestVLLMWorkerProcess:
         """Test generation mode string for chain-of-table mode"""
         input_queue = mp.Queue()
         output_queue = mp.Queue()
-        generation_config = create_test_generation_config(
-            use_constraints=True, use_cot=True
-        )
+        generation_config = create_test_generation_config(use_constraints=True, use_cot=True)
 
         worker = VLLMWorkerProcess(
             worker_id=0,
@@ -296,9 +280,7 @@ class TestVLLMWorkerProcess:
         """Test generation mode string for unconstrained mode"""
         input_queue = mp.Queue()
         output_queue = mp.Queue()
-        generation_config = create_test_generation_config(
-            use_constraints=False, use_cot=False
-        )
+        generation_config = create_test_generation_config(use_constraints=False, use_cot=False)
 
         worker = VLLMWorkerProcess(
             worker_id=0,

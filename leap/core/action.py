@@ -3,7 +3,7 @@
 import ast
 import re
 from dataclasses import dataclass
-from typing import Any, List, Optional, Dict
+from typing import Any, Dict, List, Optional
 
 from .table import Table
 
@@ -98,9 +98,7 @@ class Action:
         return None
 
     @classmethod
-    def extract_from_text(
-        cls, text: str, action_name: str, table: Table
-    ) -> Optional["Action"]:
+    def extract_from_text(cls, text: str, action_name: str, table: Table) -> Optional["Action"]:
         """
         Extract action from free-form text (used in Chain-of-Table).
 
@@ -115,9 +113,7 @@ class Action:
         return cls(action_name, arguments)
 
     @staticmethod
-    def _extract_arguments_from_text(
-        text: str, action_name: str, table: Table
-    ) -> Optional[List]:
+    def _extract_arguments_from_text(text: str, action_name: str, table: Table) -> Optional[List]:
         """
         Internal helper: extract arguments for a specific action from free-form text.
 
@@ -143,9 +139,7 @@ class Action:
                     try:
                         indices_str = match.group(1)
                         indices = [int(x.strip()) for x in indices_str.split(",")]
-                        valid_indices = [
-                            idx for idx in indices if 0 <= idx < len(table.rows)
-                        ]
+                        valid_indices = [idx for idx in indices if 0 <= idx < len(table.rows)]
                         if valid_indices:
                             return valid_indices
                     except Exception:
@@ -156,9 +150,7 @@ class Action:
             if numbers:
                 try:
                     indices = [int(x) for x in numbers]
-                    valid_indices = [
-                        idx for idx in indices if 0 <= idx < len(table.rows)
-                    ]
+                    valid_indices = [idx for idx in indices if 0 <= idx < len(table.rows)]
                     if valid_indices:
                         return valid_indices[:5]  # Limit to 5
                 except Exception:

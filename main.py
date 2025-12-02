@@ -1,4 +1,5 @@
 import json
+import logging
 import multiprocessing as mp
 import os
 import time
@@ -9,22 +10,22 @@ from typing import Any
 from datasets import load_dataset, load_from_disk
 from transformers import AutoTokenizer
 
-from leap.inference.vllm_server import ProcessParallelVLLM
+from leap.config.loader import (
+    AppConfig,
+    DatasetConfig,
+    get_model_id,
+    load_runtime_config,
+)
+from leap.config.loader import (
+    GenerationConfig as GenerationSettings,
+)
+from leap.core import Action, InferenceRequest, InferenceResult
+from leap.generation.prompt_builder import PromptBuilder
 from leap.generation.strategies import (
     ChainOfTableGenerationStrategy,
     IterativeGenerationStrategy,
 )
-from leap.generation.prompt_builder import PromptBuilder
-from leap.core import Action, InferenceRequest, InferenceResult
-from leap.config.loader import (
-    AppConfig,
-    DatasetConfig,
-    GenerationConfig as GenerationSettings,
-    get_model_id,
-    load_runtime_config,
-)
-
-import logging
+from leap.inference.vllm_server import ProcessParallelVLLM
 
 # shut off llm logging in case not important
 logging.getLogger("vllm").setLevel(logging.ERROR)
@@ -82,9 +83,7 @@ def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
     # Now load the full config with tokenizer
     app_config: AppConfig = load_runtime_config(config_path, tokenizer)
 
-    prompt_builder = PromptBuilder(
-        tokenizer=tokenizer, is_instruct=app_config.model.instruct
-    )
+    prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=app_config.model.instruct)
     dataset = load_dataset_from_config(app_config.dataset)
     return RuntimeContext(
         config=app_config,
@@ -94,9 +93,7 @@ def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
     )
 
 
-def write_results_to_jsonl(
-    results: list[InferenceResult], output_file, generation_config: GenerationSettings
-):
+def write_results_to_jsonl(results: list[InferenceResult], output_file, generation_config: GenerationSettings):
     """Write results to JSONL file with execution accuracy metrics"""
     with open(output_file, "w", encoding="utf-8") as f:
         for i, result in enumerate(results):
@@ -131,11 +128,7 @@ def write_results_to_jsonl(
 def get_generation_mode_string(generation_config: GenerationSettings):
     """Get a descriptive string for the current generation mode"""
     if generation_config.use_chain_of_table:
-        constraint_desc = (
-            "with_constraints"
-            if generation_config.use_constraints
-            else "without_constraints"
-        )
+        constraint_desc = "with_constraints" if generation_config.use_constraints else "without_constraints"
         return f"chain_of_table_{constraint_desc}"
     elif generation_config.use_constraints:
         if generation_config.use_global_constraints:
@@ -155,9 +148,7 @@ def main():
     model_settings = app_config.model
     generation_settings = app_config.generation
 
-    iterative_strategy = IterativeGenerationStrategy(
-        prompt_builder=runtime.prompt_builder
-    )
+    iterative_strategy = IterativeGenerationStrategy(prompt_builder=runtime.prompt_builder)
     cot_strategy = ChainOfTableGenerationStrategy(prompt_builder=runtime.prompt_builder)
 
     # Initialize the server with typed configs (no more dicts!)
@@ -190,9 +181,7 @@ def main():
         run_config = app_config.run
         max_examples = run_config.max_examples
         dataset = runtime.dataset
-        subset_size = (
-            len(dataset) if max_examples is None else min(max_examples, len(dataset))
-        )
+        subset_size = len(dataset) if max_examples is None else min(max_examples, len(dataset))
 
         for i, example in enumerate(dataset):
             if i >= subset_size:
@@ -213,9 +202,7 @@ def main():
         end_time = time.time()
 
         print(f"Total time: {end_time - start_time:.2f} seconds")
-        print(
-            f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds"
-        )
+        print(f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds")
 
         # Analyze results
         analyze_execution_accuracy(results)
@@ -257,43 +244,23 @@ def analyze_execution_accuracy(results: list[InferenceResult]):
         baseline_rates.append(1.0 if metrics.answer_found_in_original else 0.0)
 
     if execution_accuracies:
-        overall_execution_accuracy = sum(execution_accuracies) / len(
-            execution_accuracies
-        )
+        overall_execution_accuracy = sum(execution_accuracies) / len(execution_accuracies)
         overall_answer_found_rate = sum(answer_found_rates) / len(answer_found_rates)
         overall_baseline_rate = sum(baseline_rates) / len(baseline_rates)
-        overall_termination_rate = sum(proper_termination_rates) / len(
-            proper_termination_rates
-        )
+        overall_termination_rate = sum(proper_termination_rates) / len(proper_termination_rates)
 
-        print(
-            f"Overall Execution Accuracy: {overall_execution_accuracy:.3f} ({overall_execution_accuracy * 100:.1f}%)"
-        )
-        print(
-            f"Answer Found in Final Table Rate: {overall_answer_found_rate:.3f} ({overall_answer_found_rate * 100:.1f}%)"
-        )
-        print(
-            f"Answer Found in Original Table Rate (Baseline): {overall_baseline_rate:.3f} ({overall_baseline_rate * 100:.1f}%)"
-        )
-        print(
-            f"Proper Termination Rate: {overall_termination_rate:.3f} ({overall_termination_rate * 100:.1f}%)"
-        )
+        print(f"Overall Execution Accuracy: {overall_execution_accuracy:.3f} ({overall_execution_accuracy * 100:.1f}%)")
+        print(f"Answer Found in Final Table Rate: {overall_answer_found_rate:.3f} ({overall_answer_found_rate * 100:.1f}%)")
+        print(f"Answer Found in Original Table Rate (Baseline): {overall_baseline_rate:.3f} ({overall_baseline_rate * 100:.1f}%)")
+        print(f"Proper Termination Rate: {overall_termination_rate:.3f} ({overall_termination_rate * 100:.1f}%)")
 
         if overall_baseline_rate > 0:
             improvement = overall_answer_found_rate - overall_baseline_rate
-            improvement_pct = (
-                (improvement / overall_baseline_rate) * 100
-                if overall_baseline_rate > 0
-                else 0
-            )
-            print(
-                f"Improvement over baseline: {improvement:+.3f} ({improvement_pct:+.1f}%)"
-            )
+            improvement_pct = (improvement / overall_baseline_rate) * 100 if overall_baseline_rate > 0 else 0
+            print(f"Improvement over baseline: {improvement:+.3f} ({improvement_pct:+.1f}%)")
 
         success_cases = sum(1 for acc in execution_accuracies if acc == 1.0)
-        print(
-            f"Successful Cases: {success_cases}/{len(execution_accuracies)} ({success_cases / len(execution_accuracies) * 100:.1f}%)"
-        )
+        print(f"Successful Cases: {success_cases}/{len(execution_accuracies)} ({success_cases / len(execution_accuracies) * 100:.1f}%)")
 
 
 def print_sample_results(results: list[InferenceResult]):

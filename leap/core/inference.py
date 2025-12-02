@@ -10,12 +10,12 @@ These types work together to provide end-to-end type safety for the inference fl
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Dict, Any
 import uuid
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
-from .table import Table
 from .action import Action
+from .table import Table
 
 
 @dataclass(frozen=True)
@@ -94,9 +94,7 @@ class InferenceRequest:
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     @classmethod
-    def from_example(
-        cls, example: Dict[str, Any], index: Optional[int] = None
-    ) -> "InferenceRequest":
+    def from_example(cls, example: Dict[str, Any], index: Optional[int] = None) -> "InferenceRequest":
         """Create from dataset example (WikiTableQuestions format)
 
         Args:
@@ -179,9 +177,7 @@ class InferenceResult:
             error_msg = data["error"]
             return cls(
                 action_history=[],
-                final_table=Table(
-                    columns=[], rows=[]
-                ),  # Empty table for failed results
+                final_table=Table(columns=[], rows=[]),  # Empty table for failed results
                 execution_metrics=ExecutionMetrics(
                     execution_accuracy=0.0,
                     answer_found_in_final=False,
