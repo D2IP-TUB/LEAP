@@ -14,7 +14,7 @@ model:
 dataset:
   loader: "huggingface"  # options: huggingface, json, disk
   name: "wikitablequestions"
-  split: "train[:300]"
+  split: "train"
   trust_remote_code: true
   data_files: null
   path: null

@@ -171,9 +171,7 @@ class VLLMWorkerProcess(mp.Process):
                             break
 
                         # Create async task for this request (non-blocking)
-                        task = asyncio.create_task(
-                            self._process_single_request(request, state_machines)
-                        )
+                        task = asyncio.create_task(self._process_single_request(request, state_machines))
                         active_tasks[request.request_id] = (task, request.request_id)
 
                     except queue.Empty:
@@ -187,9 +185,7 @@ class VLLMWorkerProcess(mp.Process):
                 if active_tasks:
                     # Wait for first completion
                     done, pending = await asyncio.wait(
-                        [task for task, _ in active_tasks.values()],
-                        return_when=asyncio.FIRST_COMPLETED,
-                        timeout=0.1
+                        [task for task, _ in active_tasks.values()], return_when=asyncio.FIRST_COMPLETED, timeout=0.1
                     )
 
                     # Process completed tasks

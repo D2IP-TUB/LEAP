@@ -8,6 +8,7 @@ from leap.generation.generate import (
     generate_single_action,
 )
 from leap.generation.prompt_builder import PromptBuilder
+from leap.utils.profiler import RequestProfiler
 
 DEFAULT_COT_ACTION_TEMPERATURE = 0.3
 DEFAULT_COT_ARGS_TEMPERATURE = 0.7
@@ -58,6 +59,9 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
         ground_truth_answers = request.ground_truth_answers
         request_id = request.request_id
 
+        # Initialize per-request profiler
+        profiler = RequestProfiler(request_id)
+
         action_history: List[str] = []
         failures = 0
         validity_failures = 0
@@ -69,26 +73,32 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
             logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
 
         while failures < self.max_failures and validity_failures < self.max_validity_failures and step < self.max_steps:
+            step_start = profiler.start_step()
             step_id = f"{request_id}_step{step}"
-            step_prompt = self.prompt_builder.build_iterative_prompt(
-                question=question,
-                table=current_table,
-                action_history=action_history,
-                worker=worker,
-                step=step,
-            )
 
-            try:
-                action_str = await generate_single_action(
-                    worker,
-                    step_prompt,
-                    current_table,
-                    step_id,
-                    state_machines,
-                    action_history,
+            with profiler.time_operation("prompt_building"):
+                step_prompt = self.prompt_builder.build_iterative_prompt(
+                    question=question,
+                    table=current_table,
+                    action_history=action_history,
+                    worker=worker,
+                    step=step,
                 )
 
-                action = Action.parse(action_str)
+            try:
+                with profiler.time_operation("llm_generation"):
+                    action_str = await generate_single_action(
+                        worker,
+                        step_prompt,
+                        current_table,
+                        step_id,
+                        state_machines,
+                        action_history,
+                    )
+
+                with profiler.time_operation("action_parsing"):
+                    action = Action.parse(action_str)
+
                 if not action:
                     validity_failures += 1
                     print(f"Step {step}: Failed to generate valid action from: {action_str}")
@@ -102,6 +112,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                             failure_type="validity_failure",
                             generation_mode=generation_mode,
                         )
+                    profiler.end_step(step_start, step, "validity_failed")
                     continue
 
                 if action.name == "end":
@@ -114,9 +125,11 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                             current_table,
                             generation_mode=generation_mode,
                         )
+                    profiler.end_step(step_start, step, "end")
                     break
 
-                new_table = action.apply_to_table(current_table)
+                with profiler.time_operation("table_transformation"):
+                    new_table = action.apply_to_table(current_table)
 
                 if not new_table:
                     validity_failures += 1
@@ -131,6 +144,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                             failure_type="validity_failure",
                             generation_mode=generation_mode,
                         )
+                    profiler.end_step(step_start, step, "apply_failed")
                     continue
 
                 current_table = new_table
@@ -138,6 +152,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                 failures = 0
                 validity_failures = 0
                 step += 1
+                profiler.end_step(step_start, step - 1, action.name)
                 print(f"Step {step}: Applied {action.to_string()}")
 
                 if logging_callback:
@@ -163,6 +178,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                         failure_type="generation_error",
                         generation_mode=generation_mode,
                     )
+                profiler.end_step(step_start, step, "error")
 
                 # If this is a critical error (like max_model_len exceeded), break the loop
                 error_str = str(exc).lower()
@@ -170,9 +186,21 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                     print(f"Critical error detected: {exc}. Stopping generation for this instance.")
                     break
 
-        accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-            action_history, current_table, ground_truth_answers, original_table
-        )
+        with profiler.time_operation("evaluation"):
+            accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
+                action_history, current_table, ground_truth_answers, original_table
+            )
+
+        # Print per-request timing summary
+        total_time = profiler.get_total_time()
+        print(f"Request {request_id} completed in {total_time:.2f}s - Operations: {profiler.timings}")
+
+        # Package profiling data to send back to main process
+        profiling_data = {
+            "total_time": total_time,
+            "operation_timings": profiler.timings,
+            "num_steps": step,
+        }
 
         return InferenceResult(
             action_history=action_history,
@@ -181,6 +209,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
             request_id=request_id,
             question=question,
             ground_truth_answers=ground_truth_answers,
+            profiling_data=profiling_data,
         )
 
 
@@ -212,6 +241,9 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
         ground_truth_answers = request.ground_truth_answers
         request_id = request.request_id
 
+        # Initialize per-request profiler
+        profiler = RequestProfiler(request_id)
+
         action_history: List[str] = []
         failures = 0
         validity_failures = 0
@@ -223,18 +255,20 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
             logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
 
         while failures < self.max_failures and validity_failures < self.max_validity_failures and step < self.max_steps:
+            step_start = profiler.start_step()
             try:
-                action_name = await generate_action_selection(
-                    worker,
-                    question,
-                    current_table,
-                    action_history,
-                    request_id,
-                    state_machines,
-                    step,
-                    self.action_temperature,
-                    self.prompt_builder,
-                )
+                with profiler.time_operation("cot_action_selection"):
+                    action_name = await generate_action_selection(
+                        worker,
+                        question,
+                        current_table,
+                        action_history,
+                        request_id,
+                        state_machines,
+                        step,
+                        self.action_temperature,
+                        self.prompt_builder,
+                    )
 
                 if not action_name:
                     validity_failures += 1
@@ -249,6 +283,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                             failure_type="validity_failure",
                             generation_mode=generation_mode,
                         )
+                    profiler.end_step(step_start, step, "action_selection_failed")
                     continue
 
                 if action_name == "end":
@@ -262,20 +297,22 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                             current_table,
                             generation_mode=generation_mode,
                         )
+                    profiler.end_step(step_start, step, "end")
                     break
 
-                args = await generate_action_arguments(
-                    worker,
-                    question,
-                    current_table,
-                    action_name,
-                    action_history,
-                    request_id,
-                    state_machines,
-                    step,
-                    self.args_temperature,
-                    self.prompt_builder,
-                )
+                with profiler.time_operation("cot_args_generation"):
+                    args = await generate_action_arguments(
+                        worker,
+                        question,
+                        current_table,
+                        action_name,
+                        action_history,
+                        request_id,
+                        state_machines,
+                        step,
+                        self.args_temperature,
+                        self.prompt_builder,
+                    )
 
                 if args is None:
                     validity_failures += 1
@@ -290,12 +327,14 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                             failure_type="validity_failure",
                             generation_mode=generation_mode,
                         )
+                    profiler.end_step(step_start, step, "args_generation_failed")
                     continue
 
                 # Create Action object from action_name and args
                 action = Action(action_name, args)
 
-                new_table = action.apply_to_table(current_table)
+                with profiler.time_operation("table_transformation"):
+                    new_table = action.apply_to_table(current_table)
 
                 if not new_table:
                     validity_failures += 1
@@ -310,6 +349,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                             failure_type="validity_failure",
                             generation_mode=generation_mode,
                         )
+                    profiler.end_step(step_start, step, "apply_failed")
                     continue
 
                 current_table = new_table
@@ -317,6 +357,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                 failures = 0
                 validity_failures = 0
                 step += 1
+                profiler.end_step(step_start, step - 1, f"cot_{action.name}")
                 print(f"Step {step}: Applied {action.to_string()} [CoT]")
 
                 if logging_callback:
@@ -342,6 +383,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                         failure_type="generation_error",
                         generation_mode=generation_mode,
                     )
+                profiler.end_step(step_start, step, "error")
 
                 # If this is a critical error (like max_model_len exceeded), break the loop
                 error_str = str(exc).lower()
@@ -349,9 +391,21 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                     print(f"Critical error detected: {exc}. Stopping generation for this instance.")
                     break
 
-        accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-            action_history, current_table, ground_truth_answers, original_table
-        )
+        with profiler.time_operation("evaluation"):
+            accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
+                action_history, current_table, ground_truth_answers, original_table
+            )
+
+        # Print per-request timing summary
+        total_time = profiler.get_total_time()
+        print(f"Request {request_id} completed in {total_time:.2f}s - Operations: {profiler.timings}")
+
+        # Package profiling data to send back to main process
+        profiling_data = {
+            "total_time": total_time,
+            "operation_timings": profiler.timings,
+            "num_steps": step,
+        }
 
         return InferenceResult(
             action_history=action_history,
@@ -360,4 +414,5 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
             request_id=request_id,
             question=question,
             ground_truth_answers=ground_truth_answers,
+            profiling_data=profiling_data,
         )
