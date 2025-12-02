@@ -17,7 +17,7 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 
 # Import the table logger
 from leap.utils.table_logger import TableLogger
-from leap.core import InferenceRequest, InferenceResult
+from leap.core import InferenceRequest, InferenceResult, Table, ExecutionMetrics
 from leap.config.loader import GenerationConfig, TokenizerConfig, LoggingConfig
 
 
@@ -143,7 +143,7 @@ class VLLMWorkerProcess(mp.Process):
     async def _process_requests(self):
         """Process incoming requests"""
         state_machines = {}
-        
+
         while True:
             try:
                 # Get request from queue
@@ -152,7 +152,7 @@ class VLLMWorkerProcess(mp.Process):
                 except queue.Empty:
                     await asyncio.sleep(0.01)
                     continue
-                
+
                 if request is None:  # Shutdown signal
                     break
 
@@ -161,32 +161,28 @@ class VLLMWorkerProcess(mp.Process):
                 result = await self._process_single_request(request, state_machines)
 
                 # Send result back (result may contain error info)
-                self.output_queue.put(('result', request['request_id'], result))
+                self.output_queue.put(('result', request.request_id, result))
 
                 # Clean up state machines for this request
-                request_id = request['request_id']
-                to_delete = [key for key in state_machines if key.startswith(request_id)]
+                to_delete = [key for key in state_machines if key.startswith(request.request_id)]
                 for key in to_delete:
                     del state_machines[key]
-                    
+
             except Exception as e:
                 print(f"Worker {self.worker_id} error in main loop: {e}")
     
-    async def _process_single_request(self, request_dict: Dict[str, Any], state_machines: Dict) -> Dict[str, Any]:
+    async def _process_single_request(self, request: InferenceRequest, state_machines: Dict) -> InferenceResult:
         """
         Process a single request using the configured generation function with logging
 
         Args:
-            request_dict: Request dictionary from queue
+            request: InferenceRequest object from queue
             state_machines: Shared state machines for constraint processing
 
         Returns:
-            Result dictionary for queue
+            InferenceResult object
         """
         try:
-            # Convert dict → typed at boundary
-            request = InferenceRequest.from_dict(request_dict)
-
             generation_mode = self._get_generation_mode_string()
 
             # Get the appropriate generation function
@@ -206,30 +202,52 @@ class VLLMWorkerProcess(mp.Process):
                 logging_callback=self._send_log_entry  # Send logs back to main process
             )
 
-            # Convert typed → dict at boundary (for queue)
-            return result.to_dict()
+            # Return the typed result object directly
+            return result
 
         except asyncio.CancelledError:
             # Task was cancelled - this should not crash the worker
             # Return error result instead of propagating
-            print(f"Worker {self.worker_id} request {request_dict.get('request_id')} was cancelled")
-            return {
-                'error': 'Request cancelled',
-                'request_id': request_dict.get('request_id'),
-                'question': request_dict.get('question'),
-                'ground_truth_answers': request_dict.get('ground_truth_answers'),
-            }
+            print(f"Worker {self.worker_id} request {request.request_id} was cancelled")
+            return InferenceResult(
+                action_history=[],
+                final_table=Table(columns=[], rows=[]),
+                execution_metrics=ExecutionMetrics(
+                    execution_accuracy=0.0,
+                    answer_found_in_final=False,
+                    answer_found_in_original=False,
+                    terminated_properly=False,
+                    matched_answers_final=[],
+                    matched_answers_original=[],
+                    num_actions=0,
+                    execution_error='Request cancelled',
+                ),
+                request_id=request.request_id,
+                question=request.question,
+                ground_truth_answers=request.ground_truth_answers,
+            )
         except Exception as e:
             # If an error occurs during generation, create a failed result
-            print(f"Worker {self.worker_id} error processing request {request_dict.get('request_id')}: {e}")
+            print(f"Worker {self.worker_id} error processing request {request.request_id}: {e}")
 
-            # Return a minimal error result that can be converted to InferenceResult
-            return {
-                'error': str(e),
-                'request_id': request_dict.get('request_id'),
-                'question': request_dict.get('question'),
-                'ground_truth_answers': request_dict.get('ground_truth_answers'),
-            }
+            # Return an error result object
+            return InferenceResult(
+                action_history=[],
+                final_table=Table(columns=[], rows=[]),
+                execution_metrics=ExecutionMetrics(
+                    execution_accuracy=0.0,
+                    answer_found_in_final=False,
+                    answer_found_in_original=False,
+                    terminated_properly=False,
+                    matched_answers_final=[],
+                    matched_answers_original=[],
+                    num_actions=0,
+                    execution_error=str(e),
+                ),
+                request_id=request.request_id,
+                question=request.question,
+                ground_truth_answers=request.ground_truth_answers,
+            )
     
     def _send_log_entry(self, request_id: str, step: int, action: str, table: Dict[str, Any],
                        success: bool = True, failure_type: str = None, generation_mode: str = None):
@@ -459,43 +477,45 @@ class ProcessParallelVLLM:
         else:
             return "Unconstrained generation with post-processing"
     
-    def generate_batch(self, 
-                      requests: List[Dict[str, Any]], 
-                      timeout_per_request: int = 180) -> List[Dict[str, Any]]:
+    def generate_batch(self,
+                      requests: List[InferenceRequest],
+                      timeout_per_request: int = 180) -> List[InferenceResult]:
         """
         Generate responses for batch of requests
-        
+
         Args:
-            requests: List of request dictionaries
+            requests: List of InferenceRequest objects
             timeout_per_request: Timeout per request in seconds
-            
+
         Returns:
-            List of result dictionaries in same order as requests
+            List of InferenceResult objects in same order as requests
         """
         if not self._workers_ready:
             raise RuntimeError("Workers not ready. Call start_workers() first.")
-        
+
         # Send all requests to queue with unique IDs
         request_ids = []
         for i, request in enumerate(requests):
             request_id = f"req_{i}_{uuid.uuid4().hex[:8]}"
             request_ids.append(request_id)
-            
-            # Add request_id to the request
-            request_with_id = request.copy()
-            request_with_id['request_id'] = request_id
-            
+
+            # Add request_id to the request using dataclass replace
+            from dataclasses import replace
+            request_with_id = replace(request, request_id=request_id)
+
+            # Put the typed object directly in the queue
             self.input_queue.put(request_with_id)
         
         # Collect results
         results = {}
         completed = 0
         total_requests = len(request_ids)
-        
+
         while completed < total_requests:
             try:
                 msg_type, req_id, data = self.output_queue.get(timeout=timeout_per_request)
                 if msg_type == 'result':
+                    # data is already an InferenceResult object
                     results[req_id] = data
                     completed += 1
                     print(f"Completed {completed}/{total_requests} requests")
@@ -514,15 +534,48 @@ class ProcessParallelVLLM:
                         )
                 elif msg_type == 'error':
                     print(f"Error for request {req_id}: {data}")
-                    # Store error result
-                    results[req_id] = {'error': data}
+                    # Create error result object
+                    results[req_id] = InferenceResult(
+                        action_history=[],
+                        final_table=Table(columns=[], rows=[]),
+                        execution_metrics=ExecutionMetrics(
+                            execution_accuracy=0.0,
+                            answer_found_in_final=False,
+                            answer_found_in_original=False,
+                            terminated_properly=False,
+                            matched_answers_final=[],
+                            matched_answers_original=[],
+                            num_actions=0,
+                            execution_error=str(data),
+                        ),
+                        request_id=req_id,
+                        question='',
+                        ground_truth_answers=[],
+                    )
                     completed += 1
             except queue.Empty:
                 print(f"Timeout waiting for results (completed {completed}/{total_requests})")
                 break
-        
-        # Return results in original order, with default empty results for missing ones
-        return [results.get(req_id, {'error': 'Request not completed'}) for req_id in request_ids]
+
+        # Return results in original order, with default error results for missing ones
+        default_error = InferenceResult(
+            action_history=[],
+            final_table=Table(columns=[], rows=[]),
+            execution_metrics=ExecutionMetrics(
+                execution_accuracy=0.0,
+                answer_found_in_final=False,
+                answer_found_in_original=False,
+                terminated_properly=False,
+                matched_answers_final=[],
+                matched_answers_original=[],
+                num_actions=0,
+                execution_error='Request not completed',
+            ),
+            request_id='',
+            question='',
+            ground_truth_answers=[],
+        )
+        return [results.get(req_id, default_error) for req_id in request_ids]
     
     def create_summary_report(self, generation_mode: str = None) -> Dict[str, Any]:
         """Create summary report using main logger"""
@@ -672,16 +725,16 @@ if __name__ == "__main__":
             
             # Example batch generation
             requests = [
-                {
-                    "question": "What is the capital of France?",
-                    "table": {"columns": ["Country", "Capital"], "rows": [["France", "Paris"]]},
-                    "ground_truth_answers": ["Paris"]
-                },
-                {
-                    "question": "What is machine learning?", 
-                    "table": {"columns": ["Term", "Definition"], "rows": [["ML", "Machine Learning"]]},
-                    "ground_truth_answers": ["Machine Learning"]
-                }
+                InferenceRequest(
+                    question="What is the capital of France?",
+                    table=Table(columns=["Country", "Capital"], rows=[["France", "Paris"]]),
+                    ground_truth_answers=["Paris"]
+                ),
+                InferenceRequest(
+                    question="What is machine learning?",
+                    table=Table(columns=["Term", "Definition"], rows=[["ML", "Machine Learning"]]),
+                    ground_truth_answers=["Machine Learning"]
+                )
             ]
             
             print("Generating responses with logging...")

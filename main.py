@@ -188,19 +188,16 @@ def main():
             # Use typed request builder
             inference_request = InferenceRequest.from_example(example, index=i)
 
-            # Convert to dict for queue
-            requests.append(inference_request.to_dict())
+            # Pass the typed object directly (no conversion needed)
+            requests.append(inference_request)
         
         print(f"Processing {len(requests)} questions...")
         print(f"Generation mode: {get_generation_mode_string(generation_settings)}")
         
         # Generate responses with comprehensive logging
         start_time = time.time()
-        results_dicts = server.generate_batch(requests)
+        results = server.generate_batch(requests)
         end_time = time.time()
-
-        # Convert dicts to typed results
-        results = [InferenceResult.from_dict(r) for r in results_dicts]
 
         print(f"Total time: {end_time - start_time:.2f} seconds")
         print(f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds")
