@@ -165,6 +165,7 @@ def main():
             "cot_generation": cot_strategy.generate_instance,
         },
         tensor_parallel_size=model_settings.hardware.tensor_parallel_size,
+        max_concurrent_requests=model_settings.hardware.max_concurrent_requests,
     )
 
     try:

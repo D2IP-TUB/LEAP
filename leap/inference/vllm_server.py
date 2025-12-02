@@ -22,6 +22,9 @@ from leap.core import ExecutionMetrics, InferenceRequest, InferenceResult, Table
 # Import the table logger
 from leap.utils.table_logger import TableLogger
 
+# Default max concurrent requests per worker for continuous batching
+DEFAULT_MAX_CONCURRENT_REQUESTS = 16
+
 
 class VLLMWorkerProcess(mp.Process):
     """Individual worker process for vLLM inference with logging support"""
@@ -38,6 +41,7 @@ class VLLMWorkerProcess(mp.Process):
         logging_config: LoggingConfig,
         generation_functions: Dict[str, Callable],
         tensor_parallel_size: int = 1,
+        max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
     ):
         """
         Initialize vLLM worker process
@@ -53,6 +57,7 @@ class VLLMWorkerProcess(mp.Process):
             logging_config: LoggingConfig from leap.config.loader
             generation_functions: Dict mapping strategy names to functions
             tensor_parallel_size: Number of GPUs for tensor parallelism
+            max_concurrent_requests: Max concurrent requests for continuous batching
         """
         super().__init__()
         self.worker_id = worker_id
@@ -67,6 +72,7 @@ class VLLMWorkerProcess(mp.Process):
         self.logging_config = logging_config
         self.generation_functions = generation_functions
         self.tensor_parallel_size = tensor_parallel_size
+        self.max_concurrent_requests = max_concurrent_requests
 
         # Extract commonly used fields for convenience
         self.use_constraints = generation_config.use_constraints
@@ -145,32 +151,93 @@ class VLLMWorkerProcess(mp.Process):
         print(f"Worker {self.worker_id}: Model loaded in {load_time:.2f} seconds, max_model_len={self.max_model_len}")
 
     async def _process_requests(self):
-        """Process incoming requests"""
+        """Process incoming requests with concurrent batching support"""
         state_machines = {}
+        active_tasks = {}  # request_id -> (task, request_id)
+        max_concurrent = self.max_concurrent_requests
+        shutdown_requested = False
+
+        print(f"Worker {self.worker_id}: Processing with max_concurrent={max_concurrent} for continuous batching")
 
         while True:
             try:
-                # Get request from queue
-                try:
-                    request = self.input_queue.get_nowait()
-                except queue.Empty:
-                    await asyncio.sleep(0.01)
-                    continue
+                # Try to fill up to max_concurrent tasks
+                while len(active_tasks) < max_concurrent and not shutdown_requested:
+                    try:
+                        request = self.input_queue.get_nowait()
 
-                if request is None:  # Shutdown signal
+                        if request is None:  # Shutdown signal
+                            shutdown_requested = True
+                            break
+
+                        # Create async task for this request (non-blocking)
+                        task = asyncio.create_task(
+                            self._process_single_request(request, state_machines)
+                        )
+                        active_tasks[request.request_id] = (task, request.request_id)
+
+                    except queue.Empty:
+                        break
+
+                # If no active tasks and shutdown requested, exit
+                if not active_tasks and shutdown_requested:
                     break
 
-                # Process the request using configured generation function
-                # Error handling is done inside _process_single_request
-                result = await self._process_single_request(request, state_machines)
+                # If we have active tasks, wait for at least one to complete
+                if active_tasks:
+                    # Wait for first completion
+                    done, pending = await asyncio.wait(
+                        [task for task, _ in active_tasks.values()],
+                        return_when=asyncio.FIRST_COMPLETED,
+                        timeout=0.1
+                    )
 
-                # Send result back (result may contain error info)
-                self.output_queue.put(("result", request.request_id, result))
+                    # Process completed tasks
+                    for completed_task in done:
+                        # Find which request_id this task belongs to
+                        completed_request_id = None
+                        for req_id, (task, _) in active_tasks.items():
+                            if task == completed_task:
+                                completed_request_id = req_id
+                                break
 
-                # Clean up state machines for this request
-                to_delete = [key for key in state_machines if key.startswith(request.request_id)]
-                for key in to_delete:
-                    del state_machines[key]
+                        if completed_request_id:
+                            try:
+                                result = completed_task.result()
+                                # Send result back
+                                self.output_queue.put(("result", completed_request_id, result))
+                            except Exception as e:
+                                print(f"Worker {self.worker_id} task error for {completed_request_id}: {e}")
+                                # Send error result
+                                error_result = InferenceResult(
+                                    action_history=[],
+                                    final_table=Table(columns=[], rows=[]),
+                                    execution_metrics=ExecutionMetrics(
+                                        execution_accuracy=0.0,
+                                        answer_found_in_final=False,
+                                        answer_found_in_original=False,
+                                        terminated_properly=False,
+                                        matched_answers_final=[],
+                                        matched_answers_original=[],
+                                        num_actions=0,
+                                        execution_error=str(e),
+                                    ),
+                                    request_id=completed_request_id,
+                                    question="",
+                                    ground_truth_answers=[],
+                                )
+                                self.output_queue.put(("result", completed_request_id, error_result))
+
+                            # Clean up state machines for this request
+                            to_delete = [key for key in state_machines if key.startswith(completed_request_id)]
+                            for key in to_delete:
+                                del state_machines[key]
+
+                            # Remove from active tasks
+                            del active_tasks[completed_request_id]
+                else:
+                    # No active tasks, sleep briefly
+                    await asyncio.sleep(0.01)
 
             except Exception as e:
                 print(f"Worker {self.worker_id} error in main loop: {e}")
@@ -336,6 +403,7 @@ class ProcessParallelVLLM:
         logging_config: LoggingConfig = None,
         generation_functions: Dict[str, Callable] = None,
         tensor_parallel_size: int = 1,
+        max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
     ):
         """
         Initialize parallel vLLM engine
@@ -349,9 +417,11 @@ class ProcessParallelVLLM:
             logging_config: LoggingConfig from leap.config.loader
             generation_functions: Dict mapping strategy names to functions
             tensor_parallel_size: Number of GPUs for tensor parallelism
+            max_concurrent_requests: Max concurrent requests per worker for continuous batching
         """
         self.model_id = model_id
         self.num_workers = num_workers
+        self.max_concurrent_requests = max_concurrent_requests
 
         # Auto-detect GPUs if not specified
         if gpu_allocation is None:
@@ -432,6 +502,7 @@ class ProcessParallelVLLM:
                 logging_config=self.logging_config,
                 generation_functions=self.generation_functions,
                 tensor_parallel_size=self.tensor_parallel_size,
+                max_concurrent_requests=self.max_concurrent_requests,
             )
             self.workers.append(worker)
 

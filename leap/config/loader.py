@@ -12,6 +12,7 @@ class HardwareConfig:
     num_workers: int
     tensor_parallel_size: int
     gpu_allocation: List[int]
+    max_concurrent_requests: int = 16  # For continuous batching optimization
 
 
 @dataclass(frozen=True)
@@ -229,6 +230,7 @@ def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any], 
         num_workers=hardware_defaults["num_workers"],
         tensor_parallel_size=hardware_defaults["tensor_parallel_size"],
         gpu_allocation=list(hardware_defaults["gpu_allocation"]),
+        max_concurrent_requests=hardware_defaults.get("max_concurrent_requests", 16),
     )
 
     # Build tokenizer config
