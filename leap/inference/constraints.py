@@ -79,9 +79,7 @@ class ConstraintStateMachine:
         if self.use_global_constraints:
             self.possible_actions = self._get_allowed_actions_with_global_constraints()
         else:
-            self.possible_actions = (
-                self._get_allowed_actions_without_global_constraints()
-            )
+            self.possible_actions = self._get_allowed_actions_without_global_constraints()
 
         self.action_prefix = []
         self.current_column = None
@@ -164,11 +162,7 @@ class ConstraintStateMachine:
         next_possible = []
         for action in self.possible_actions:
             tokens = self.tokenizer_config.action_tokens[action]
-            if (
-                tokens
-                and len(self.action_prefix) < len(tokens)
-                and tokens[: len(self.action_prefix)] == self.action_prefix
-            ):
+            if tokens and len(self.action_prefix) < len(tokens) and tokens[: len(self.action_prefix)] == self.action_prefix:
                 next_possible.append(action)
 
         if not next_possible:
@@ -197,29 +191,18 @@ class ConstraintStateMachine:
                 self.current_param.append(token)
             return
 
-        if (
-            self.current_param
-            and self.current_param[0] == self.tokenizer_config.quote_id
-        ):
+        if self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
             if token in self.tokenizer_config.closing_quotes_tokens:
                 self.current_param.append(token)
                 param_text = self.tokenizer.decode(self.current_param)
                 clean_param = param_text.strip('"')
 
                 is_valid = False
-                token_map = (
-                    self.column_token_map
-                    if self.current_action == "select_column"
-                    else self.row_token_map
-                )
+                token_map = self.column_token_map if self.current_action == "select_column" else self.row_token_map
 
                 for param, tokens in token_map.items():
                     exp = (
-                        (
-                            self.tokenizer_config.is_llama_tokenizer
-                            and clean_param == param
-                        )
-                        or self.current_param == tokens
+                        (self.tokenizer_config.is_llama_tokenizer and clean_param == param) or self.current_param == tokens
                     ) and param not in self.selected_params
                     if exp:
                         self.selected_params.add(param)
@@ -277,29 +260,17 @@ class ConstraintStateMachine:
 
         elif self.state == "in_params":
             allowed = set()
-            remaining_params = (
-                set(self.valid_params[self.current_action]) - self.selected_params
-            )
-            token_map = (
-                self.column_token_map
-                if self.current_action == "select_column"
-                else self.row_token_map
-            )
+            remaining_params = set(self.valid_params[self.current_action]) - self.selected_params
+            token_map = self.column_token_map if self.current_action == "select_column" else self.row_token_map
 
             # if self.current_action == "select_column":
             if not self.current_param and self.expecting_parameter:
                 if remaining_params:
                     allowed.add(self.tokenizer_config.quote_id)
-            elif (
-                self.current_param
-                and self.current_param[0] == self.tokenizer_config.quote_id
-            ):
+            elif self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
                 for param in remaining_params:
                     full_seq = token_map[param]
-                    if (
-                        len(self.current_param) < len(full_seq)
-                        and full_seq[: len(self.current_param)] == self.current_param
-                    ):
+                    if len(self.current_param) < len(full_seq) and full_seq[: len(self.current_param)] == self.current_param:
                         allowed.add(full_seq[len(self.current_param)])
 
                 candidate = self.current_param + [self.tokenizer_config.quote_id]
@@ -410,9 +381,7 @@ class ActionOnlyConstraintStateMachine:
     def _handle_start(self, token):
         action_tokens = {
             "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode(
-                "select_column", add_special_tokens=False
-            ),
+            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
             "end": self.tokenizer.encode("end", add_special_tokens=False),
         }
 
@@ -430,9 +399,7 @@ class ActionOnlyConstraintStateMachine:
     def _handle_action(self, token):
         action_tokens = {
             "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode(
-                "select_column", add_special_tokens=False
-            ),
+            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
             "end": self.tokenizer.encode("end", add_special_tokens=False),
         }
 
@@ -449,11 +416,7 @@ class ActionOnlyConstraintStateMachine:
         next_possible = []
         for action in self.possible_actions:
             tokens = action_tokens[action]
-            if (
-                tokens
-                and len(self.action_prefix) < len(tokens)
-                and tokens[: len(self.action_prefix)] == self.action_prefix
-            ):
+            if tokens and len(self.action_prefix) < len(tokens) and tokens[: len(self.action_prefix)] == self.action_prefix:
                 next_possible.append(action)
 
         if not next_possible:
@@ -467,9 +430,7 @@ class ActionOnlyConstraintStateMachine:
 
         action_tokens = {
             "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode(
-                "select_column", add_special_tokens=False
-            ),
+            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
             "end": self.tokenizer.encode("end", add_special_tokens=False),
         }
 
@@ -499,9 +460,7 @@ def create_action_only_constraint_processor(tokenizer, request_id, state_machine
     def action_constraint_processor(prompt_token_ids, generated_token_ids, logits):
         # Get or create state machine for this request
         if request_id not in state_machines_dict:
-            state_machines_dict[request_id] = ActionOnlyConstraintStateMachine(
-                tokenizer
-            )
+            state_machines_dict[request_id] = ActionOnlyConstraintStateMachine(tokenizer)
 
         sm = state_machines_dict[request_id]
 

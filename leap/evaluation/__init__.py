@@ -7,8 +7,8 @@ from leap.evaluation.evaluator import (
     find_matching_answers,
 )
 from leap.evaluation.metrics import (
-    to_value_list,
     check_denotation,
+    to_value_list,
 )
 
 __all__ = [

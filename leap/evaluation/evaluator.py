@@ -1,5 +1,5 @@
-from leap.evaluation.metrics import to_value_list, check_denotation
 from leap.core import ExecutionMetrics
+from leap.evaluation.metrics import check_denotation, to_value_list
 
 
 def find_matching_answers(target_values, predicted_values):
@@ -43,9 +43,7 @@ def calculate_execution_accuracy_with_dataset_answers(
         terminated_properly = (
             len(action_history) > 1  # Must have more than just one action
             and action_history[-1].startswith("end")  # Last action must be end
-            and not all(
-                action.startswith("end") for action in action_history[:-1]
-            )  # Not all prior actions are end
+            and not all(action.startswith("end") for action in action_history[:-1])  # Not all prior actions are end
         )
 
         # Convert ground truth answers to Value objects using evaluator logic
@@ -56,14 +54,10 @@ def calculate_execution_accuracy_with_dataset_answers(
         original_predicted_values = to_value_list(original_table_values)
 
         # Check if original table contains the answer using evaluator logic
-        answer_found_in_original = check_denotation(
-            target_values, original_predicted_values
-        )
+        answer_found_in_original = check_denotation(target_values, original_predicted_values)
         if answer_found_in_original:
             # Find which answers matched in original table
-            matched_answers_original = find_matching_answers(
-                target_values, original_predicted_values
-            )
+            matched_answers_original = find_matching_answers(target_values, original_predicted_values)
 
         # Check final table
         if final_table:
@@ -72,14 +66,10 @@ def calculate_execution_accuracy_with_dataset_answers(
             final_predicted_values = to_value_list(final_table_values)
 
             # Check if final table contains the answer using evaluator logic
-            answer_found_in_final = check_denotation(
-                target_values, final_predicted_values
-            )
+            answer_found_in_final = check_denotation(target_values, final_predicted_values)
             if answer_found_in_final:
                 # Find which answers matched in final table
-                matched_answers_final = find_matching_answers(
-                    target_values, final_predicted_values
-                )
+                matched_answers_final = find_matching_answers(target_values, final_predicted_values)
 
             # Calculate execution accuracy
             if terminated_properly and answer_found_in_final:

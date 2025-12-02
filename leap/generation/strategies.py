@@ -1,5 +1,6 @@
 from typing import Any, Callable, Dict, List, Optional
 
+from leap.core import Action, InferenceRequest, InferenceResult, Table
 from leap.evaluation.evaluator import calculate_execution_accuracy_with_dataset_answers
 from leap.generation.generate import (
     generate_action_arguments,
@@ -7,7 +8,6 @@ from leap.generation.generate import (
     generate_single_action,
 )
 from leap.generation.prompt_builder import PromptBuilder
-from leap.core import Action, Table, InferenceRequest, InferenceResult
 
 DEFAULT_COT_ACTION_TEMPERATURE = 0.3
 DEFAULT_COT_ARGS_TEMPERATURE = 0.7
@@ -66,15 +66,9 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
         generation_mode = worker._get_generation_mode_string()
 
         if logging_callback:
-            logging_callback(
-                request_id, 0, "initial", current_table, generation_mode=generation_mode
-            )
+            logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
 
-        while (
-            failures < self.max_failures
-            and validity_failures < self.max_validity_failures
-            and step < self.max_steps
-        ):
+        while failures < self.max_failures and validity_failures < self.max_validity_failures and step < self.max_steps:
             step_id = f"{request_id}_step{step}"
             step_prompt = self.prompt_builder.build_iterative_prompt(
                 question=question,
@@ -97,9 +91,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                 action = Action.parse(action_str)
                 if not action:
                     validity_failures += 1
-                    print(
-                        f"Step {step}: Failed to generate valid action from: {action_str}"
-                    )
+                    print(f"Step {step}: Failed to generate valid action from: {action_str}")
                     if logging_callback:
                         logging_callback(
                             request_id,
@@ -175,9 +167,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                 # If this is a critical error (like max_model_len exceeded), break the loop
                 error_str = str(exc).lower()
                 if "max_model_len" in error_str or "maximum model length" in error_str:
-                    print(
-                        f"Critical error detected: {exc}. Stopping generation for this instance."
-                    )
+                    print(f"Critical error detected: {exc}. Stopping generation for this instance.")
                     break
 
         accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
@@ -230,15 +220,9 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
         generation_mode = "CoT"
 
         if logging_callback:
-            logging_callback(
-                request_id, 0, "initial", current_table, generation_mode=generation_mode
-            )
+            logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
 
-        while (
-            failures < self.max_failures
-            and validity_failures < self.max_validity_failures
-            and step < self.max_steps
-        ):
+        while failures < self.max_failures and validity_failures < self.max_validity_failures and step < self.max_steps:
             try:
                 action_name = await generate_action_selection(
                     worker,
@@ -295,9 +279,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
 
                 if args is None:
                     validity_failures += 1
-                    print(
-                        f"Step {step}: Failed to generate valid arguments for {action_name}"
-                    )
+                    print(f"Step {step}: Failed to generate valid arguments for {action_name}")
                     if logging_callback:
                         logging_callback(
                             request_id,
@@ -364,9 +346,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                 # If this is a critical error (like max_model_len exceeded), break the loop
                 error_str = str(exc).lower()
                 if "max_model_len" in error_str or "maximum model length" in error_str:
-                    print(
-                        f"Critical error detected: {exc}. Stopping generation for this instance."
-                    )
+                    print(f"Critical error detected: {exc}. Stopping generation for this instance.")
                     break
 
         accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(

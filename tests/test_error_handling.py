@@ -1,6 +1,6 @@
 """Tests for error handling in the inference pipeline"""
 
-from leap.core import InferenceResult, Table, ExecutionMetrics
+from leap.core import ExecutionMetrics, InferenceResult, Table
 
 
 def test_inference_result_from_dict_with_error():

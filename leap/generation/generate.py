@@ -1,4 +1,5 @@
 from vllm import SamplingParams
+
 from leap.core import Action, Table
 from leap.inference.constraints import (
     create_action_only_constraint_processor,
@@ -6,9 +7,7 @@ from leap.inference.constraints import (
 )
 
 
-async def generate_single_action(
-    worker, prompt, table: Table, request_id, state_machines, action_history=None
-):
+async def generate_single_action(worker, prompt, table: Table, request_id, state_machines, action_history=None):
     """
     Generate single action with or without constraints
 
@@ -79,9 +78,7 @@ async def generate_action_selection(
 
     try:
         if worker.use_constraints:
-            constraint_processor = create_action_only_constraint_processor(
-                worker.tokenizer, step_id, state_machines
-            )
+            constraint_processor = create_action_only_constraint_processor(worker.tokenizer, step_id, state_machines)
 
             sampling_params = SamplingParams(
                 temperature=temperature,
