@@ -303,7 +303,7 @@ class VLLMWorkerProcess(mp.Process):
             except Exception:
                 pass
             raise
-        except Exception as e:
+        except Exception:
             # Abort the request to clean up vLLM engine state
             # This prevents the engine from getting stuck on failed requests
             try:
@@ -350,7 +350,7 @@ class ProcessParallelVLLM:
                                       capture_output=True, text=True, check=True)
                 num_gpus = len(result.stdout.strip().split('\n'))
                 self.available_gpus = list(range(num_gpus))
-            except:
+            except Exception:
                 # Fallback if nvidia-smi not available
                 self.available_gpus = list(range(8))  # Assume 8 GPUs max
         else:
