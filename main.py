@@ -25,6 +25,7 @@ from leap.config.loader import (
 )
 
 import logging
+
 # shut off llm logging in case not important
 logging.getLogger("vllm").setLevel(logging.ERROR)
 logging.getLogger("transformers").setLevel(logging.ERROR)
@@ -81,7 +82,9 @@ def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
     # Now load the full config with tokenizer
     app_config: AppConfig = load_runtime_config(config_path, tokenizer)
 
-    prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=app_config.model.instruct)
+    prompt_builder = PromptBuilder(
+        tokenizer=tokenizer, is_instruct=app_config.model.instruct
+    )
     dataset = load_dataset_from_config(app_config.dataset)
     return RuntimeContext(
         config=app_config,
@@ -91,9 +94,11 @@ def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
     )
 
 
-def write_results_to_jsonl(results: list[InferenceResult], output_file, generation_config: GenerationSettings):
+def write_results_to_jsonl(
+    results: list[InferenceResult], output_file, generation_config: GenerationSettings
+):
     """Write results to JSONL file with execution accuracy metrics"""
-    with open(output_file, 'w', encoding='utf-8') as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         for i, result in enumerate(results):
             actions = []
             for action_str in result.action_history:
@@ -106,7 +111,7 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
             # Create entry with WikiTableQuestions logic-based execution accuracy metrics
             # All data comes from the self-contained result
             entry = {
-                "id": f"nt-{i+1}",
+                "id": f"nt-{i + 1}",
                 "question": result.question,
                 "ground_truth_answers": result.ground_truth_answers,
                 "actions": actions,
@@ -115,18 +120,22 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
                 "metadata": {
                     "num_steps": len(actions),
                     "generation_mode": get_generation_mode_string(generation_config),
-                    "evaluation_method": "wikitablequestions_logic_with_dataset_answers"
-                }
+                    "evaluation_method": "wikitablequestions_logic_with_dataset_answers",
+                },
             }
-            f.write(json.dumps(entry) + '\n')
-    
+            f.write(json.dumps(entry) + "\n")
+
     print(f"Results written to {output_file}")
 
 
 def get_generation_mode_string(generation_config: GenerationSettings):
     """Get a descriptive string for the current generation mode"""
     if generation_config.use_chain_of_table:
-        constraint_desc = "with_constraints" if generation_config.use_constraints else "without_constraints"
+        constraint_desc = (
+            "with_constraints"
+            if generation_config.use_constraints
+            else "without_constraints"
+        )
         return f"chain_of_table_{constraint_desc}"
     elif generation_config.use_constraints:
         if generation_config.use_global_constraints:
@@ -145,8 +154,10 @@ def main():
     app_config = runtime.config
     model_settings = app_config.model
     generation_settings = app_config.generation
-    
-    iterative_strategy = IterativeGenerationStrategy(prompt_builder=runtime.prompt_builder)
+
+    iterative_strategy = IterativeGenerationStrategy(
+        prompt_builder=runtime.prompt_builder
+    )
     cot_strategy = ChainOfTableGenerationStrategy(prompt_builder=runtime.prompt_builder)
 
     # Initialize the server with typed configs (no more dicts!)
@@ -159,27 +170,29 @@ def main():
         tokenizer_config=model_settings.tokenizer_config,
         logging_config=app_config.logging,
         generation_functions={
-            'iterative_generation': iterative_strategy.generate_instance,
-            'cot_generation': cot_strategy.generate_instance
+            "iterative_generation": iterative_strategy.generate_instance,
+            "cot_generation": cot_strategy.generate_instance,
         },
-        tensor_parallel_size=model_settings.hardware.tensor_parallel_size
+        tensor_parallel_size=model_settings.hardware.tensor_parallel_size,
     )
-    
+
     try:
         # Start server
         print(f"Starting server with {num_workers} workers...")
         print(f"Logging configuration: {server.get_logging_stats()}")
-        
+
         if not server.start_workers():
             print("Failed to start all workers. Exiting.")
             return
-        
+
         # Prepare requests
         requests = []
         run_config = app_config.run
         max_examples = run_config.max_examples
         dataset = runtime.dataset
-        subset_size = len(dataset) if max_examples is None else min(max_examples, len(dataset))
+        subset_size = (
+            len(dataset) if max_examples is None else min(max_examples, len(dataset))
+        )
 
         for i, example in enumerate(dataset):
             if i >= subset_size:
@@ -190,17 +203,19 @@ def main():
 
             # Pass the typed object directly (no conversion needed)
             requests.append(inference_request)
-        
+
         print(f"Processing {len(requests)} questions...")
         print(f"Generation mode: {get_generation_mode_string(generation_settings)}")
-        
+
         # Generate responses with comprehensive logging
         start_time = time.time()
         results = server.generate_batch(requests)
         end_time = time.time()
 
         print(f"Total time: {end_time - start_time:.2f} seconds")
-        print(f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds")
+        print(
+            f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds"
+        )
 
         # Analyze results
         analyze_execution_accuracy(results)
@@ -214,10 +229,10 @@ def main():
 
         # Print sample results
         print_sample_results(results)
-        
+
         # Demonstrate logging analysis
         demonstrate_logging_analysis(server, results)
-        
+
     finally:
         # Shutdown will automatically generate summary report
         server.shutdown()
@@ -230,9 +245,9 @@ def analyze_execution_accuracy(results: list[InferenceResult]):
     proper_termination_rates = []
     baseline_rates = []
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("EXECUTION ACCURACY ANALYSIS")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     for result in results:
         metrics = result.execution_metrics
@@ -240,43 +255,63 @@ def analyze_execution_accuracy(results: list[InferenceResult]):
         answer_found_rates.append(1.0 if metrics.answer_found_in_final else 0.0)
         proper_termination_rates.append(1.0 if metrics.terminated_properly else 0.0)
         baseline_rates.append(1.0 if metrics.answer_found_in_original else 0.0)
-    
+
     if execution_accuracies:
-        overall_execution_accuracy = sum(execution_accuracies) / len(execution_accuracies)
+        overall_execution_accuracy = sum(execution_accuracies) / len(
+            execution_accuracies
+        )
         overall_answer_found_rate = sum(answer_found_rates) / len(answer_found_rates)
         overall_baseline_rate = sum(baseline_rates) / len(baseline_rates)
-        overall_termination_rate = sum(proper_termination_rates) / len(proper_termination_rates)
-        
-        print(f"Overall Execution Accuracy: {overall_execution_accuracy:.3f} ({overall_execution_accuracy*100:.1f}%)")
-        print(f"Answer Found in Final Table Rate: {overall_answer_found_rate:.3f} ({overall_answer_found_rate*100:.1f}%)")
-        print(f"Answer Found in Original Table Rate (Baseline): {overall_baseline_rate:.3f} ({overall_baseline_rate*100:.1f}%)")
-        print(f"Proper Termination Rate: {overall_termination_rate:.3f} ({overall_termination_rate*100:.1f}%)")
-        
+        overall_termination_rate = sum(proper_termination_rates) / len(
+            proper_termination_rates
+        )
+
+        print(
+            f"Overall Execution Accuracy: {overall_execution_accuracy:.3f} ({overall_execution_accuracy * 100:.1f}%)"
+        )
+        print(
+            f"Answer Found in Final Table Rate: {overall_answer_found_rate:.3f} ({overall_answer_found_rate * 100:.1f}%)"
+        )
+        print(
+            f"Answer Found in Original Table Rate (Baseline): {overall_baseline_rate:.3f} ({overall_baseline_rate * 100:.1f}%)"
+        )
+        print(
+            f"Proper Termination Rate: {overall_termination_rate:.3f} ({overall_termination_rate * 100:.1f}%)"
+        )
+
         if overall_baseline_rate > 0:
             improvement = overall_answer_found_rate - overall_baseline_rate
-            improvement_pct = (improvement / overall_baseline_rate) * 100 if overall_baseline_rate > 0 else 0
-            print(f"Improvement over baseline: {improvement:+.3f} ({improvement_pct:+.1f}%)")
-        
+            improvement_pct = (
+                (improvement / overall_baseline_rate) * 100
+                if overall_baseline_rate > 0
+                else 0
+            )
+            print(
+                f"Improvement over baseline: {improvement:+.3f} ({improvement_pct:+.1f}%)"
+            )
+
         success_cases = sum(1 for acc in execution_accuracies if acc == 1.0)
-        print(f"Successful Cases: {success_cases}/{len(execution_accuracies)} ({success_cases/len(execution_accuracies)*100:.1f}%)")
+        print(
+            f"Successful Cases: {success_cases}/{len(execution_accuracies)} ({success_cases / len(execution_accuracies) * 100:.1f}%)"
+        )
 
 
 def print_sample_results(results: list[InferenceResult]):
     """Print sample results for inspection"""
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("SAMPLE RESULTS")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     for i in range(min(5, len(results))):
         result = results[i]
         metrics = result.execution_metrics
 
-        print(f"\nExample {i+1}:")
+        print(f"\nExample {i + 1}:")
         print("Question:", result.question)
         print("Ground Truth Answers:", result.ground_truth_answers)
         print("Actions:")
         for j, action in enumerate(result.action_history):
-            print(f"  Step {j+1}: {action}")
+            print(f"  Step {j + 1}: {action}")
 
         print(f"Execution Accuracy: {metrics.execution_accuracy:.1f}")
         print(f"Answer Found in Final: {metrics.answer_found_in_final}")
@@ -295,14 +330,14 @@ def print_sample_results(results: list[InferenceResult]):
 
 def demonstrate_logging_analysis(server, results):
     """Demonstrate logging analysis capabilities"""
-    if not server.get_logging_stats().get('enabled', False):
+    if not server.get_logging_stats().get("enabled", False):
         print("Logging not enabled - skipping analysis demonstration")
         return
-    
-    print(f"\n{'='*80}")
+
+    print(f"\n{'=' * 80}")
     print("LOGGING ANALYSIS DEMONSTRATION")
-    print(f"{'='*80}")
-    
+    print(f"{'=' * 80}")
+
     # Show logging statistics
     stats = server.get_logging_stats()
     print("Logging Statistics:")
@@ -310,10 +345,10 @@ def demonstrate_logging_analysis(server, results):
     print(f"  Requests logged: {stats.get('requests_logged', 0)}")
     print(f"  Total log entries: {stats.get('total_entries', 0)}")
     print(f"  Save readable tables: {stats.get('save_readable_tables', False)}")
-    
+
     # Try to analyze logs for first few requests (they would have been logged during processing)
     print("\nSample request analysis:")
-    
+
     # Note: In a real scenario, we would have the actual request IDs from the processing
     # For demonstration, we show what the analysis would look like
     print("  (Request-specific logs would be available after processing)")
@@ -322,5 +357,5 @@ def demonstrate_logging_analysis(server, results):
 
 
 if __name__ == "__main__":
-    mp.set_start_method('spawn', force=True)
+    mp.set_start_method("spawn", force=True)
     main()

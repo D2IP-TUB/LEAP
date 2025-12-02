@@ -35,10 +35,10 @@ class ExecutionMetrics:
     num_actions: int
     final_table_size: Optional[Tuple[int, int]] = None
     execution_error: Optional[str] = None
-    evaluation_method: str = 'wikitablequestions_logic'
+    evaluation_method: str = "wikitablequestions_logic"
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ExecutionMetrics':
+    def from_dict(cls, data: Dict[str, Any]) -> "ExecutionMetrics":
         """Create from dictionary (for backward compatibility during migration)
 
         Args:
@@ -48,16 +48,16 @@ class ExecutionMetrics:
             ExecutionMetrics instance
         """
         return cls(
-            execution_accuracy=data.get('execution_accuracy', 0.0),
-            answer_found_in_final=data.get('answer_found_in_final', False),
-            answer_found_in_original=data.get('answer_found_in_original', False),
-            terminated_properly=data.get('terminated_properly', False),
-            matched_answers_final=data.get('matched_answers_final', []),
-            matched_answers_original=data.get('matched_answers_original', []),
-            num_actions=data.get('num_actions', 0),
-            final_table_size=data.get('final_table_size'),
-            execution_error=data.get('execution_error'),
-            evaluation_method=data.get('evaluation_method', 'wikitablequestions_logic'),
+            execution_accuracy=data.get("execution_accuracy", 0.0),
+            answer_found_in_final=data.get("answer_found_in_final", False),
+            answer_found_in_original=data.get("answer_found_in_original", False),
+            terminated_properly=data.get("terminated_properly", False),
+            matched_answers_final=data.get("matched_answers_final", []),
+            matched_answers_original=data.get("matched_answers_original", []),
+            num_actions=data.get("num_actions", 0),
+            final_table_size=data.get("final_table_size"),
+            execution_error=data.get("execution_error"),
+            evaluation_method=data.get("evaluation_method", "wikitablequestions_logic"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -67,16 +67,16 @@ class ExecutionMetrics:
             Dictionary representation of metrics
         """
         return {
-            'execution_accuracy': self.execution_accuracy,
-            'answer_found_in_final': self.answer_found_in_final,
-            'answer_found_in_original': self.answer_found_in_original,
-            'terminated_properly': self.terminated_properly,
-            'matched_answers_final': self.matched_answers_final,
-            'matched_answers_original': self.matched_answers_original,
-            'num_actions': self.num_actions,
-            'final_table_size': self.final_table_size,
-            'execution_error': self.execution_error,
-            'evaluation_method': self.evaluation_method,
+            "execution_accuracy": self.execution_accuracy,
+            "answer_found_in_final": self.answer_found_in_final,
+            "answer_found_in_original": self.answer_found_in_original,
+            "terminated_properly": self.terminated_properly,
+            "matched_answers_final": self.matched_answers_final,
+            "matched_answers_original": self.matched_answers_original,
+            "num_actions": self.num_actions,
+            "final_table_size": self.final_table_size,
+            "execution_error": self.execution_error,
+            "evaluation_method": self.evaluation_method,
         }
 
 
@@ -94,7 +94,9 @@ class InferenceRequest:
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     @classmethod
-    def from_example(cls, example: Dict[str, Any], index: Optional[int] = None) -> 'InferenceRequest':
+    def from_example(
+        cls, example: Dict[str, Any], index: Optional[int] = None
+    ) -> "InferenceRequest":
         """Create from dataset example (WikiTableQuestions format)
 
         Args:
@@ -104,20 +106,17 @@ class InferenceRequest:
         Returns:
             InferenceRequest instance
         """
-        table = Table(
-            columns=example['table']['header'],
-            rows=example['table']['rows']
-        )
+        table = Table(columns=example["table"]["header"], rows=example["table"]["rows"])
         request_id = f"req_{index}" if index is not None else str(uuid.uuid4())
         return cls(
-            question=example['question'],
+            question=example["question"],
             table=table,
-            ground_truth_answers=example['answers'],
+            ground_truth_answers=example["answers"],
             request_id=request_id,
         )
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'InferenceRequest':
+    def from_dict(cls, data: Dict[str, Any]) -> "InferenceRequest":
         """Create from dictionary (for multiprocessing queue deserialization)
 
         Args:
@@ -126,14 +125,14 @@ class InferenceRequest:
         Returns:
             InferenceRequest instance
         """
-        table = data['table']
+        table = data["table"]
         if isinstance(table, dict):
             table = Table.from_dict(table)
         return cls(
-            question=data['question'],
+            question=data["question"],
             table=table,
-            ground_truth_answers=data['ground_truth_answers'],
-            request_id=data.get('request_id', str(uuid.uuid4())),
+            ground_truth_answers=data["ground_truth_answers"],
+            request_id=data.get("request_id", str(uuid.uuid4())),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -143,10 +142,10 @@ class InferenceRequest:
             Dictionary representation that can be passed through multiprocessing queues
         """
         return {
-            'question': self.question,
-            'table': self.table,  # Keep as Table object (it's a dataclass)
-            'ground_truth_answers': self.ground_truth_answers,
-            'request_id': self.request_id,
+            "question": self.question,
+            "table": self.table,  # Keep as Table object (it's a dataclass)
+            "ground_truth_answers": self.ground_truth_answers,
+            "request_id": self.request_id,
         }
 
 
@@ -166,7 +165,7 @@ class InferenceResult:
     ground_truth_answers: Optional[List[str]] = None  # Expected answers from request
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'InferenceResult':
+    def from_dict(cls, data: Dict[str, Any]) -> "InferenceResult":
         """Create from dictionary (for multiprocessing queue deserialization)
 
         Args:
@@ -176,11 +175,13 @@ class InferenceResult:
             InferenceResult instance
         """
         # Handle error results - create a failed InferenceResult
-        if 'error' in data and 'final_table' not in data:
-            error_msg = data['error']
+        if "error" in data and "final_table" not in data:
+            error_msg = data["error"]
             return cls(
                 action_history=[],
-                final_table=Table(columns=[], rows=[]),  # Empty table for failed results
+                final_table=Table(
+                    columns=[], rows=[]
+                ),  # Empty table for failed results
                 execution_metrics=ExecutionMetrics(
                     execution_accuracy=0.0,
                     answer_found_in_final=False,
@@ -191,28 +192,28 @@ class InferenceResult:
                     num_actions=0,
                     execution_error=error_msg,
                 ),
-                request_id=data.get('request_id'),
-                question=data.get('question'),
-                ground_truth_answers=data.get('ground_truth_answers'),
+                request_id=data.get("request_id"),
+                question=data.get("question"),
+                ground_truth_answers=data.get("ground_truth_answers"),
             )
 
         # Convert metrics if it's a dict
-        metrics = data.get('execution_accuracy_metrics', {})
+        metrics = data.get("execution_accuracy_metrics", {})
         if isinstance(metrics, dict):
             metrics = ExecutionMetrics.from_dict(metrics)
 
         # Convert table if it's a dict
-        final_table = data['final_table']
+        final_table = data["final_table"]
         if isinstance(final_table, dict):
             final_table = Table.from_dict(final_table)
 
         return cls(
-            action_history=data['action_history'],
+            action_history=data["action_history"],
             final_table=final_table,
             execution_metrics=metrics,
-            request_id=data.get('request_id'),
-            question=data.get('question'),
-            ground_truth_answers=data.get('ground_truth_answers'),
+            request_id=data.get("request_id"),
+            question=data.get("question"),
+            ground_truth_answers=data.get("ground_truth_answers"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -222,12 +223,12 @@ class InferenceResult:
             Dictionary representation that can be passed through multiprocessing queues
         """
         return {
-            'action_history': self.action_history,
-            'final_table': self.final_table,  # Keep as Table object
-            'execution_accuracy_metrics': self.execution_metrics.to_dict(),
-            'request_id': self.request_id,
-            'question': self.question,
-            'ground_truth_answers': self.ground_truth_answers,
+            "action_history": self.action_history,
+            "final_table": self.final_table,  # Keep as Table object
+            "execution_accuracy_metrics": self.execution_metrics.to_dict(),
+            "request_id": self.request_id,
+            "question": self.question,
+            "ground_truth_answers": self.ground_truth_answers,
         }
 
     def get_actions(self) -> List[Action]:

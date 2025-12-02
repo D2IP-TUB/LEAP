@@ -21,11 +21,11 @@ class Action:
 
     def __init__(self, name: str, arguments: List[Any]):
         """Initialize with mutable list, convert to immutable internally"""
-        object.__setattr__(self, 'name', name.lower())
-        object.__setattr__(self, 'arguments', tuple(arguments))
+        object.__setattr__(self, "name", name.lower())
+        object.__setattr__(self, "arguments", tuple(arguments))
 
     @classmethod
-    def parse(cls, action_str: str) -> Optional['Action']:
+    def parse(cls, action_str: str) -> Optional["Action"]:
         """
         Parse action string into Action object.
 
@@ -99,11 +99,8 @@ class Action:
 
     @classmethod
     def extract_from_text(
-        cls,
-        text: str,
-        action_name: str,
-        table: Table
-    ) -> Optional['Action']:
+        cls, text: str, action_name: str, table: Table
+    ) -> Optional["Action"]:
         """
         Extract action from free-form text (used in Chain-of-Table).
 
@@ -119,9 +116,7 @@ class Action:
 
     @staticmethod
     def _extract_arguments_from_text(
-        text: str,
-        action_name: str,
-        table: Table
+        text: str, action_name: str, table: Table
     ) -> Optional[List]:
         """
         Internal helper: extract arguments for a specific action from free-form text.
@@ -136,10 +131,10 @@ class Action:
         elif action_name == "select_row":
             # Try various patterns for row indices
             patterns = [
-                r'\[([0-9,\s]+)\]',
-                r'(\d+(?:\s*,\s*\d+)*)',
-                r'rows?\s+(\d+(?:\s*,\s*\d+)*)',
-                r'indices?\s+(\d+(?:\s*,\s*\d+)*)',
+                r"\[([0-9,\s]+)\]",
+                r"(\d+(?:\s*,\s*\d+)*)",
+                r"rows?\s+(\d+(?:\s*,\s*\d+)*)",
+                r"indices?\s+(\d+(?:\s*,\s*\d+)*)",
             ]
 
             for pattern in patterns:
@@ -147,19 +142,23 @@ class Action:
                 if match:
                     try:
                         indices_str = match.group(1)
-                        indices = [int(x.strip()) for x in indices_str.split(',')]
-                        valid_indices = [idx for idx in indices if 0 <= idx < len(table.rows)]
+                        indices = [int(x.strip()) for x in indices_str.split(",")]
+                        valid_indices = [
+                            idx for idx in indices if 0 <= idx < len(table.rows)
+                        ]
                         if valid_indices:
                             return valid_indices
                     except Exception:
                         continue
 
             # Fallback: extract all numbers
-            numbers = re.findall(r'\b(\d+)\b', text)
+            numbers = re.findall(r"\b(\d+)\b", text)
             if numbers:
                 try:
                     indices = [int(x) for x in numbers]
-                    valid_indices = [idx for idx in indices if 0 <= idx < len(table.rows)]
+                    valid_indices = [
+                        idx for idx in indices if 0 <= idx < len(table.rows)
+                    ]
                     if valid_indices:
                         return valid_indices[:5]  # Limit to 5
                 except Exception:
@@ -181,8 +180,8 @@ class Action:
                     for match in matches:
                         if isinstance(match, tuple):
                             for col in match:
-                                if col and col.strip('"\'') in table.columns:
-                                    mentioned_columns.append(col.strip('"\''))
+                                if col and col.strip("\"'") in table.columns:
+                                    mentioned_columns.append(col.strip("\"'"))
                         else:
                             col_matches = re.findall(r'["\']([^"\']+)["\']', match)
                             for col in col_matches:
@@ -211,15 +210,12 @@ class Action:
         if self.name == "end" or not self.arguments:
             return f"{self.name}()"
 
-        args_str = ', '.join(repr(arg) for arg in self.arguments)
+        args_str = ", ".join(repr(arg) for arg in self.arguments)
         return f"{self.name}({args_str})"
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
-        return {
-            "action": self.name,
-            "args": list(self.arguments)
-        }
+        return {"action": self.name, "args": list(self.arguments)}
 
     def apply_to_table(self, table: Table) -> Optional[Table]:
         """
