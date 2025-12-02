@@ -9,9 +9,9 @@ from .inference import (
 )
 
 __all__ = [
-    'Table',
-    'Action',
-    'ExecutionMetrics',
-    'InferenceRequest',
-    'InferenceResult',
+    "Table",
+    "Action",
+    "ExecutionMetrics",
+    "InferenceRequest",
+    "InferenceResult",
 ]

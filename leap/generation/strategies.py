@@ -1,4 +1,3 @@
-
 from typing import Any, Callable, Dict, List, Optional
 
 from leap.evaluation.evaluator import calculate_execution_accuracy_with_dataset_answers
@@ -129,9 +128,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
 
                 if not new_table:
                     validity_failures += 1
-                    print(
-                        f"Step {step}: Failed to apply action: {action.to_string()}"
-                    )
+                    print(f"Step {step}: Failed to apply action: {action.to_string()}")
                     if logging_callback:
                         logging_callback(
                             request_id,
@@ -178,7 +175,9 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                 # If this is a critical error (like max_model_len exceeded), break the loop
                 error_str = str(exc).lower()
                 if "max_model_len" in error_str or "maximum model length" in error_str:
-                    print(f"Critical error detected: {exc}. Stopping generation for this instance.")
+                    print(
+                        f"Critical error detected: {exc}. Stopping generation for this instance."
+                    )
                     break
 
         accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
@@ -318,9 +317,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
 
                 if not new_table:
                     validity_failures += 1
-                    print(
-                        f"Step {step}: Failed to apply action: {action.to_string()}"
-                    )
+                    print(f"Step {step}: Failed to apply action: {action.to_string()}")
                     if logging_callback:
                         logging_callback(
                             request_id,
@@ -367,7 +364,9 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                 # If this is a critical error (like max_model_len exceeded), break the loop
                 error_str = str(exc).lower()
                 if "max_model_len" in error_str or "maximum model length" in error_str:
-                    print(f"Critical error detected: {exc}. Stopping generation for this instance.")
+                    print(
+                        f"Critical error detected: {exc}. Stopping generation for this instance."
+                    )
                     break
 
         accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(

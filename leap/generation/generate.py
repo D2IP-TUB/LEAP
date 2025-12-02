@@ -1,10 +1,14 @@
-
 from vllm import SamplingParams
 from leap.core import Action, Table
-from leap.inference.constraints import create_action_only_constraint_processor, create_constraint_logits_processor
+from leap.inference.constraints import (
+    create_action_only_constraint_processor,
+    create_constraint_logits_processor,
+)
 
 
-async def generate_single_action(worker, prompt, table: Table, request_id, state_machines, action_history=None):
+async def generate_single_action(
+    worker, prompt, table: Table, request_id, state_machines, action_history=None
+):
     """
     Generate single action with or without constraints
 
@@ -23,22 +27,27 @@ async def generate_single_action(worker, prompt, table: Table, request_id, state
 
             # Pass action_history to the constraint processor
             constraint_processor = create_constraint_logits_processor(
-                table, worker.tokenizer, worker.tokenizer_config, request_id, state_machines,
-                action_history, use_global_constraints
+                table,
+                worker.tokenizer,
+                worker.tokenizer_config,
+                request_id,
+                state_machines,
+                action_history,
+                use_global_constraints,
             )
 
             sampling_params = SamplingParams(
                 temperature=0.7,
-                max_tokens=900, # increased for more row params
+                max_tokens=900,  # increased for more row params
                 stop_token_ids=[worker.tokenizer.eos_token_id],
-                logits_processors=[constraint_processor]
+                logits_processors=[constraint_processor],
             )
         else:
             sampling_params = SamplingParams(
                 temperature=0.7,
                 max_tokens=100,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
-                stop=["\n", "Next", "Step"]
+                stop=["\n", "Next", "Step"],
             )
 
         return await worker.generate_text(prompt, request_id, sampling_params)
@@ -78,14 +87,14 @@ async def generate_action_selection(
                 temperature=temperature,
                 max_tokens=20,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
-                logits_processors=[constraint_processor]
+                logits_processors=[constraint_processor],
             )
         else:
             sampling_params = SamplingParams(
                 temperature=temperature,
                 max_tokens=30,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
-                stop=["\n", "Arguments", "Next"]
+                stop=["\n", "Arguments", "Next"],
             )
 
         action_text = await worker.generate_text(prompt, step_id, sampling_params)
@@ -127,7 +136,7 @@ async def generate_action_arguments(
             temperature=temperature,
             max_tokens=900,
             stop_token_ids=[worker.tokenizer.eos_token_id],
-            stop=["\n", "Next", "Step"]
+            stop=["\n", "Next", "Step"],
         )
 
         args_text = await worker.generate_text(prompt, step_id, sampling_params)

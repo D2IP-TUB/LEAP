@@ -7,12 +7,14 @@ from leap.inference.constraints import (
 from leap.config.loader import TokenizerConfig
 from leap.core import Table
 
+
 @pytest.fixture(scope="module")
 def gpt2_tokenizer():
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     return tokenizer
+
 
 @pytest.fixture(scope="module")
 def tokenizer_config(gpt2_tokenizer):
@@ -28,16 +30,22 @@ def tokenizer_config(gpt2_tokenizer):
         closing_quotes_tokens=gpt2_tokenizer.encode('"', add_special_tokens=False),
         action_tokens={
             "select_row": gpt2_tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": gpt2_tokenizer.encode("select_column", add_special_tokens=False),
+            "select_column": gpt2_tokenizer.encode(
+                "select_column", add_special_tokens=False
+            ),
             "end": gpt2_tokenizer.encode("end", add_special_tokens=False),
-        }
+        },
     )
+
 
 def make_table(num_rows=5, columns=None):
     cols = columns or ["foo", "bar", "baz"]
     return Table(columns=cols, rows=[["val" for _ in cols] for _ in range(num_rows)])
 
-def test_initial_allowed_tokens_respect_action_history(gpt2_tokenizer, tokenizer_config):
+
+def test_initial_allowed_tokens_respect_action_history(
+    gpt2_tokenizer, tokenizer_config
+):
     table = make_table()
 
     # With no action history and global constraints enabled (default),

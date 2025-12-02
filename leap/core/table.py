@@ -16,29 +16,23 @@ class Table:
     def __init__(self, columns: List[str], rows: List[List[Any]]):
         """Initialize with mutable lists, convert to immutable internally"""
         # Use object.__setattr__ because dataclass is frozen
-        object.__setattr__(self, 'columns', tuple(columns))
-        object.__setattr__(self, 'rows', tuple(tuple(row) for row in rows))
+        object.__setattr__(self, "columns", tuple(columns))
+        object.__setattr__(self, "rows", tuple(tuple(row) for row in rows))
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Table':
+    def from_dict(cls, data: Dict[str, Any]) -> "Table":
         """Create Table from dictionary format (WikiTableQuestions format)"""
         return cls(
-            columns=data.get('columns', data.get('header', [])),
-            rows=data.get('rows', [])
+            columns=data.get("columns", data.get("header", [])),
+            rows=data.get("rows", []),
         )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format for serialization"""
-        return {
-            'columns': list(self.columns),
-            'rows': [list(row) for row in self.rows]
-        }
+        return {"columns": list(self.columns), "rows": [list(row) for row in self.rows]}
 
     def to_csv(
-        self,
-        max_chars: int = 1500,
-        max_rows: int = 10,
-        crop: bool = True
+        self, max_chars: int = 1500, max_rows: int = 10, crop: bool = True
     ) -> str:
         """
         Serialize table to CSV string with budget constraints.
@@ -78,7 +72,7 @@ class Table:
 
         return current.rstrip()
 
-    def select_rows(self, indices: List[int]) -> Optional['Table']:
+    def select_rows(self, indices: List[int]) -> Optional["Table"]:
         """
         Select specific rows by index.
 
@@ -99,7 +93,7 @@ class Table:
         new_rows = [self.rows[i] for i in valid_indices]
         return Table(columns=list(self.columns), rows=new_rows)
 
-    def select_columns(self, column_names: List[str]) -> Optional['Table']:
+    def select_columns(self, column_names: List[str]) -> Optional["Table"]:
         """
         Select specific columns by name.
 

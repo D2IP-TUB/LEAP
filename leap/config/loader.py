@@ -115,7 +115,9 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
     model_config = _build_model_config(model_section, model_presets, tokenizer)
 
     logging_section = raw_config.get("logging", {})
-    logging_config = _build_logging_config(logging_section, model_config.log_dir, model_config.id)
+    logging_config = _build_logging_config(
+        logging_section, model_config.log_dir, model_config.id
+    )
 
     dataset_section = raw_config.get("dataset")
     if not dataset_section:
@@ -156,7 +158,9 @@ def _load_model_presets(presets_path: Path) -> Dict[str, Any]:
     return data.get("models", data)
 
 
-def _build_tokenizer_config(tokenizer_section: Dict[str, Any], tokenizer) -> TokenizerConfig:
+def _build_tokenizer_config(
+    tokenizer_section: Dict[str, Any], tokenizer
+) -> TokenizerConfig:
     """Build TokenizerConfig from preset data and tokenizer instance."""
     from transformers import PreTrainedTokenizerBase
 
@@ -207,7 +211,9 @@ def _build_tokenizer_config(tokenizer_section: Dict[str, Any], tokenizer) -> Tok
     )
 
 
-def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any], tokenizer) -> ModelConfig:
+def _build_model_config(
+    model_section: Dict[str, Any], presets: Dict[str, Any], tokenizer
+) -> ModelConfig:
     model_id = model_section["id"]
     preset = dict(presets.get(model_id, {}))
     if not preset:
@@ -283,5 +289,3 @@ def _build_dataset_config(raw_dataset_config: Dict[str, Any]) -> DatasetConfig:
         data_files=raw_dataset_config.get("data_files"),
         path=raw_dataset_config.get("path"),
     )
-
-

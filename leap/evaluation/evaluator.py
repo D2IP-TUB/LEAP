@@ -1,6 +1,7 @@
 from leap.evaluation.metrics import to_value_list, check_denotation
 from leap.core import ExecutionMetrics
 
+
 def find_matching_answers(target_values, predicted_values):
     """Find which target answers have matches in predicted values"""
     matched = []
@@ -12,7 +13,10 @@ def find_matching_answers(target_values, predicted_values):
                 break
     return matched
 
-def calculate_execution_accuracy_with_dataset_answers(action_history, final_table, ground_truth_answers, original_table) -> ExecutionMetrics:
+
+def calculate_execution_accuracy_with_dataset_answers(
+    action_history, final_table, ground_truth_answers, original_table
+) -> ExecutionMetrics:
     """Calculate execution accuracy using WikiTableQuestions evaluator logic
 
     Args:
@@ -37,9 +41,11 @@ def calculate_execution_accuracy_with_dataset_answers(action_history, final_tabl
     try:
         # Check if sequence terminated properly
         terminated_properly = (
-            len(action_history) > 1 and  # Must have more than just one action
-            action_history[-1].startswith('end') and  # Last action must be end
-            not all(action.startswith('end') for action in action_history[:-1])  # Not all prior actions are end
+            len(action_history) > 1  # Must have more than just one action
+            and action_history[-1].startswith("end")  # Last action must be end
+            and not all(
+                action.startswith("end") for action in action_history[:-1]
+            )  # Not all prior actions are end
         )
 
         # Convert ground truth answers to Value objects using evaluator logic
@@ -50,10 +56,14 @@ def calculate_execution_accuracy_with_dataset_answers(action_history, final_tabl
         original_predicted_values = to_value_list(original_table_values)
 
         # Check if original table contains the answer using evaluator logic
-        answer_found_in_original = check_denotation(target_values, original_predicted_values)
+        answer_found_in_original = check_denotation(
+            target_values, original_predicted_values
+        )
         if answer_found_in_original:
             # Find which answers matched in original table
-            matched_answers_original = find_matching_answers(target_values, original_predicted_values)
+            matched_answers_original = find_matching_answers(
+                target_values, original_predicted_values
+            )
 
         # Check final table
         if final_table:
@@ -62,10 +72,14 @@ def calculate_execution_accuracy_with_dataset_answers(action_history, final_tabl
             final_predicted_values = to_value_list(final_table_values)
 
             # Check if final table contains the answer using evaluator logic
-            answer_found_in_final = check_denotation(target_values, final_predicted_values)
+            answer_found_in_final = check_denotation(
+                target_values, final_predicted_values
+            )
             if answer_found_in_final:
                 # Find which answers matched in final table
-                matched_answers_final = find_matching_answers(target_values, final_predicted_values)
+                matched_answers_final = find_matching_answers(
+                    target_values, final_predicted_values
+                )
 
             # Calculate execution accuracy
             if terminated_properly and answer_found_in_final:
@@ -88,5 +102,5 @@ def calculate_execution_accuracy_with_dataset_answers(action_history, final_tabl
         num_actions=len(action_history),
         final_table_size=final_table_size,
         execution_error=execution_error,
-        evaluation_method='wikitablequestions_logic',
+        evaluation_method="wikitablequestions_logic",
     )
