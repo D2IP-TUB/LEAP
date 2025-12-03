@@ -60,6 +60,9 @@ class AggregateProfiler:
 
         num_requests = len(self.request_times)
 
+        print("\n" + "=" * 80)
+        print("PERFORMANCE PROFILING SUMMARY")
+        print("=" * 80)
         print("OPERATION BREAKDOWN (per request average):")
         print("-" * 80)
 
