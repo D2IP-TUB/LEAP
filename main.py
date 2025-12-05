@@ -149,8 +149,23 @@ def main():
     model_settings = app_config.model
     generation_settings = app_config.generation
 
-    iterative_strategy = IterativeGenerationStrategy(prompt_builder=runtime.prompt_builder)
-    cot_strategy = ChainOfTableGenerationStrategy(prompt_builder=runtime.prompt_builder)
+    # Create sampling layer if enabled
+    sampling_layer = None
+    if generation_settings.sampling and generation_settings.sampling.enabled:
+        from leap.generation.sampling import SamplingLayer
+
+        print(f"Sampling enabled: {generation_settings.sampling.n_samples} samples per step")
+
+        sampling_layer = SamplingLayer(config=generation_settings.sampling)
+
+    iterative_strategy = IterativeGenerationStrategy(
+        prompt_builder=runtime.prompt_builder,
+        sampling_layer=sampling_layer,
+    )
+    cot_strategy = ChainOfTableGenerationStrategy(
+        prompt_builder=runtime.prompt_builder,
+        sampling_layer=sampling_layer,
+    )
 
     # Initialize the server with typed configs (no more dicts!)
     num_workers = model_settings.hardware.num_workers

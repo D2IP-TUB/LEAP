@@ -53,6 +53,7 @@ class GenerationConfig:
     use_constraints: bool
     use_global_constraints: bool
     use_chain_of_table: bool
+    sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
 
 
 @dataclass(frozen=True)
@@ -126,10 +127,23 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
     run_config = RunConfig(max_examples=raw_config.get("run", {}).get("max_examples"))
 
     generation_section = raw_config.get("generation", {})
+
+    # Load sampling config (import locally to avoid circular dependency)
+    from leap.generation.sampling import SamplingConfig
+
+    sampling_section = generation_section.get("sampling", {})
+    sampling_config = SamplingConfig(
+        enabled=sampling_section.get("enabled", False),
+        n_samples=sampling_section.get("n_samples", 1),
+        per_action_samples=dict(sampling_section.get("per_action_samples", {})),
+        debug=sampling_section.get("debug", False),
+    )
+
     generation_config = GenerationConfig(
         use_constraints=generation_section.get("use_constraints", False),
         use_global_constraints=generation_section.get("use_global_constraints", False),
         use_chain_of_table=generation_section.get("use_chain_of_table", False),
+        sampling=sampling_config,
     )
 
     return AppConfig(

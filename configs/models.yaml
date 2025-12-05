@@ -103,7 +103,7 @@ models:
     hardware:
       num_workers: 2
       tensor_parallel_size: 1
-      gpu_allocation: [0, 1, 2, 3]
+      gpu_allocation: [2, 3]
       max_concurrent_requests: 32
     tokenizer:
       llama_tokenizer: true
