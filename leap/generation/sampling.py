@@ -9,6 +9,7 @@ This module provides a minimal sampling mechanism that:
 The design is intentionally simple but allows for extension through subclassing.
 """
 
+import asyncio
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -272,62 +273,73 @@ class SamplingLayer:
         2. Build fresh prompt with transformed context
         3. Generate action
 
+        All samples are generated concurrently for maximum throughput.
+
         Override to customize generation behavior.
         """
-        candidates = []
 
-        for sample_idx in range(n):
-            # Transform context for this sample
-            modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
+        async def _generate_single_sample(sample_idx: int) -> Optional[Action]:
+            """Generate a single sample with its own context transformation."""
+            try:
+                # Transform context for this sample
+                modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
 
-            # Build fresh prompt with modified context
-            prompt = prompt_builder.build_iterative_prompt(
-                question=question,
-                table=modified_table,
-                action_history=modified_history,
-                worker=worker,
-                step=step,
-            )
-
-            # Generate single action with this prompt
-            if worker.use_constraints:
-                constraint_processor = create_constraint_logits_processor(
-                    modified_table,
-                    worker.tokenizer,
-                    worker.tokenizer_config,
-                    f"{request_id}_sample{sample_idx}",
-                    state_machines,
-                    modified_history,
-                    worker.use_global_constraints,
-                )
-                sampling_params = SamplingParams(
-                    temperature=0.7,
-                    max_tokens=900,
-                    stop_token_ids=[worker.tokenizer.eos_token_id],
-                    logits_processors=[constraint_processor],
-                    n=1,
-                )
-            else:
-                sampling_params = SamplingParams(
-                    temperature=0.7,
-                    max_tokens=100,
-                    stop_token_ids=[worker.tokenizer.eos_token_id],
-                    stop=["\n", "Next", "Step"],
-                    n=1,
+                # Build fresh prompt with modified context
+                prompt = prompt_builder.build_iterative_prompt(
+                    question=question,
+                    table=modified_table,
+                    action_history=modified_history,
+                    worker=worker,
+                    step=step,
                 )
 
-            result_generator = worker.engine.generate(prompt, sampling_params, f"{request_id}_sample{sample_idx}")
-            final_result = None
-            async for result in result_generator:
-                final_result = result
+                # Generate single action with this prompt
+                if worker.use_constraints:
+                    constraint_processor = create_constraint_logits_processor(
+                        modified_table,
+                        worker.tokenizer,
+                        worker.tokenizer_config,
+                        f"{request_id}_sample{sample_idx}",
+                        state_machines,
+                        modified_history,
+                        worker.use_global_constraints,
+                    )
+                    sampling_params = SamplingParams(
+                        temperature=0.7,
+                        max_tokens=900,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        logits_processors=[constraint_processor],
+                        n=1,
+                    )
+                else:
+                    sampling_params = SamplingParams(
+                        temperature=0.7,
+                        max_tokens=100,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        stop=["\n", "Next", "Step"],
+                        n=1,
+                    )
 
-            if final_result and final_result.outputs:
-                try:
+                result_generator = worker.engine.generate(prompt, sampling_params, f"{request_id}_sample{sample_idx}")
+                final_result = None
+                async for result in result_generator:
+                    final_result = result
+
+                if final_result and final_result.outputs:
                     action = Action.parse(final_result.outputs[0].text.strip())
-                    if action:
-                        candidates.append(action)
-                except Exception:
-                    pass
+                    return action
+                return None
+            except Exception:
+                return None
+
+        # Create all sample generation tasks concurrently
+        tasks = [_generate_single_sample(i) for i in range(n)]
+
+        # Execute all samples concurrently and wait for all to complete
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Filter out None values and exceptions, keeping only valid actions
+        candidates = [r for r in results if r is not None and not isinstance(r, Exception)]
 
         return candidates
 
@@ -390,64 +402,75 @@ class SamplingLayer:
         1. Transform context using transform_context()
         2. Build fresh args prompt with transformed context
         3. Generate arguments
+
+        All samples are generated concurrently for maximum throughput.
         """
-        candidates = []
 
-        for sample_idx in range(n):
-            # Transform context for this sample
-            modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
+        async def _generate_single_argument_set(sample_idx: int) -> Optional[Action]:
+            """Generate a single argument set with its own context transformation."""
+            try:
+                # Transform context for this sample
+                modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
 
-            # Build fresh args prompt with modified context
-            args_prompt = prompt_builder.build_cot_arguments_prompt(
-                question=question,
-                table=modified_table,
-                action_history=modified_history,
-                action_name=action_name,
-                worker=worker,
-            )
-
-            step_id = f"{request_id}_args_step{step}_sample{sample_idx}"
-
-            # Generate single argument set
-            if worker.use_constraints:
-                constraint_processor = create_constraint_logits_processor(
-                    modified_table,
-                    worker.tokenizer,
-                    worker.tokenizer_config,
-                    step_id,
-                    state_machines,
-                    modified_history,
-                    worker.use_global_constraints,
-                )
-                sampling_params = SamplingParams(
-                    temperature=temperature,
-                    max_tokens=900,
-                    stop_token_ids=[worker.tokenizer.eos_token_id],
-                    logits_processors=[constraint_processor],
-                    n=1,
-                )
-            else:
-                sampling_params = SamplingParams(
-                    temperature=temperature,
-                    max_tokens=100,
-                    stop_token_ids=[worker.tokenizer.eos_token_id],
-                    stop=["\n", "Next", "Step"],
-                    n=1,
+                # Build fresh args prompt with modified context
+                args_prompt = prompt_builder.build_cot_arguments_prompt(
+                    question=question,
+                    table=modified_table,
+                    action_history=modified_history,
+                    action_name=action_name,
+                    worker=worker,
                 )
 
-            result_generator = worker.engine.generate(args_prompt, sampling_params, step_id)
-            final_result = None
-            async for result in result_generator:
-                final_result = result
+                step_id = f"{request_id}_args_step{step}_sample{sample_idx}"
 
-            if final_result and final_result.outputs:
-                try:
+                # Generate single argument set
+                if worker.use_constraints:
+                    constraint_processor = create_constraint_logits_processor(
+                        modified_table,
+                        worker.tokenizer,
+                        worker.tokenizer_config,
+                        step_id,
+                        state_machines,
+                        modified_history,
+                        worker.use_global_constraints,
+                    )
+                    sampling_params = SamplingParams(
+                        temperature=temperature,
+                        max_tokens=900,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        logits_processors=[constraint_processor],
+                        n=1,
+                    )
+                else:
+                    sampling_params = SamplingParams(
+                        temperature=temperature,
+                        max_tokens=100,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        stop=["\n", "Next", "Step"],
+                        n=1,
+                    )
+
+                result_generator = worker.engine.generate(args_prompt, sampling_params, step_id)
+                final_result = None
+                async for result in result_generator:
+                    final_result = result
+
+                if final_result and final_result.outputs:
                     full_action_str = f"{action_name}({final_result.outputs[0].text.strip()})"
                     action = Action.parse(full_action_str)
-                    if action:
-                        candidates.append(action)
-                except Exception:
-                    pass
+                    return action
+                return None
+            except Exception:
+                return None
+
+        # Create all argument generation tasks concurrently
+        tasks = [_generate_single_argument_set(i) for i in range(n)]
+
+        # Execute all samples concurrently and wait for all to complete
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Filter out None values and exceptions, keeping only valid actions
+        candidates = [r for r in results if r is not None and not isinstance(r, Exception)]
 
         return candidates
 
