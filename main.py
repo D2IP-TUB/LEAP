@@ -152,11 +152,16 @@ def main():
     # Create sampling layer if enabled
     sampling_layer = None
     if generation_settings.sampling and generation_settings.sampling.enabled:
-        from leap.generation.sampling import SamplingLayer
+        if generation_settings.sampling.shuffle_invariant:
+            from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
 
-        print(f"Sampling enabled: {generation_settings.sampling.n_samples} samples per step")
+            print(f"Shuffle-invariant sampling enabled: {generation_settings.sampling.n_samples} samples per step")
+            sampling_layer = ShuffleInvariantSamplingLayer(config=generation_settings.sampling)
+        else:
+            from leap.generation.sampling import SamplingLayer
 
-        sampling_layer = SamplingLayer(config=generation_settings.sampling)
+            print(f"Sampling enabled: {generation_settings.sampling.n_samples} samples per step")
+            sampling_layer = SamplingLayer(config=generation_settings.sampling)
 
     iterative_strategy = IterativeGenerationStrategy(
         prompt_builder=runtime.prompt_builder,

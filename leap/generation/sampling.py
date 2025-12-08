@@ -30,6 +30,7 @@ class SamplingConfig:
     n_samples: int = 1
     per_action_samples: dict[str, int] = None
     debug: bool = False  # Print detailed sampling information
+    shuffle_invariant: bool = False  # Use shuffle-invariant sampling layer
 
     def __post_init__(self):
         if self.per_action_samples is None:
