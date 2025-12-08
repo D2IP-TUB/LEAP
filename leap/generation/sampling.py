@@ -18,6 +18,7 @@ from vllm import SamplingParams
 from leap.core import Action, Table
 from leap.inference.constraints import (
     create_action_only_constraint_processor,
+    create_arguments_only_constraint_processor,
     create_constraint_logits_processor,
 )
 
@@ -426,14 +427,15 @@ class SamplingLayer:
 
                 # Generate single argument set
                 if worker.use_constraints:
-                    constraint_processor = create_constraint_logits_processor(
+                    # Use arguments-only constraint processor for two-phase generation
+                    # This prevents the model from generating the action name again
+                    constraint_processor = create_arguments_only_constraint_processor(
                         modified_table,
                         worker.tokenizer,
                         worker.tokenizer_config,
+                        action_name,
                         step_id,
                         state_machines,
-                        modified_history,
-                        worker.use_global_constraints,
                     )
                     sampling_params = SamplingParams(
                         temperature=temperature,
@@ -457,7 +459,14 @@ class SamplingLayer:
                     final_result = result
 
                 if final_result and final_result.outputs:
-                    full_action_str = f"{action_name}({final_result.outputs[0].text.strip()})"
+                    args_text = final_result.outputs[0].text.strip()
+
+                    # Clean up: Remove action name prefix if model incorrectly generated it
+                    # e.g., "select_column ([ "Team" ]" -> "[ "Team" ]"
+                    # This happens when constraints force full format but we only want args
+                    args_text = self._clean_argument_text(args_text, action_name)
+
+                    full_action_str = f"{action_name}({args_text})"
                     action = Action.parse(full_action_str)
                     return action
                 return None
@@ -480,8 +489,9 @@ class SamplingLayer:
         valid = []
         for action in candidates:
             try:
-                _ = action.apply_to_table(table)
-                valid.append(action)
+                result = action.apply_to_table(table)
+                if result is not None:
+                    valid.append(action)
             except Exception:
                 pass
         return valid
@@ -502,3 +512,42 @@ class SamplingLayer:
         # Return winner
         winner_str = max(vote_counts, key=vote_counts.get)
         return action_map[winner_str], vote_counts[winner_str]
+
+    @staticmethod
+    def _clean_argument_text(args_text: str, action_name: str) -> str:
+        """
+        Clean argument text by removing action name prefix if present.
+
+        In two-phase generation, the model sometimes generates:
+          "select_column ([ \"Team\" ]"
+        when we only want:
+          "[ \"Team\" ]"
+
+        This happens because constraints expect full format but we're only
+        generating arguments in phase 2.
+
+        Args:
+            args_text: Raw generated text from model
+            action_name: The action name (e.g., "select_row", "select_column")
+
+        Returns:
+            Cleaned argument text
+        """
+        import re
+
+        # Remove action name prefix (with optional space and opening paren)
+        # Patterns to clean:
+        # - "select_column ([ "Team" ]" -> "[ "Team" ]"
+        # - "select_column([ "Team" ]" -> "[ "Team" ]"
+        # - "select_([ "0" ]" -> "[ "0" ]"  (partial action name)
+
+        # First, try exact action name match
+        pattern = rf"^\s*{re.escape(action_name)}\s*\(?\s*"
+        cleaned = re.sub(pattern, "", args_text, count=1)
+
+        # If that didn't match, try partial match "select_"
+        if cleaned == args_text and args_text.startswith("select_"):
+            # Remove "select_" or "select_row" or "select_column" prefix
+            cleaned = re.sub(r"^\s*select_[a-z]*\s*\(?\s*", "", args_text, count=1)
+
+        return cleaned.strip()

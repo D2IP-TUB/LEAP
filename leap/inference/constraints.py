@@ -486,3 +486,188 @@ def create_action_only_constraint_processor(tokenizer, request_id, state_machine
         return logits + mask
 
     return action_constraint_processor
+
+
+# NEW: Arguments-only constraint for CoT arguments step
+class ArgumentsOnlyConstraintStateMachine:
+    """
+    Specialized state machine for constraining only the arguments part.
+
+    For two-phase generation where action name is already determined,
+    we only need to constrain the arguments like: [ "row 0", "row 1" ]
+
+    This avoids the model generating the action name again.
+    """
+
+    def __init__(self, table: Table, tokenizer, tokenizer_config: TokenizerConfig, action_name: str):
+        self.tokenizer = tokenizer
+        self.tokenizer_config = tokenizer_config
+        self.action_name = action_name
+        self.table = table
+        self.reset()
+
+        # Set up valid parameters based on action type
+        if action_name == "select_row":
+            num_rows = min(500, len(table.rows))
+            self.valid_params = [f"row {i}" for i in range(num_rows)]
+        elif action_name == "select_column":
+            self.valid_params = list(table.columns)
+        else:  # end
+            self.valid_params = []
+
+        # Build token maps
+        self.param_token_map = {}
+        for param in self.valid_params:
+            quoted = f'"{param}"'
+            tokens = tokenizer.encode(quoted, add_special_tokens=False)
+            if tokens:
+                self.param_token_map[param] = tokens
+
+    def reset(self):
+        self.state = "start"
+        self.generated_tokens = []
+        self.finished = False
+        self.selected_params = set()
+        self.current_param = []
+        self.param_complete = False
+        self.expecting_parameter = False
+
+    def update_state(self, token):
+        if self.finished:
+            return
+
+        self.generated_tokens.append(token)
+
+        if self.state == "start":
+            self._handle_start(token)
+        elif self.state == "in_params":
+            self._handle_params(token)
+        elif self.state == "in_paren_close":
+            self._handle_paren_close(token)
+
+    def _handle_start(self, token):
+        # Expect opening bracket: [
+        if token == self.tokenizer_config.list_open_id:
+            self.state = "in_params"
+            self.current_param = []
+            self.param_complete = False
+            self.expecting_parameter = True
+
+    def _handle_params(self, token):
+        if not self.current_param and self.expecting_parameter:
+            if token == self.tokenizer_config.quote_id:
+                self.current_param.append(token)
+            return
+
+        if self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
+            if token in self.tokenizer_config.closing_quotes_tokens:
+                self.current_param.append(token)
+                param_text = self.tokenizer.decode(self.current_param)
+                clean_param = param_text.strip('"')
+
+                is_valid = False
+                for param, tokens in self.param_token_map.items():
+                    exp = (
+                        (self.tokenizer_config.is_llama_tokenizer and clean_param == param) or self.current_param == tokens
+                    ) and param not in self.selected_params
+                    if exp:
+                        self.selected_params.add(param)
+                        self.param_complete = True
+                        self.expecting_parameter = False
+                        is_valid = True
+                        break
+
+                if not is_valid:
+                    self.param_complete = False
+
+                self.current_param = []
+            else:
+                self.current_param.append(token)
+        elif self.param_complete:
+            if token == self.tokenizer_config.comma_id:
+                self.param_complete = False
+                self.expecting_parameter = True
+            elif token == self.tokenizer_config.list_close_id:
+                self.state = "finish"
+                self.finished = True
+
+    def _handle_paren_close(self, token):
+        # Not used in arguments-only mode
+        pass
+
+    def allowed_tokens(self):
+        if self.finished:
+            return [self.tokenizer.eos_token_id]
+
+        if self.state == "start":
+            # Must start with [
+            return [self.tokenizer_config.list_open_id]
+
+        elif self.state == "in_params":
+            allowed = set()
+            remaining_params = set(self.valid_params) - self.selected_params
+
+            if not self.current_param and self.expecting_parameter:
+                if remaining_params:
+                    allowed.add(self.tokenizer_config.quote_id)
+            elif self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
+                for param in remaining_params:
+                    full_seq = self.param_token_map[param]
+                    if len(self.current_param) < len(full_seq) and full_seq[: len(self.current_param)] == self.current_param:
+                        allowed.add(full_seq[len(self.current_param)])
+
+                candidate = self.current_param + [self.tokenizer_config.quote_id]
+                for param in remaining_params:
+                    if self.param_token_map[param] == candidate:
+                        allowed.add(self.tokenizer_config.quote_id)
+                        break
+            elif self.param_complete:
+                if remaining_params:
+                    allowed.add(self.tokenizer_config.comma_id)
+                allowed.add(self.tokenizer_config.list_close_id)
+
+            if allowed:
+                return list(allowed)
+            return [self.tokenizer.eos_token_id]
+
+        return [self.tokenizer.eos_token_id]
+
+
+def create_arguments_only_constraint_processor(
+    table, tokenizer, tokenizer_config: TokenizerConfig, action_name: str, request_id, state_machines_dict
+):
+    """
+    Create a logits processor for constraining only arguments (not action name).
+
+    Used in two-phase generation where action name is already determined.
+    """
+
+    def arguments_constraint_processor(prompt_token_ids, generated_token_ids, logits):
+        # Get or create state machine for this request
+        if request_id not in state_machines_dict:
+            state_machines_dict[request_id] = ArgumentsOnlyConstraintStateMachine(table, tokenizer, tokenizer_config, action_name)
+
+        sm = state_machines_dict[request_id]
+
+        # Update state machine with generated tokens
+        if len(generated_token_ids) > len(sm.generated_tokens):
+            new_tokens = generated_token_ids[len(sm.generated_tokens) :]
+            for token in new_tokens:
+                sm.update_state(token)
+
+        # Get allowed tokens and mask logits
+        try:
+            allowed_tokens = sm.allowed_tokens()
+        except Exception as e:
+            print(f"Error in arguments constraint processing: {e}")
+            return logits
+
+        # Create mask
+        mask = torch.full_like(logits, float("-inf"))
+        for token_id in allowed_tokens:
+            if token_id < len(logits):
+                mask[token_id] = 0.0
+
+        return logits + mask
+
+    return arguments_constraint_processor

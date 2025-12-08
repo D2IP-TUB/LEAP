@@ -34,6 +34,8 @@ class Action:
         - "select_row([0, 1, 2])"
         - "select_column(['col1', 'col2'])"
         - "action(arg1, arg2, arg3)"
+
+        For select_row, string digits like "0" are automatically converted to int.
         """
         try:
             action_str = action_str.strip()
@@ -59,6 +61,11 @@ class Action:
             if args_str.startswith("[") and args_str.endswith("]"):
                 args_str = args_str.replace("\\", "\\\\")
                 args_list = ast.literal_eval(args_str)
+
+                # Convert string digits to ints for select_row
+                if action_name.lower() == "select_row":
+                    args_list = cls._normalize_row_indices(args_list)
+
                 return cls(action_name, args_list)
 
             # Comma-separated format: arg1, arg2, arg3
@@ -67,10 +74,39 @@ class Action:
             else:
                 args_list = [args_str]
 
+            # Convert string digits to ints for select_row
+            if action_name.lower() == "select_row":
+                args_list = cls._normalize_row_indices(args_list)
+
             return cls(action_name, args_list)
 
         except Exception:
             return None
+
+    @staticmethod
+    def _normalize_row_indices(args_list: List) -> List:
+        """
+        Normalize row indices by converting string digits to ints.
+
+        This handles the constraint system output format where indices
+        come as strings like ["0", "1"] and converts them to [0, 1].
+
+        Args:
+            args_list: List of arguments that may contain string digits
+
+        Returns:
+            List with string digits converted to ints
+        """
+        normalized = []
+        for arg in args_list:
+            if isinstance(arg, str) and arg.isdigit():
+                normalized.append(int(arg))
+            elif isinstance(arg, int):
+                normalized.append(arg)
+            else:
+                # Non-numeric string - keep as is (will fail validation later)
+                normalized.append(arg)
+        return normalized
 
     @classmethod
     def parse_name_only(cls, action_str: str) -> Optional[str]:

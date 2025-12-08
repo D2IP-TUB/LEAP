@@ -326,16 +326,29 @@ class ShuffleInvariantSamplingLayer(SamplingLayer):
             return Action(action.name, sorted_indices)
 
         # Validate indices are in bounds
+        # Note: Handle both ints and string digits (for robustness, though parse should normalize)
         n_rows = len(permutation)
+        validated_indices = []
         for idx in action.arguments:
-            if not isinstance(idx, int) or idx < 0 or idx >= n_rows:
+            # Convert string digits to int if needed (defense in depth)
+            if isinstance(idx, str) and idx.isdigit():
+                idx = int(idx)
+            elif not isinstance(idx, int):
+                if self.config.debug:
+                    print(f"[SHUFFLE DEBUG] Index {idx} is not an integer or digit string")
+                return None
+
+            # Check bounds
+            if idx < 0 or idx >= n_rows:
                 if self.config.debug:
                     print(f"[SHUFFLE DEBUG] Index {idx} out of bounds [0, {n_rows})")
                 return None
 
-        # Map shuffled indices to original indices
+            validated_indices.append(idx)
+
+        # Map shuffled indices to original indices using validated indices
         try:
-            original_indices = [permutation[idx] for idx in action.arguments]
+            original_indices = [permutation[idx] for idx in validated_indices]
             # Sort for canonical representation
             original_indices.sort()
             mapped_action = Action(action.name, tuple(original_indices))

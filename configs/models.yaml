@@ -101,10 +101,10 @@ models:
     log_dir: "table_logs_mixtral_instruct"
     instruct: true
     hardware:
-      num_workers: 2
+      num_workers: 1
       tensor_parallel_size: 1
       gpu_allocation: [2, 3]
-      max_concurrent_requests: 256
+      max_concurrent_requests: 1
     tokenizer:
       llama_tokenizer: true
       closing_quote_token_ids:
