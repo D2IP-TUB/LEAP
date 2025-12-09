@@ -26,6 +26,14 @@ generation:
   use_constraints: true
   use_global_constraints: true
   use_chain_of_table: false
+  sampling:
+    enabled: true
+    n_samples: 8
+    per_action_samples:
+      select_row: 8
+      select_column: 8
+      end: 1
+    debug: true 
 
 logging:
   enable_logging: true

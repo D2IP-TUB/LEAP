@@ -162,6 +162,7 @@ class InferenceResult:
     question: Optional[str] = None  # Original question from request
     ground_truth_answers: Optional[List[str]] = None  # Expected answers from request
     profiling_data: Optional[Dict[str, Any]] = None  # Profiling timings from worker
+    sampling_metadata: Optional[List[Any]] = None  # List of SamplingResult objects
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "InferenceResult":
@@ -212,6 +213,7 @@ class InferenceResult:
             question=data.get("question"),
             ground_truth_answers=data.get("ground_truth_answers"),
             profiling_data=data.get("profiling_data"),
+            sampling_metadata=data.get("sampling_metadata"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -228,6 +230,7 @@ class InferenceResult:
             "question": self.question,
             "ground_truth_answers": self.ground_truth_answers,
             "profiling_data": self.profiling_data,
+            "sampling_metadata": self.sampling_metadata,
         }
 
     def get_actions(self) -> List[Action]:
