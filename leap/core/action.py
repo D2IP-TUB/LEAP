@@ -1,9 +1,11 @@
 """Action abstraction - unified action parsing and validation"""
 
 import ast
-import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+
+# Import registry - will auto-register all actions
+from leap.core.actions import REGISTRY
 
 from .table import Table
 
@@ -113,25 +115,10 @@ class Action:
         """
         Parse action string and return only the action name.
 
-        Replaces generate.parse_action_name()
-
+        Delegates to registry for fuzzy matching.
         Used for fuzzy matching when full parsing fails.
         """
-        action_str = action_str.strip().lower()
-
-        # Exact matches
-        if action_str in ["select_row", "select_column", "end"]:
-            return action_str
-
-        # Fuzzy matching
-        if "select_row" in action_str or "row" in action_str:
-            return "select_row"
-        elif "select_column" in action_str or "column" in action_str:
-            return "select_column"
-        elif "end" in action_str or "finish" in action_str or "done" in action_str:
-            return "end"
-
-        return None
+        return REGISTRY.parse_action_name_fuzzy(action_str)
 
     @classmethod
     def extract_from_text(cls, text: str, action_name: str, table: Table) -> Optional["Action"]:
@@ -153,81 +140,13 @@ class Action:
         """
         Internal helper: extract arguments for a specific action from free-form text.
 
-        This is the logic from generate.extract_arguments_from_text()
+        Delegates to registry action definitions.
         """
-        text = text.strip()
+        action_def = REGISTRY.get(action_name)
+        if action_def is None:
+            return None
 
-        if action_name == "end":
-            return []
-
-        elif action_name == "select_row":
-            # Try various patterns for row indices
-            patterns = [
-                r"\[([0-9,\s]+)\]",
-                r"(\d+(?:\s*,\s*\d+)*)",
-                r"rows?\s+(\d+(?:\s*,\s*\d+)*)",
-                r"indices?\s+(\d+(?:\s*,\s*\d+)*)",
-            ]
-
-            for pattern in patterns:
-                match = re.search(pattern, text, re.IGNORECASE)
-                if match:
-                    try:
-                        indices_str = match.group(1)
-                        indices = [int(x.strip()) for x in indices_str.split(",")]
-                        valid_indices = [idx for idx in indices if 0 <= idx < len(table.rows)]
-                        if valid_indices:
-                            return valid_indices
-                    except Exception:
-                        continue
-
-            # Fallback: extract all numbers
-            numbers = re.findall(r"\b(\d+)\b", text)
-            if numbers:
-                try:
-                    indices = [int(x) for x in numbers]
-                    valid_indices = [idx for idx in indices if 0 <= idx < len(table.rows)]
-                    if valid_indices:
-                        return valid_indices[:5]  # Limit to 5
-                except Exception:
-                    pass
-
-        elif action_name == "select_column":
-            # Try various patterns for column names
-            patterns = [
-                r'\[(["\'][^"\']+["\'](?:\s*,\s*["\'][^"\']+["\'])*)\]',
-                r'["\']([^"\']+)["\'](?:\s*,\s*["\']([^"\']+)["\'])*',
-                r'columns?\s+(["\'][^"\']+["\'](?:\s*,\s*["\'][^"\']+["\'])*)',
-            ]
-
-            mentioned_columns = []
-
-            for pattern in patterns:
-                matches = re.findall(pattern, text, re.IGNORECASE)
-                if matches:
-                    for match in matches:
-                        if isinstance(match, tuple):
-                            for col in match:
-                                if col and col.strip("\"'") in table.columns:
-                                    mentioned_columns.append(col.strip("\"'"))
-                        else:
-                            col_matches = re.findall(r'["\']([^"\']+)["\']', match)
-                            for col in col_matches:
-                                if col in table.columns:
-                                    mentioned_columns.append(col)
-
-            if mentioned_columns:
-                return list(set(mentioned_columns))
-
-            # Fallback: check if column names appear in text
-            for col in table.columns:
-                if col.lower() in text.lower():
-                    mentioned_columns.append(col)
-
-            if mentioned_columns:
-                return list(set(mentioned_columns[:3]))  # Limit to 3
-
-        return None
+        return action_def.extract_arguments_from_text(text, table)
 
     def to_string(self) -> str:
         """
@@ -249,42 +168,25 @@ class Action:
         """
         Apply this action to a table and return new table.
 
-        Replaces table.apply_action()
+        Delegates to registry action definitions.
         """
-        if self.name == "select_row":
-            return table.select_rows(list(self.arguments))
-        elif self.name == "select_column":
-            return table.select_columns(list(self.arguments))
-        elif self.name == "end":
-            return table
-        return None
+        action_def = REGISTRY.get(self.name)
+        if action_def is None:
+            return None
+
+        return action_def.apply(table, list(self.arguments))
 
     def is_valid_for_table(self, table: Table) -> bool:
         """
         Validate that this action can be applied to the given table.
+
+        Delegates to registry action definitions.
         """
-        if self.name == "end":
-            return True
-        elif self.name == "select_row":
-            # Check if all indices are valid
-            for idx in self.arguments:
-                if isinstance(idx, int):
-                    if idx < 0 or idx >= len(table.rows):
-                        return False
-                elif isinstance(idx, str) and idx.isdigit():
-                    idx_int = int(idx)
-                    if idx_int < 0 or idx_int >= len(table.rows):
-                        return False
-                else:
-                    return False
-            return len(self.arguments) > 0
-        elif self.name == "select_column":
-            # Check if all columns exist
-            for col in self.arguments:
-                if col not in table.columns:
-                    return False
-            return len(self.arguments) > 0
-        return False
+        action_def = REGISTRY.get(self.name)
+        if action_def is None:
+            return False
+
+        return action_def.validate(table, list(self.arguments))
 
     def __repr__(self) -> str:
         return f"Action({self.name}, args={list(self.arguments)})"

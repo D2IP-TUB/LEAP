@@ -108,6 +108,14 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
     """
     raw_config = _load_app_config(config_path)
 
+    # Configure enabled actions early, before building model config
+    from leap.core.actions import REGISTRY
+
+    generation_section = raw_config.get("generation", {})
+    enabled_actions = generation_section.get("enabled_actions")
+    if enabled_actions:
+        REGISTRY.set_enabled_actions(enabled_actions)
+
     model_section = raw_config.get("model")
     if not model_section or "id" not in model_section:
         raise ValueError("Configuration must define 'model.id'")
@@ -203,12 +211,12 @@ def _build_tokenizer_config(tokenizer_section: Dict[str, Any], tokenizer) -> Tok
 
     closing_quotes_tokens = [int(v) for v in closing_quote_token_ids.values()]
 
-    # Build action tokens
-    action_tokens = {
-        "select_row": tokenizer.encode("select_row", add_special_tokens=False),
-        "select_column": tokenizer.encode("select_column", add_special_tokens=False),
-        "end": tokenizer.encode("end", add_special_tokens=False),
-    }
+    # Build action tokens dynamically from registry
+    from leap.core.actions import REGISTRY
+
+    action_tokens = {}
+    for action_name in REGISTRY.get_enabled_names():
+        action_tokens[action_name] = tokenizer.encode(action_name, add_special_tokens=False)
 
     return TokenizerConfig(
         is_llama_tokenizer=is_llama_tokenizer,

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from leap.core import Table
+from leap.core.actions import REGISTRY
 
 
 @dataclass
@@ -78,16 +79,11 @@ class PromptBuilder:
         if worker.use_constraints:
             return "Next action: "
 
-        base = (
-            "What should be the next action to answer this question? Choose from: "
-            'select_row([row_indices]), select_column(["column_names"]), or end(). '
-            "Next action: "
-        )
-        if fallback:
-            return base.replace(
-                "What should be the next action to answer this question? ",
-                "What should be the next action? ",
-            )
+        # Get action prompt text from registry
+        actions_text = REGISTRY.get_prompt_text_iterative()
+
+        question_prefix = "What should be the next action? " if fallback else "What should be the next action to answer this question? "
+        base = f"{question_prefix}Choose from: {actions_text}. Next action: "
         return base
 
     @staticmethod
@@ -113,7 +109,9 @@ class PromptBuilder:
                 prompt += f"{idx + 1}. {action}\n"
             prompt += "\n"
 
-        prompt += "Available actions: select_row, select_column, end\n"
+        # Get action list from registry
+        actions_text = REGISTRY.get_prompt_text_cot()
+        prompt += f"Available actions: {actions_text}\n"
         instruction_prompt = "What action should be performed next to answer the question?\n"
         instruction_prompt += "Action: "
 
@@ -122,7 +120,7 @@ class PromptBuilder:
             table_str = table.to_csv(max_chars=self.cot_settings.action_fallback_table_chars)
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
             prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
-            prompt += "Available actions: select_row, select_column, end\n"
+            prompt += f"Available actions: {actions_text}\n"
             instruction_prompt = "What action should be performed next?\nAction: "
 
         return self._append_instruction(prompt, instruction_prompt)

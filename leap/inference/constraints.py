@@ -2,6 +2,7 @@ import torch
 
 from leap.config.loader import TokenizerConfig
 from leap.core import Table
+from leap.core.actions import REGISTRY
 
 
 class ConstraintStateMachine:
@@ -28,29 +29,29 @@ class ConstraintStateMachine:
 
         self.reset()
 
-        # Extract table dimensions
-        num_rows = min(500, len(table.rows))
-        columns = list(table.columns)
+        # Generate valid parameters from registry
+        self.valid_params = REGISTRY.generate_constraint_params(table)
 
-        self.valid_params = {
-            "select_row": [f"row {i}" for i in range(num_rows)],
-            "select_column": columns,
-            "end": [],
-        }
+        # Limit rows for performance (max 500)
+        if "select_row" in self.valid_params:
+            max_rows = min(500, len(self.valid_params["select_row"]))
+            self.valid_params["select_row"] = self.valid_params["select_row"][:max_rows]
 
         self.column_token_map = {}
-        for col in self.valid_params["select_column"]:
-            quoted = f'"{col}"'
-            tokens = tokenizer.encode(quoted, add_special_tokens=False)
-            if tokens:
-                self.column_token_map[col] = tokens
+        if "select_column" in self.valid_params:
+            for col in self.valid_params["select_column"]:
+                quoted = f'"{col}"'
+                tokens = tokenizer.encode(quoted, add_special_tokens=False)
+                if tokens:
+                    self.column_token_map[col] = tokens
 
         self.row_token_map = {}
-        for row in self.valid_params["select_row"]:
-            quoted = f'"{row}"'
-            tokens = tokenizer.encode(quoted, add_special_tokens=False)
-            if tokens:
-                self.row_token_map[row] = tokens
+        if "select_row" in self.valid_params:
+            for row in self.valid_params["select_row"]:
+                quoted = f'"{row}"'
+                tokens = tokenizer.encode(quoted, add_special_tokens=False)
+                if tokens:
+                    self.row_token_map[row] = tokens
 
     def _parse_action_history(self, action_history):
         """Parse action history to extract previously used action types"""
@@ -358,13 +359,18 @@ class ActionOnlyConstraintStateMachine:
 
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
+        # Pre-compute action tokens from enabled actions
+        self.action_tokens = {}
+        for action_name in REGISTRY.get_enabled_names():
+            self.action_tokens[action_name] = tokenizer.encode(action_name, add_special_tokens=False)
         self.reset()
 
     def reset(self):
         self.state = "start"
         self.generated_tokens = []
         self.finished = False
-        self.possible_actions = ["select_row", "select_column", "end"]
+        # Get enabled action names from registry
+        self.possible_actions = REGISTRY.get_enabled_names()
         self.action_prefix = []
 
     def update_state(self, token):
@@ -379,15 +385,9 @@ class ActionOnlyConstraintStateMachine:
             self._handle_action(token)
 
     def _handle_start(self, token):
-        action_tokens = {
-            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
-            "end": self.tokenizer.encode("end", add_special_tokens=False),
-        }
-
         matching_actions = []
         for action in self.possible_actions:
-            tokens = action_tokens[action]
+            tokens = self.action_tokens[action]
             if tokens and token == tokens[0]:
                 matching_actions.append(action)
 
@@ -397,17 +397,11 @@ class ActionOnlyConstraintStateMachine:
             self.action_prefix = [token]
 
     def _handle_action(self, token):
-        action_tokens = {
-            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
-            "end": self.tokenizer.encode("end", add_special_tokens=False),
-        }
-
         self.action_prefix.append(token)
 
         # Check if any action is completed
         for action in self.possible_actions:
-            tokens = action_tokens[action]
+            tokens = self.action_tokens[action]
             if tokens and self.action_prefix == tokens:
                 self.finished = True
                 return
@@ -415,7 +409,7 @@ class ActionOnlyConstraintStateMachine:
         # Filter possible actions
         next_possible = []
         for action in self.possible_actions:
-            tokens = action_tokens[action]
+            tokens = self.action_tokens[action]
             if tokens and len(self.action_prefix) < len(tokens) and tokens[: len(self.action_prefix)] == self.action_prefix:
                 next_possible.append(action)
 
@@ -428,16 +422,10 @@ class ActionOnlyConstraintStateMachine:
         if self.finished:
             return [self.tokenizer.eos_token_id]
 
-        action_tokens = {
-            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
-            "end": self.tokenizer.encode("end", add_special_tokens=False),
-        }
-
         if self.state == "start":
             allowed = set()
             for action in self.possible_actions:
-                tokens = action_tokens[action]
+                tokens = self.action_tokens[action]
                 if tokens:
                     allowed.add(tokens[0])
             return list(allowed)
@@ -445,7 +433,7 @@ class ActionOnlyConstraintStateMachine:
         elif self.state == "in_action":
             allowed = set()
             for action in self.possible_actions:
-                tokens = action_tokens[action]
+                tokens = self.action_tokens[action]
                 if tokens and len(self.action_prefix) < len(tokens):
                     allowed.add(tokens[len(self.action_prefix)])
             return list(allowed) if allowed else [self.tokenizer.eos_token_id]
