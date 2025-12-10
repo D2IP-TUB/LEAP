@@ -1,14 +1,19 @@
 """
 Table Actions - Registry of all available table transformation actions.
 
-This module auto-registers all action definitions on import.
+This module auto-registers all action definitions on import and exports
+the Action class and REGISTRY for external use.
 """
 
-from leap.core.action_registry import REGISTRY
-from leap.core.actions.direct_query import DirectQueryAction
-from leap.core.actions.end import EndAction
-from leap.core.actions.select_column import SelectColumnAction
-from leap.core.actions.select_row import SelectRowAction
+# Import registry and action definitions
+from .action import Action
+
+# Import all action implementations
+from .direct_query import DirectQueryAction
+from .end import EndAction
+from .registry import REGISTRY, ActionDefinition
+from .select_column import SelectColumnAction
+from .select_row import SelectRowAction
 
 # Register all actions
 REGISTRY.register(SelectRowAction())
@@ -17,9 +22,11 @@ REGISTRY.register(EndAction())
 REGISTRY.register(DirectQueryAction())
 
 __all__ = [
+    "Action",
+    "ActionDefinition",
+    "REGISTRY",
     "SelectRowAction",
     "SelectColumnAction",
     "EndAction",
     "DirectQueryAction",
-    "REGISTRY",
 ]

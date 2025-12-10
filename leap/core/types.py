@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from .action import Action
+from .actions import Action
 from .table import Table
 
 

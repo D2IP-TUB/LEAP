@@ -4,8 +4,8 @@ End Action - Signals completion of the reasoning chain.
 
 from typing import Any, List, Optional
 
-from leap.core.action_registry import ActionDefinition
-from leap.core.table import Table
+from ..table import Table
+from .registry import ActionDefinition
 
 
 class EndAction(ActionDefinition):

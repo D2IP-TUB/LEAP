@@ -4,10 +4,7 @@ import ast
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-# Import registry - will auto-register all actions
-from leap.core.actions import REGISTRY
-
-from .table import Table
+from ..table import Table
 
 
 @dataclass(frozen=True)
@@ -118,6 +115,8 @@ class Action:
         Delegates to registry for fuzzy matching.
         Used for fuzzy matching when full parsing fails.
         """
+        from .registry import REGISTRY
+
         return REGISTRY.parse_action_name_fuzzy(action_str)
 
     @classmethod
@@ -142,6 +141,8 @@ class Action:
 
         Delegates to registry action definitions.
         """
+        from .registry import REGISTRY
+
         action_def = REGISTRY.get(action_name)
         if action_def is None:
             return None
@@ -170,6 +171,8 @@ class Action:
 
         Delegates to registry action definitions.
         """
+        from .registry import REGISTRY
+
         action_def = REGISTRY.get(self.name)
         if action_def is None:
             return None
@@ -182,6 +185,8 @@ class Action:
 
         Delegates to registry action definitions.
         """
+        from .registry import REGISTRY
+
         action_def = REGISTRY.get(self.name)
         if action_def is None:
             return False

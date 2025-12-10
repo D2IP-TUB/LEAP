@@ -9,7 +9,7 @@ that need action information (constraints, prompts, parsing, etc.).
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Set
 
-from leap.core.table import Table
+from ..table import Table
 
 
 class ActionDefinition(ABC):
