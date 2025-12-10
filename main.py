@@ -21,6 +21,8 @@ from leap.config.loader import (
 )
 from leap.core import Action, InferenceRequest, InferenceResult
 from leap.generation.prompt_builder import PromptBuilder
+from leap.generation.sampling import SamplingConfig, SamplingLayer
+from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
 from leap.generation.strategies import (
     ChainOfTableGenerationStrategy,
     IterativeGenerationStrategy,
@@ -140,6 +142,25 @@ def get_generation_mode_string(generation_config: GenerationSettings):
         return "unconstrained_with_postprocessing"
 
 
+def create_sampling_layer(generation_settings: GenerationSettings) -> SamplingLayer:
+    if not generation_settings.sampling or not generation_settings.sampling.enabled:
+        # When sampling is disabled, use n=1 (no voting, single generation)
+        print("Sampling disabled - using single-sample generation (n=1)")
+        return SamplingLayer(
+            config=SamplingConfig(
+                enabled=True,
+                n_samples=1,
+                debug=False,
+            )
+        )
+    elif generation_settings.sampling.shuffle_invariant:
+        print(f"Shuffle-invariant sampling enabled: {generation_settings.sampling.n_samples} samples per step")
+        return ShuffleInvariantSamplingLayer(config=generation_settings.sampling)
+    else:
+        print(f"Sampling enabled: {generation_settings.sampling.n_samples} samples per step")
+        return SamplingLayer(config=generation_settings.sampling)
+
+
 def main():
     """Main function using the modular vLLM server with comprehensive logging"""
     print("Setting up modular vLLM server with integrated logging...")
@@ -149,29 +170,8 @@ def main():
     model_settings = app_config.model
     generation_settings = app_config.generation
 
-    # Create sampling layer (always - with n=1 when sampling is "disabled")
-    if not generation_settings.sampling or not generation_settings.sampling.enabled:
-        # When sampling is disabled, use n=1 (no voting, single generation)
-        from leap.generation.sampling import SamplingConfig, SamplingLayer
-
-        print("Sampling disabled - using single-sample generation (n=1)")
-        sampling_layer = SamplingLayer(
-            config=SamplingConfig(
-                enabled=True,
-                n_samples=1,
-                debug=False,
-            )
-        )
-    elif generation_settings.sampling.shuffle_invariant:
-        from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
-
-        print(f"Shuffle-invariant sampling enabled: {generation_settings.sampling.n_samples} samples per step")
-        sampling_layer = ShuffleInvariantSamplingLayer(config=generation_settings.sampling)
-    else:
-        from leap.generation.sampling import SamplingLayer
-
-        print(f"Sampling enabled: {generation_settings.sampling.n_samples} samples per step")
-        sampling_layer = SamplingLayer(config=generation_settings.sampling)
+    # Create sampling layer (always created, with n=1 when "disabled")
+    sampling_layer = create_sampling_layer(generation_settings)
 
     iterative_strategy = IterativeGenerationStrategy(
         prompt_builder=runtime.prompt_builder,
