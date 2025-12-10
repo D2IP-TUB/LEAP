@@ -2,7 +2,7 @@
 
 All notable changes to the LEAP project are documented in this file.
 
-## [Unreleased] - 06.12.2025
+## [Unreleased] - 10.12.2025
 
 ### Added
 
@@ -13,6 +13,7 @@ All notable changes to the LEAP project are documented in this file.
   - Extensible architecture with override points for custom generation, filtering, and aggregation logic
   - Debug mode for observing generation and voting process in real-time
   - Concurrent sample generation using `asyncio.gather()` for maximum throughput
+- **Shuffle Invariant SamplingLayer**: Implement shuffle invariant sampling for an equivariance action behavior
 
 ## [0.1.0] - 2025-12-03
 
