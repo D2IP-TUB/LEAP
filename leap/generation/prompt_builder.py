@@ -63,27 +63,33 @@ class PromptBuilder:
                 step_prompt += f"{idx + 1}. {action}\n"
             step_prompt += "\n"
 
-        instruction_prompt = self._build_iterative_instruction(worker)
+        instruction_prompt = self._build_iterative_instruction(worker, action_history)
 
         estimated_length = len(step_prompt) // 4
         if estimated_length > worker.max_model_len - self.iterative_settings.safety_margin_tokens:
             table_str = table.to_csv(max_chars=self.iterative_settings.fallback_table_chars)
             question_short = self._truncate_text(question, self.iterative_settings.question_truncation)
             step_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n"
-            instruction_prompt = self._build_iterative_instruction(worker, fallback=True)
+            instruction_prompt = self._build_iterative_instruction(worker, action_history, fallback=True)
 
         return self._append_instruction(step_prompt, instruction_prompt)
 
-    def _build_iterative_instruction(self, worker, fallback: bool = False) -> str:
+    def _build_iterative_instruction(self, worker, action_history: Sequence[str] = None, fallback: bool = False) -> str:
         """Instruction text for iterative generation."""
+        # Get action descriptions from registry (as per Chain-of-Table paper Figure 9)
+        # Pass action_history to filter out already-used actions
+        action_descriptions = REGISTRY.get_action_descriptions(action_history)
+
         if worker.use_constraints:
-            return "Next action: "
+            # When using constraints, still show action descriptions
+            return f"{action_descriptions}\n\nNext action: "
 
         # Get action prompt text from registry
-        actions_text = REGISTRY.get_prompt_text_iterative()
+        # Pass action_history to filter out already-used actions
+        actions_text = REGISTRY.get_prompt_text_iterative(action_history)
 
         question_prefix = "What should be the next action? " if fallback else "What should be the next action to answer this question? "
-        base = f"{question_prefix}Choose from: {actions_text}. Next action: "
+        base = f"{action_descriptions}\n\n{question_prefix}Choose from: {actions_text}.\nNext action: "
         return base
 
     @staticmethod
@@ -109,8 +115,11 @@ class PromptBuilder:
                 prompt += f"{idx + 1}. {action}\n"
             prompt += "\n"
 
-        # Get action list from registry
-        actions_text = REGISTRY.get_prompt_text_cot()
+        # Get action descriptions and list from registry
+        # Pass action_history to filter out already-used actions
+        action_descriptions = REGISTRY.get_action_descriptions(action_history)
+        actions_text = REGISTRY.get_prompt_text_cot(action_history)
+        prompt += f"{action_descriptions}\n\n"
         prompt += f"Available actions: {actions_text}\n"
         instruction_prompt = "What action should be performed next to answer the question?\n"
         instruction_prompt += "Action: "
@@ -120,6 +129,10 @@ class PromptBuilder:
             table_str = table.to_csv(max_chars=self.cot_settings.action_fallback_table_chars)
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
             prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
+            # Re-get filtered descriptions and actions for fallback case
+            action_descriptions = REGISTRY.get_action_descriptions(action_history)
+            actions_text = REGISTRY.get_prompt_text_cot(action_history)
+            prompt += f"{action_descriptions}\n\n"
             prompt += f"Available actions: {actions_text}\n"
             instruction_prompt = "What action should be performed next?\nAction: "
 

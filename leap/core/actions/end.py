@@ -78,3 +78,7 @@ class EndAction(ActionDefinition):
     def get_fuzzy_match_keywords(self) -> List[str]:
         """Keywords for fuzzy matching."""
         return ["end", "finish", "done"]
+
+    def get_description(self) -> str:
+        """Action description for prompts."""
+        return "indicates that the table is ready and ends the transformation chain"

@@ -110,6 +110,18 @@ class ActionDefinition(ABC):
         """
         return [self.name]
 
+    def get_description(self) -> str:
+        """
+        Get human-readable description of what this action does.
+
+        This is shown to the language model in prompts to help it understand
+        available actions (as per Chain-of-Table paper, Figure 9).
+
+        Default: Returns the action name.
+        Override to provide a meaningful description.
+        """
+        return self.name
+
 
 class ActionRegistry:
     """
@@ -175,13 +187,23 @@ class ActionRegistry:
             params[name] = action.generate_params(table)
         return params
 
-    def get_prompt_text_iterative(self) -> str:
+    def get_prompt_text_iterative(self, action_history: Optional[List[str]] = None) -> str:
         """
         Generate prompt text for iterative strategy.
 
         Example: "Choose from: select_row([row_indices]), select_column([\"column_names\"]), or end()"
+
+        Args:
+            action_history: List of actions already taken. If provided, these actions
+                          will be filtered out from the available options (except 'end').
         """
         enabled = self.get_enabled_names()
+
+        # Filter out already-used actions (but always keep 'end' as an option)
+        if action_history:
+            used_actions = self._extract_action_names_from_history(action_history)
+            enabled = [name for name in enabled if name not in used_actions or name == "end"]
+
         if not enabled:
             return ""
 
@@ -195,15 +217,61 @@ class ActionRegistry:
             # Multiple actions: "op1, op2, or op3"
             return ", ".join(action_texts[:-1]) + f", or {action_texts[-1]}"
 
-    def get_prompt_text_cot(self) -> str:
+    def get_prompt_text_cot(self, action_history: Optional[List[str]] = None) -> str:
         """
         Generate prompt text for CoT strategy.
 
         Example: "Available actions: select_row, select_column, end"
+
+        Args:
+            action_history: List of actions already taken. If provided, these actions
+                          will be filtered out from the available options (except 'end').
         """
         enabled = self.get_enabled_names()
+
+        # Filter out already-used actions (but always keep 'end' as an option)
+        if action_history:
+            used_actions = self._extract_action_names_from_history(action_history)
+            enabled = [name for name in enabled if name not in used_actions or name == "end"]
+
         action_texts = [self._actions[name].get_prompt_text_cot() for name in enabled]
         return ", ".join(action_texts)
+
+    def get_action_descriptions(self, action_history: Optional[List[str]] = None) -> str:
+        """
+        Generate formatted action descriptions for prompts.
+
+        Returns a multi-line string describing each available action,
+        as shown in Chain-of-Table paper (Figure 9, Appendix).
+
+        Example output:
+        "Operations:
+        f_select_row: selects a subset of rows
+        f_select_column: selects a subset of columns
+        f_end: indicates completion
+        f_direct_query: answer directly without transformation"
+
+        Args:
+            action_history: List of actions already taken. If provided, these actions
+                          will be filtered out from the available options (except 'end').
+        """
+        enabled = self.get_enabled_names()
+
+        # Filter out already-used actions (but always keep 'end' as an option)
+        if action_history:
+            used_actions = self._extract_action_names_from_history(action_history)
+            enabled = [name for name in enabled if name not in used_actions or name == "end"]
+
+        if not enabled:
+            return ""
+
+        lines = ["Operations:"]
+        for name in enabled:
+            action = self._actions[name]
+            desc = action.get_description()
+            lines.append(f"f_{name}: {desc}")
+
+        return "\n".join(lines)
 
     def parse_action_name_fuzzy(self, text: str) -> Optional[str]:
         """
@@ -226,6 +294,34 @@ class ActionRegistry:
                     return name
 
         return None
+
+    def _extract_action_names_from_history(self, action_history: List[str]) -> set[str]:
+        """
+        Extract unique action names from action history.
+
+        Args:
+            action_history: List of action strings like "select_row([0, 1])", "select_column(['Name'])"
+
+        Returns:
+            Set of action names like {"select_row", "select_column"}
+        """
+        action_names = set()
+        for action_str in action_history:
+            # Extract action name from strings like "select_row([0, 1])"
+            # Find the first '(' to get the action name
+            paren_idx = action_str.find("(")
+            if paren_idx > 0:
+                action_name = action_str[:paren_idx].strip()
+                action_names.add(action_name)
+            else:
+                # Handle cases where action might not have parentheses
+                # Try to match against known action names
+                action_str_clean = action_str.strip().lower()
+                for name in self._actions.keys():
+                    if action_str_clean.startswith(name):
+                        action_names.add(name)
+                        break
+        return action_names
 
 
 # Global registry instance

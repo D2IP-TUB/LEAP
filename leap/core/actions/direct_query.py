@@ -1,9 +1,13 @@
 """
 Direct Query Action - Answer directly from table without transformation.
 
-This action allows the LLM to answer questions directly from the current table
-state without applying any transformations. Useful for simple questions that don't
-require intermediate reasoning steps.
+This is a terminating action from the Chain-of-Table paper (Figure 15, Appendix).
+It signals that the question should be answered directly from the current table
+without further transformations. Like 'end', this terminates the action chain,
+but semantically indicates a direct answer strategy rather than completion after
+transformations.
+
+Reference: Chain-of-Table paper (arXiv:2401.04398v2)
 """
 
 from typing import Any, List, Optional
@@ -14,14 +18,16 @@ from .registry import ActionDefinition
 
 class DirectQueryAction(ActionDefinition):
     """
-    Direct query operation - answers directly without table transformation.
+    Direct query operation - terminating action for direct answers.
 
     Usage: direct_query()
 
-    This operation:
+    This is a terminating operation from Chain-of-Table (Figure 15):
     - Takes no arguments
-    - Returns the table unchanged
-    - Signals that the answer can be derived directly from current table state
+    - Returns the table unchanged (to preserve state for answer generation)
+    - Signals that the answer should be generated directly from current table
+    - Can only be used as the final operation in the chain
+    - Semantically different from 'end': indicates direct answering vs. completion
     """
 
     @property
@@ -83,3 +89,7 @@ class DirectQueryAction(ActionDefinition):
     def get_fuzzy_match_keywords(self) -> List[str]:
         """Keywords for fuzzy matching."""
         return ["direct_query", "direct", "query"]
+
+    def get_description(self) -> str:
+        """Action description for prompts."""
+        return "generates the answer directly from the current table state (terminating action)"

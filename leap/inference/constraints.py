@@ -57,13 +57,14 @@ class ConstraintStateMachine:
         """Parse action history to extract previously used action types"""
         used_actions = set()
         if action_history:
+            # Get all enabled action names from registry
+            enabled_actions = REGISTRY.get_enabled_names()
             for action_str in action_history:
-                if "select_row" in action_str:
-                    used_actions.add("select_row")
-                elif "select_column" in action_str:
-                    used_actions.add("select_column")
-                elif "end" in action_str:
-                    used_actions.add("end")
+                # Check each enabled action
+                for action_name in enabled_actions:
+                    if action_name in action_str:
+                        used_actions.add(action_name)
+                        break  # Found the action, move to next history item
         return used_actions
 
     def reset(self):
@@ -87,29 +88,39 @@ class ConstraintStateMachine:
 
     def _get_allowed_actions_with_global_constraints(self):
         """Determine which actions are allowed based on global constraints"""
+        # Get enabled actions from registry
+        enabled_actions = REGISTRY.get_enabled_names()
+
+        # Terminating actions (can only be used as final step)
+        terminating_actions = {"end", "direct_query"}
+
+        # Non-terminating actions (table transformations)
+        transformation_actions = [a for a in enabled_actions if a not in terminating_actions]
+
         allowed = []
 
-        # If no actions have been taken yet, can't use 'end'
+        # If no actions have been taken yet, can't use terminating actions
         if not self.previously_used_actions:
-            # Only allow select_row and select_column for first action
-            allowed.extend(["select_row", "select_column"])
+            # Only allow transformation actions for first action
+            allowed.extend(transformation_actions)
         else:
-            # Check which actions haven't been used yet
-            if "select_row" not in self.previously_used_actions:
-                allowed.append("select_row")
-            if "select_column" not in self.previously_used_actions:
-                allowed.append("select_column")
+            # Check which transformation actions haven't been used yet
+            for action in transformation_actions:
+                if action not in self.previously_used_actions:
+                    allowed.append(action)
 
-            # 'end' is allowed only if at least one other action has been taken
-            # and no other actions are available
-            if not allowed:  # No other actions available
-                allowed.append("end")
+            # Terminating actions are allowed only if:
+            # - At least one other action has been taken
+            # - No other transformation actions are available
+            if not allowed:  # No transformation actions available
+                # Add all enabled terminating actions
+                allowed.extend([a for a in terminating_actions if a in enabled_actions])
 
         return allowed
 
     def _get_allowed_actions_without_global_constraints(self):
-        """Get all actions without global constraints (original behavior)"""
-        return ["select_row", "select_column", "end"]
+        """Get all enabled actions without global constraints"""
+        return REGISTRY.get_enabled_names()
 
     def update_state(self, token):
         if self.finished:

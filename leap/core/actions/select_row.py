@@ -130,3 +130,7 @@ class SelectRowAction(ActionDefinition):
     def get_fuzzy_match_keywords(self) -> List[str]:
         """Keywords for fuzzy matching."""
         return ["select_row", "row"]
+
+    def get_description(self) -> str:
+        """Action description for prompts."""
+        return "selects a subset of rows from the table"

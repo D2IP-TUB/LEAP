@@ -119,3 +119,7 @@ class SelectColumnAction(ActionDefinition):
     def get_fuzzy_match_keywords(self) -> List[str]:
         """Keywords for fuzzy matching."""
         return ["select_column", "column"]
+
+    def get_description(self) -> str:
+        """Action description for prompts."""
+        return "selects a subset of columns from the table"
