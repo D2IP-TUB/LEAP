@@ -3,11 +3,6 @@ from typing import Any, Callable, Dict, List, Optional
 
 from leap.core import Action, InferenceRequest, InferenceResult, Table
 from leap.evaluation.evaluator import calculate_execution_accuracy_with_dataset_answers
-from leap.generation.generate import (
-    generate_action_arguments,
-    generate_action_selection,
-    generate_single_action,
-)
 from leap.generation.prompt_builder import PromptBuilder
 from leap.utils.profiler import RequestProfiler
 
@@ -35,10 +30,10 @@ class BaseGenerationStrategy:
         self,
         *,
         prompt_builder: PromptBuilder,
+        sampling_layer,
         max_failures: int = 3,
         max_validity_failures: int = 3,
         max_steps: int = 10,
-        sampling_layer=None,
     ) -> None:
         self.max_failures = max_failures
         self.max_validity_failures = max_validity_failures
@@ -122,7 +117,7 @@ class BaseGenerationStrategy:
 
                 if not action:
                     validity_failures += 1
-                    action_display = "sampling_failed" if self.sampling_layer else "action_generation_failed"
+                    action_display = "action_generation_failed"
                     print(f"Step {step}: Failed to generate valid action: {action_display}")
                     if logging_callback:
                         logging_callback(
@@ -239,7 +234,7 @@ class BaseGenerationStrategy:
 class IterativeGenerationStrategy(BaseGenerationStrategy):
     """Iterative action generation with constraint-aware prompting."""
 
-    def __init__(self, *, prompt_builder: PromptBuilder, sampling_layer=None, **kwargs) -> None:
+    def __init__(self, *, prompt_builder: PromptBuilder, sampling_layer, **kwargs) -> None:
         super().__init__(prompt_builder=prompt_builder, sampling_layer=sampling_layer, **kwargs)
 
     async def generate_action_step(
@@ -255,38 +250,18 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
         """Generate a single action using iterative strategy (single-call)."""
         step_id = f"{request_id}_step{step}"
 
-        # Use sampling layer if enabled, otherwise fall back to single generation
-        if self.sampling_layer:
-            sampling_result = await self.sampling_layer.sample_action(
-                worker=worker,
-                table=current_table,
-                action_history=action_history,
-                request_id=step_id,
-                state_machines=state_machines,
-                prompt_builder=self.prompt_builder,
-                question=question,
-                step=step,
-            )
-            return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
-        else:
-            step_prompt = self.prompt_builder.build_iterative_prompt(
-                question=question,
-                table=current_table,
-                action_history=action_history,
-                worker=worker,
-                step=step,
-            )
-
-            action_str = await generate_single_action(
-                worker,
-                step_prompt,
-                current_table,
-                step_id,
-                state_machines,
-                action_history,
-            )
-
-            return ActionStepResult(action=Action.parse(action_str))
+        # Always use sampling layer (with n=1 when sampling is disabled)
+        sampling_result = await self.sampling_layer.sample_action(
+            worker=worker,
+            table=current_table,
+            action_history=action_history,
+            request_id=step_id,
+            state_machines=state_machines,
+            prompt_builder=self.prompt_builder,
+            question=question,
+            step=step,
+        )
+        return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
 
 
 class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
@@ -296,7 +271,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
         self,
         *,
         prompt_builder: PromptBuilder,
-        sampling_layer=None,
+        sampling_layer,
         action_temperature: float = DEFAULT_COT_ACTION_TEMPERATURE,
         args_temperature: float = DEFAULT_COT_ARGS_TEMPERATURE,
         **kwargs,
@@ -320,57 +295,17 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
         step: int,
     ) -> ActionStepResult:
         """Generate a single action using two-phase strategy (action selection + args)."""
-        # Use sampling layer if enabled, otherwise fall back to two-phase generation
-        if self.sampling_layer:
-            sampling_result = await self.sampling_layer.sample_action_two_phase(
-                worker=worker,
-                question=question,
-                table=current_table,
-                action_history=action_history,
-                request_id=request_id,
-                state_machines=state_machines,
-                step=step,
-                temperature_action=self.action_temperature,
-                temperature_args=self.args_temperature,
-                prompt_builder=self.prompt_builder,
-            )
-            return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
-        else:
-            # Phase 1: Action selection
-            action_name = await generate_action_selection(
-                worker,
-                question,
-                current_table,
-                action_history,
-                request_id,
-                state_machines,
-                step,
-                self.action_temperature,
-                self.prompt_builder,
-            )
-
-            if not action_name:
-                return ActionStepResult(action=None)
-
-            if action_name == "end":
-                return ActionStepResult(action=Action("end", []))
-
-            # Phase 2: Arguments generation
-            args = await generate_action_arguments(
-                worker,
-                question,
-                current_table,
-                action_name,
-                action_history,
-                request_id,
-                state_machines,
-                step,
-                self.args_temperature,
-                self.prompt_builder,
-            )
-
-            if args is None:
-                return ActionStepResult(action=None)
-
-            # Create Action object from action_name and args
-            return ActionStepResult(action=Action(action_name, args))
+        # Always use sampling layer (with n=1 when sampling is disabled)
+        sampling_result = await self.sampling_layer.sample_action_two_phase(
+            worker=worker,
+            question=question,
+            table=current_table,
+            action_history=action_history,
+            request_id=request_id,
+            state_machines=state_machines,
+            step=step,
+            temperature_action=self.action_temperature,
+            temperature_args=self.args_temperature,
+            prompt_builder=self.prompt_builder,
+        )
+        return ActionStepResult(action=sampling_result.action, metadata=sampling_result)

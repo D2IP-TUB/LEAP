@@ -149,19 +149,29 @@ def main():
     model_settings = app_config.model
     generation_settings = app_config.generation
 
-    # Create sampling layer if enabled
-    sampling_layer = None
-    if generation_settings.sampling and generation_settings.sampling.enabled:
-        if generation_settings.sampling.shuffle_invariant:
-            from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
+    # Create sampling layer (always - with n=1 when sampling is "disabled")
+    if not generation_settings.sampling or not generation_settings.sampling.enabled:
+        # When sampling is disabled, use n=1 (no voting, single generation)
+        from leap.generation.sampling import SamplingConfig, SamplingLayer
 
-            print(f"Shuffle-invariant sampling enabled: {generation_settings.sampling.n_samples} samples per step")
-            sampling_layer = ShuffleInvariantSamplingLayer(config=generation_settings.sampling)
-        else:
-            from leap.generation.sampling import SamplingLayer
+        print("Sampling disabled - using single-sample generation (n=1)")
+        sampling_layer = SamplingLayer(
+            config=SamplingConfig(
+                enabled=True,
+                n_samples=1,
+                debug=False,
+            )
+        )
+    elif generation_settings.sampling.shuffle_invariant:
+        from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
 
-            print(f"Sampling enabled: {generation_settings.sampling.n_samples} samples per step")
-            sampling_layer = SamplingLayer(config=generation_settings.sampling)
+        print(f"Shuffle-invariant sampling enabled: {generation_settings.sampling.n_samples} samples per step")
+        sampling_layer = ShuffleInvariantSamplingLayer(config=generation_settings.sampling)
+    else:
+        from leap.generation.sampling import SamplingLayer
+
+        print(f"Sampling enabled: {generation_settings.sampling.n_samples} samples per step")
+        sampling_layer = SamplingLayer(config=generation_settings.sampling)
 
     iterative_strategy = IterativeGenerationStrategy(
         prompt_builder=runtime.prompt_builder,
