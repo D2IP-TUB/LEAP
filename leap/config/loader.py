@@ -137,6 +137,7 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
         n_samples=sampling_section.get("n_samples", 1),
         per_action_samples=dict(sampling_section.get("per_action_samples", {})),
         debug=sampling_section.get("debug", False),
+        shuffle_invariant=sampling_section.get("shuffle_invariant", False),
     )
 
     generation_config = GenerationConfig(

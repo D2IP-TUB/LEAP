@@ -20,12 +20,12 @@ dataset:
   path: null
 
 run:
-  max_examples: 1000
+  max_examples: 10
 
 generation:
   use_constraints: true
   use_global_constraints: true
-  use_chain_of_table: false
+  use_chain_of_table: true
   sampling:
     enabled: true
     n_samples: 8
@@ -33,7 +33,8 @@ generation:
       select_row: 8
       select_column: 8
       end: 1
-    debug: true 
+    debug: true
+    shuffle_invariant: true  # Enable shuffle-invariant sampling for robustness 
 
 logging:
   enable_logging: true
