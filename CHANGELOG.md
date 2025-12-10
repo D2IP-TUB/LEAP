@@ -15,6 +15,10 @@ All notable changes to the LEAP project are documented in this file.
   - Concurrent sample generation using `asyncio.gather()` for maximum throughput
 - **Shuffle Invariant SamplingLayer**: Implement shuffle invariant sampling for an equivariance action behavior
 
+#### Refactoring
+  - Extract shared orchesteration for generation strategies
+  - Use sampling layer as an interface for single response requests
+
 ## [0.1.0] - 2025-12-03
 
 ### Added

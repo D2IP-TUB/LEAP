@@ -1,17 +1,26 @@
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 from leap.core import Action, InferenceRequest, InferenceResult, Table
 from leap.evaluation.evaluator import calculate_execution_accuracy_with_dataset_answers
-from leap.generation.generate import (
-    generate_action_arguments,
-    generate_action_selection,
-    generate_single_action,
-)
 from leap.generation.prompt_builder import PromptBuilder
 from leap.utils.profiler import RequestProfiler
 
 DEFAULT_COT_ACTION_TEMPERATURE = 0.3
 DEFAULT_COT_ARGS_TEMPERATURE = 0.7
+
+
+@dataclass
+class ActionStepResult:
+    """Result of a single action generation step.
+
+    Attributes:
+        action: The generated action, or None if generation failed
+        metadata: Optional metadata about the generation process (e.g., sampling statistics)
+    """
+
+    action: Optional[Action]
+    metadata: Optional[Any] = None
 
 
 class BaseGenerationStrategy:
@@ -21,6 +30,7 @@ class BaseGenerationStrategy:
         self,
         *,
         prompt_builder: PromptBuilder,
+        sampling_layer,
         max_failures: int = 3,
         max_validity_failures: int = 3,
         max_steps: int = 10,
@@ -29,23 +39,30 @@ class BaseGenerationStrategy:
         self.max_validity_failures = max_validity_failures
         self.max_steps = max_steps
         self.prompt_builder = prompt_builder
+        self.sampling_layer = sampling_layer
 
-    async def generate_instance(
+    async def generate_action_step(
         self,
-        request: Dict[str, Any],
         worker,
+        current_table: Table,
+        action_history: List[str],
+        request_id: str,
         state_machines,
-        logging_callback: Optional[Callable] = None,
-    ) -> Dict[str, Any]:
+        question: str,
+        step: int,
+    ) -> ActionStepResult:
+        """
+        Generate a single action for the current step.
+        Must be implemented by subclasses to define generation strategy.
+
+        Returns:
+            ActionStepResult with action and optional metadata
+        """
         raise NotImplementedError
 
-
-class IterativeGenerationStrategy(BaseGenerationStrategy):
-    """Iterative action generation with constraint-aware prompting."""
-
-    def __init__(self, *, prompt_builder: PromptBuilder, sampling_layer=None, **kwargs) -> None:
-        super().__init__(prompt_builder=prompt_builder, **kwargs)
-        self.sampling_layer = sampling_layer
+    def get_generation_mode_string(self, worker) -> str:
+        """Get the generation mode string for logging. Override if needed."""
+        return worker._get_generation_mode_string()
 
     async def generate_instance(
         self,
@@ -54,6 +71,10 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
         state_machines,
         logging_callback: Optional[Callable] = None,
     ) -> InferenceResult:
+        """
+        Main generation loop - shared across all strategies.
+        Subclasses only need to implement generate_action_step().
+        """
         question = request.question
         original_table: Table = request.table
         current_table: Table = original_table
@@ -69,63 +90,40 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
         step = 0
         sampling_metadata_list: List[Dict[str, Any]] = []
 
-        generation_mode = worker._get_generation_mode_string()
+        generation_mode = self.get_generation_mode_string(worker)
 
         if logging_callback:
             logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
 
         while failures < self.max_failures and validity_failures < self.max_validity_failures and step < self.max_steps:
             step_start = profiler.start_step()
-            step_id = f"{request_id}_step{step}"
 
             try:
-                # Use sampling layer if enabled, otherwise fall back to single generation
-                if self.sampling_layer:
-                    with profiler.time_operation("llm_generation"):
-                        result = await self.sampling_layer.sample_action(
-                            worker=worker,
-                            table=current_table,
-                            action_history=action_history,
-                            request_id=step_id,
-                            state_machines=state_machines,
-                            prompt_builder=self.prompt_builder,
-                            question=question,
-                            step=step,
-                        )
-                        action = result.action
-                        sampling_metadata_list.append(result)
-                else:
-                    with profiler.time_operation("prompt_building"):
-                        step_prompt = self.prompt_builder.build_iterative_prompt(
-                            question=question,
-                            table=current_table,
-                            action_history=action_history,
-                            worker=worker,
-                            step=step,
-                        )
+                # Strategy-specific action generation
+                result = await self.generate_action_step(
+                    worker=worker,
+                    current_table=current_table,
+                    action_history=action_history,
+                    request_id=request_id,
+                    state_machines=state_machines,
+                    question=question,
+                    step=step,
+                )
 
-                    with profiler.time_operation("llm_generation"):
-                        action_str = await generate_single_action(
-                            worker,
-                            step_prompt,
-                            current_table,
-                            step_id,
-                            state_machines,
-                            action_history,
-                        )
-
-                    with profiler.time_operation("action_parsing"):
-                        action = Action.parse(action_str)
+                # Extract action and metadata from result
+                action = result.action
+                if result.metadata:
+                    sampling_metadata_list.append(result.metadata)
 
                 if not action:
                     validity_failures += 1
-                    action_display = "sampling_failed" if self.sampling_layer else action_str
-                    print(f"Step {step}: Failed to generate valid action from: {action_display}")
+                    action_display = "action_generation_failed"
+                    print(f"Step {step}: Failed to generate valid action: {action_display}")
                     if logging_callback:
                         logging_callback(
                             request_id,
                             step + 1,
-                            f"validity_failed:{action_str}",
+                            f"validity_failed:{action_display}",
                             current_table,
                             success=False,
                             failure_type="validity_failure",
@@ -233,6 +231,39 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
         )
 
 
+class IterativeGenerationStrategy(BaseGenerationStrategy):
+    """Iterative action generation with constraint-aware prompting."""
+
+    def __init__(self, *, prompt_builder: PromptBuilder, sampling_layer, **kwargs) -> None:
+        super().__init__(prompt_builder=prompt_builder, sampling_layer=sampling_layer, **kwargs)
+
+    async def generate_action_step(
+        self,
+        worker,
+        current_table: Table,
+        action_history: List[str],
+        request_id: str,
+        state_machines,
+        question: str,
+        step: int,
+    ) -> ActionStepResult:
+        """Generate a single action using iterative strategy (single-call)."""
+        step_id = f"{request_id}_step{step}"
+
+        # Always use sampling layer (with n=1 when sampling is disabled)
+        sampling_result = await self.sampling_layer.sample_action(
+            worker=worker,
+            table=current_table,
+            action_history=action_history,
+            request_id=step_id,
+            state_machines=state_machines,
+            prompt_builder=self.prompt_builder,
+            question=question,
+            step=step,
+        )
+        return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
+
+
 class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
     """Two-step Chain-of-Table strategy (action selection + args)."""
 
@@ -240,235 +271,41 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
         self,
         *,
         prompt_builder: PromptBuilder,
-        sampling_layer=None,
+        sampling_layer,
         action_temperature: float = DEFAULT_COT_ACTION_TEMPERATURE,
         args_temperature: float = DEFAULT_COT_ARGS_TEMPERATURE,
         **kwargs,
     ) -> None:
-        super().__init__(prompt_builder=prompt_builder, **kwargs)
-        self.sampling_layer = sampling_layer
+        super().__init__(prompt_builder=prompt_builder, sampling_layer=sampling_layer, **kwargs)
         self.action_temperature = action_temperature
         self.args_temperature = args_temperature
 
-    async def generate_instance(
+    def get_generation_mode_string(self, worker) -> str:
+        """Override to return CoT mode string."""
+        return "CoT"
+
+    async def generate_action_step(
         self,
-        request: InferenceRequest,
         worker,
+        current_table: Table,
+        action_history: List[str],
+        request_id: str,
         state_machines,
-        logging_callback: Optional[Callable] = None,
-    ) -> InferenceResult:
-        question = request.question
-        original_table: Table = request.table
-        current_table: Table = original_table
-        ground_truth_answers = request.ground_truth_answers
-        request_id = request.request_id
-
-        # Initialize per-request profiler
-        profiler = RequestProfiler(request_id)
-
-        action_history: List[str] = []
-        failures = 0
-        validity_failures = 0
-        step = 0
-        sampling_metadata_list: List[Dict[str, Any]] = []
-
-        generation_mode = "CoT"
-
-        if logging_callback:
-            logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
-
-        while failures < self.max_failures and validity_failures < self.max_validity_failures and step < self.max_steps:
-            step_start = profiler.start_step()
-            try:
-                # Use sampling layer if enabled, otherwise fall back to two-phase generation
-                if self.sampling_layer:
-                    with profiler.time_operation("cot_two_phase_sampling"):
-                        result = await self.sampling_layer.sample_action_two_phase(
-                            worker=worker,
-                            question=question,
-                            table=current_table,
-                            action_history=action_history,
-                            request_id=request_id,
-                            state_machines=state_machines,
-                            step=step,
-                            temperature_action=self.action_temperature,
-                            temperature_args=self.args_temperature,
-                            prompt_builder=self.prompt_builder,
-                        )
-                        action = result.action
-                        sampling_metadata_list.append(result)
-
-                    # Check if action is "end"
-                    if action.name == "end":
-                        action_history.append(action.to_string())
-                        if logging_callback:
-                            logging_callback(
-                                request_id,
-                                step + 1,
-                                action.to_string(),
-                                current_table,
-                                generation_mode=generation_mode,
-                            )
-                        profiler.end_step(step_start, step, "end")
-                        break
-                else:
-                    with profiler.time_operation("cot_action_selection"):
-                        action_name = await generate_action_selection(
-                            worker,
-                            question,
-                            current_table,
-                            action_history,
-                            request_id,
-                            state_machines,
-                            step,
-                            self.action_temperature,
-                            self.prompt_builder,
-                        )
-
-                    if not action_name:
-                        validity_failures += 1
-                        print(f"Step {step}: Failed to select valid action")
-                        if logging_callback:
-                            logging_callback(
-                                request_id,
-                                step + 1,
-                                "action_selection_failed",
-                                current_table,
-                                success=False,
-                                failure_type="validity_failure",
-                                generation_mode=generation_mode,
-                            )
-                        profiler.end_step(step_start, step, "action_selection_failed")
-                        continue
-
-                    if action_name == "end":
-                        action = Action("end", [])
-                        action_history.append(action.to_string())
-                        if logging_callback:
-                            logging_callback(
-                                request_id,
-                                step + 1,
-                                action.to_string(),
-                                current_table,
-                                generation_mode=generation_mode,
-                            )
-                        profiler.end_step(step_start, step, "end")
-                        break
-
-                    with profiler.time_operation("cot_args_generation"):
-                        args = await generate_action_arguments(
-                            worker,
-                            question,
-                            current_table,
-                            action_name,
-                            action_history,
-                            request_id,
-                            state_machines,
-                            step,
-                            self.args_temperature,
-                            self.prompt_builder,
-                        )
-
-                    if args is None:
-                        validity_failures += 1
-                        print(f"Step {step}: Failed to generate valid arguments for {action_name}")
-                        if logging_callback:
-                            logging_callback(
-                                request_id,
-                                step + 1,
-                                f"{action_name}_args_failed",
-                                current_table,
-                                success=False,
-                                failure_type="validity_failure",
-                                generation_mode=generation_mode,
-                            )
-                        profiler.end_step(step_start, step, "args_generation_failed")
-                        continue
-
-                    # Create Action object from action_name and args
-                    action = Action(action_name, args)
-
-                with profiler.time_operation("table_transformation"):
-                    new_table = action.apply_to_table(current_table)
-
-                if not new_table:
-                    validity_failures += 1
-                    print(f"Step {step}: Failed to apply action: {action.to_string()}")
-                    if logging_callback:
-                        logging_callback(
-                            request_id,
-                            step + 1,
-                            action.to_string(),
-                            current_table,
-                            success=False,
-                            failure_type="validity_failure",
-                            generation_mode=generation_mode,
-                        )
-                    profiler.end_step(step_start, step, "apply_failed")
-                    continue
-
-                current_table = new_table
-                action_history.append(action.to_string())
-                failures = 0
-                validity_failures = 0
-                step += 1
-                profiler.end_step(step_start, step - 1, f"cot_{action.name}")
-                print(f"Step {step}: Applied {action.to_string()} [CoT]")
-
-                if logging_callback:
-                    logging_callback(
-                        request_id,
-                        step,
-                        action.to_string(),
-                        current_table,
-                        success=True,
-                        generation_mode=generation_mode,
-                    )
-
-            except Exception as exc:
-                failures += 1
-                print(f"Step {step}: Generation error in CoT: {str(exc)}")
-                if logging_callback:
-                    logging_callback(
-                        request_id,
-                        step + 1,
-                        f"cot_generation_error:{str(exc)}",
-                        current_table,
-                        success=False,
-                        failure_type="generation_error",
-                        generation_mode=generation_mode,
-                    )
-                profiler.end_step(step_start, step, "error")
-
-                # If this is a critical error (like max_model_len exceeded), break the loop
-                error_str = str(exc).lower()
-                if "max_model_len" in error_str or "maximum model length" in error_str:
-                    print(f"Critical error detected: {exc}. Stopping generation for this instance.")
-                    break
-
-        with profiler.time_operation("evaluation"):
-            accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-                action_history, current_table, ground_truth_answers, original_table
-            )
-
-        # Print per-request timing summary
-        total_time = profiler.get_total_time()
-        print(f"Request {request_id} completed in {total_time:.2f}s - Operations: {profiler.timings}")
-
-        # Package profiling data to send back to main process
-        profiling_data = {
-            "total_time": total_time,
-            "operation_timings": profiler.timings,
-            "num_steps": step,
-        }
-
-        return InferenceResult(
-            action_history=action_history,
-            final_table=current_table,
-            execution_metrics=accuracy_metrics,
-            request_id=request_id,
+        question: str,
+        step: int,
+    ) -> ActionStepResult:
+        """Generate a single action using two-phase strategy (action selection + args)."""
+        # Always use sampling layer (with n=1 when sampling is disabled)
+        sampling_result = await self.sampling_layer.sample_action_two_phase(
+            worker=worker,
             question=question,
-            ground_truth_answers=ground_truth_answers,
-            profiling_data=profiling_data,
-            sampling_metadata=sampling_metadata_list if sampling_metadata_list else None,
+            table=current_table,
+            action_history=action_history,
+            request_id=request_id,
+            state_machines=state_machines,
+            step=step,
+            temperature_action=self.action_temperature,
+            temperature_args=self.args_temperature,
+            prompt_builder=self.prompt_builder,
         )
+        return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
