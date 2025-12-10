@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 from leap.core import Action, InferenceRequest, InferenceResult, Table
@@ -12,6 +13,19 @@ from leap.utils.profiler import RequestProfiler
 
 DEFAULT_COT_ACTION_TEMPERATURE = 0.3
 DEFAULT_COT_ARGS_TEMPERATURE = 0.7
+
+
+@dataclass
+class ActionStepResult:
+    """Result of a single action generation step.
+
+    Attributes:
+        action: The generated action, or None if generation failed
+        metadata: Optional metadata about the generation process (e.g., sampling statistics)
+    """
+
+    action: Optional[Action]
+    metadata: Optional[Any] = None
 
 
 class BaseGenerationStrategy:
@@ -41,13 +55,13 @@ class BaseGenerationStrategy:
         state_machines,
         question: str,
         step: int,
-    ) -> Optional[Action]:
+    ) -> ActionStepResult:
         """
         Generate a single action for the current step.
         Must be implemented by subclasses to define generation strategy.
 
         Returns:
-            Action if successful, None if generation failed
+            ActionStepResult with action and optional metadata
         """
         raise NotImplementedError
 
@@ -101,13 +115,10 @@ class BaseGenerationStrategy:
                     step=step,
                 )
 
-                # Handle sampling metadata if returned
-                if isinstance(result, tuple):
-                    action, metadata = result
-                    if metadata:
-                        sampling_metadata_list.append(metadata)
-                else:
-                    action = result
+                # Extract action and metadata from result
+                action = result.action
+                if result.metadata:
+                    sampling_metadata_list.append(result.metadata)
 
                 if not action:
                     validity_failures += 1
@@ -240,13 +251,13 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
         state_machines,
         question: str,
         step: int,
-    ) -> Optional[Action]:
+    ) -> ActionStepResult:
         """Generate a single action using iterative strategy (single-call)."""
         step_id = f"{request_id}_step{step}"
 
         # Use sampling layer if enabled, otherwise fall back to single generation
         if self.sampling_layer:
-            result = await self.sampling_layer.sample_action(
+            sampling_result = await self.sampling_layer.sample_action(
                 worker=worker,
                 table=current_table,
                 action_history=action_history,
@@ -256,8 +267,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                 question=question,
                 step=step,
             )
-            # Return tuple of (action, metadata) for sampling
-            return (result.action, result)
+            return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
         else:
             step_prompt = self.prompt_builder.build_iterative_prompt(
                 question=question,
@@ -276,7 +286,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
                 action_history,
             )
 
-            return Action.parse(action_str)
+            return ActionStepResult(action=Action.parse(action_str))
 
 
 class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
@@ -308,11 +318,11 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
         state_machines,
         question: str,
         step: int,
-    ) -> Optional[Action]:
+    ) -> ActionStepResult:
         """Generate a single action using two-phase strategy (action selection + args)."""
         # Use sampling layer if enabled, otherwise fall back to two-phase generation
         if self.sampling_layer:
-            result = await self.sampling_layer.sample_action_two_phase(
+            sampling_result = await self.sampling_layer.sample_action_two_phase(
                 worker=worker,
                 question=question,
                 table=current_table,
@@ -324,8 +334,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
                 temperature_args=self.args_temperature,
                 prompt_builder=self.prompt_builder,
             )
-            # Return tuple of (action, metadata) for sampling
-            return (result.action, result)
+            return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
         else:
             # Phase 1: Action selection
             action_name = await generate_action_selection(
@@ -341,10 +350,10 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
             )
 
             if not action_name:
-                return None
+                return ActionStepResult(action=None)
 
             if action_name == "end":
-                return Action("end", [])
+                return ActionStepResult(action=Action("end", []))
 
             # Phase 2: Arguments generation
             args = await generate_action_arguments(
@@ -361,7 +370,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
             )
 
             if args is None:
-                return None
+                return ActionStepResult(action=None)
 
             # Create Action object from action_name and args
-            return Action(action_name, args)
+            return ActionStepResult(action=Action(action_name, args))
