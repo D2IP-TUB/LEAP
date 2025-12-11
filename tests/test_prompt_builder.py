@@ -183,7 +183,7 @@ class TestCoTPromptFiltering:
     """Test Chain-of-Table prompt generation with action filtering."""
 
     def test_cot_action_prompt_no_history(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
-        """CoT action prompt with no history shows all actions."""
+        """CoT action prompt with no history shows non-terminating actions only (first step)."""
         prompt = prompt_builder_non_instruct.build_cot_action_prompt(
             question="What is the average age?",
             table=sample_table,
@@ -191,13 +191,14 @@ class TestCoTPromptFiltering:
             worker=mock_worker,
         )
 
-        # All actions should be in the available actions list
+        # On first step, only non-terminating actions should be shown
         assert "Available actions:" in prompt
         available_section = prompt.split("Available actions:")[1].split("\n")[0]
         assert "select_row" in available_section
         assert "select_column" in available_section
-        assert "end" in available_section
-        assert "direct_query" in available_section
+        # Terminating actions should NOT be shown on first step
+        assert "end" not in available_section
+        assert "direct_query" not in available_section
 
     def test_cot_action_prompt_filters_used_actions(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """CoT action prompt filters out already-used actions."""
@@ -408,4 +409,140 @@ class TestPromptStructure:
             worker=mock_worker,
         )
         print(prompt3)
+        print("=" * 80)
+
+
+class TestCoTFirstActionRestrictions:
+    """Test that CoT action prompts exclude terminating actions on first step."""
+
+    def test_cot_first_action_excludes_terminating_actions(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
+        """On the first action (empty history), 'end' and 'direct_query' should NOT be available."""
+        prompt = prompt_builder_non_instruct.build_cot_action_prompt(
+            question="What is the average age?",
+            table=sample_table,
+            action_history=[],
+            worker=mock_worker,
+        )
+
+        # Check available actions section
+        available_section = prompt.split("Available actions:")[1].split("\n")[0]
+
+        # Terminating actions should NOT be available on first step
+        assert "end" not in available_section
+        assert "direct_query" not in available_section
+
+        # Non-terminating actions should be available
+        assert "select_row" in available_section
+        assert "select_column" in available_section
+
+        # Also check operations section
+        operations_section = prompt.split("Operations:")[1].split("Available actions:")[0]
+        assert "f_end:" not in operations_section
+        assert "f_direct_query:" not in operations_section
+        assert "f_select_row:" in operations_section
+        assert "f_select_column:" in operations_section
+
+    def test_cot_subsequent_actions_include_terminating_actions(
+        self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry
+    ):
+        """After first action, 'end' and 'direct_query' should be available."""
+        action_history = ["select_row([0, 1])"]
+
+        prompt = prompt_builder_non_instruct.build_cot_action_prompt(
+            question="What is the average age?",
+            table=sample_table,
+            action_history=action_history,
+            worker=mock_worker,
+        )
+
+        # Check available actions section
+        available_section = prompt.split("Available actions:")[1].split("\n")[0]
+
+        # After first action, terminating actions should be available
+        assert "end" in available_section
+        assert "direct_query" in available_section
+
+        # select_row should be filtered (already used)
+        assert "select_row" not in available_section
+
+        # select_column should still be available
+        assert "select_column" in available_section
+
+
+class TestCoTActionHistory:
+    """Test that CoT prompts properly display action history."""
+
+    def test_cot_action_prompt_shows_action_history(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
+        """CoT action prompt should display the action history."""
+        action_history = [
+            "select_row([0, 1])",
+            "select_column(['Name', 'Age'])",
+        ]
+
+        prompt = prompt_builder_non_instruct.build_cot_action_prompt(
+            question="What is the average age?",
+            table=sample_table,
+            action_history=action_history,
+            worker=mock_worker,
+        )
+
+        # Action history should be displayed
+        assert "Actions taken so far:" in prompt
+        assert "1. select_row([0, 1])" in prompt
+        assert "2. select_column(['Name', 'Age'])" in prompt
+
+    def test_cot_action_prompt_no_history_section_when_empty(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
+        """When action history is empty, no history section should appear."""
+        prompt = prompt_builder_non_instruct.build_cot_action_prompt(
+            question="What is the average age?",
+            table=sample_table,
+            action_history=[],
+            worker=mock_worker,
+        )
+
+        # No action history section should appear
+        assert "Actions taken so far:" not in prompt
+
+    def test_cot_arguments_prompt_shows_action_history(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
+        """CoT arguments prompt should also display the action history."""
+        action_history = ["select_row([0, 1])"]
+
+        prompt = prompt_builder_non_instruct.build_cot_arguments_prompt(
+            question="What is the average age?",
+            table=sample_table,
+            action_name="select_column",
+            action_history=action_history,
+            worker=mock_worker,
+        )
+
+        # Action history should be displayed
+        assert "Actions taken so far:" in prompt
+        assert "1. select_row([0, 1])" in prompt
+
+    def test_print_cot_first_action_example(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry, capsys):
+        """Print example of first CoT action prompt (run with -s flag)."""
+        print("\n" + "=" * 80)
+        print("[PHASE 1 PROMPT - ACTION SELECTION - FIRST STEP]")
+        print("=" * 80)
+        prompt = prompt_builder_non_instruct.build_cot_action_prompt(
+            question="what was the last year where this team was a part of the usl a-league?",
+            table=sample_table,
+            action_history=[],
+            worker=mock_worker,
+        )
+        print(prompt)
+        print("=" * 80)
+
+    def test_print_cot_subsequent_action_example(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry, capsys):
+        """Print example of subsequent CoT action prompt with history (run with -s flag)."""
+        print("\n" + "=" * 80)
+        print("[PHASE 1 PROMPT - ACTION SELECTION - WITH HISTORY]")
+        print("=" * 80)
+        prompt = prompt_builder_non_instruct.build_cot_action_prompt(
+            question="what was the last year where this team was a part of the usl a-league?",
+            table=sample_table,
+            action_history=["select_row([0, 1, 2, 3])"],
+            worker=mock_worker,
+        )
+        print(prompt)
         print("=" * 80)

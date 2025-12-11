@@ -38,6 +38,11 @@ class DirectQueryAction(ActionDefinition):
     def requires_args(self) -> bool:
         return False  # No arguments needed
 
+    @property
+    def is_terminating(self) -> bool:
+        """Direct query is a terminating action."""
+        return True
+
     def generate_params(self, table: Table) -> List[str]:
         """Direct query takes no parameters."""
         return []

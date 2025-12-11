@@ -16,6 +16,7 @@ from typing import List, Optional
 from vllm import SamplingParams
 
 from leap.core import Action, Table
+from leap.core.actions import REGISTRY
 from leap.inference.constraints import (
     create_action_only_constraint_processor,
     create_arguments_only_constraint_processor,
@@ -186,11 +187,15 @@ class SamplingLayer:
         if self.config.debug:
             print(f"[SAMPLING DEBUG] Phase 1 - Selected action type: {winning_action}")
 
-        if winning_action == "end":
+        # Check if this action requires arguments
+        # Some actions like 'end' and 'direct_query' don't need argument generation
+        action_def = REGISTRY.get(winning_action)
+
+        if action_def and not action_def.requires_args:
             if self.config.debug:
-                print("[SAMPLING DEBUG] Action is 'end', terminating")
+                print(f"[SAMPLING DEBUG] Action '{winning_action}' requires no arguments, skipping Phase 2")
             return SamplingResult(
-                action=Action("end", []),
+                action=Action(winning_action, []),
                 n_requested=1,
                 n_generated=1,
                 n_valid=1,
@@ -322,13 +327,19 @@ class SamplingLayer:
                         n=1,
                     )
 
+                # DEBUG: Print prompt
+                print(f"\n{'=' * 80}\n[PROMPT] Sample {sample_idx}\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
+
                 result_generator = worker.engine.generate(prompt, sampling_params, f"{request_id}_sample{sample_idx}")
                 final_result = None
                 async for result in result_generator:
                     final_result = result
 
                 if final_result and final_result.outputs:
-                    action = Action.parse(final_result.outputs[0].text.strip())
+                    response_text = final_result.outputs[0].text.strip()
+                    # DEBUG: Print response
+                    print(f"\n[RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
+                    action = Action.parse(response_text)
                     return action
                 return None
             except Exception:
@@ -369,6 +380,9 @@ class SamplingLayer:
                 n=n,
             )
 
+        # DEBUG: Print Phase 1 prompt
+        print(f"\n{'=' * 80}\n[PHASE 1 PROMPT - ACTION SELECTION]\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
+
         result_generator = worker.engine.generate(prompt, sampling_params, step_id)
         final_result = None
         async for result in result_generator:
@@ -377,7 +391,10 @@ class SamplingLayer:
         action_types = []
         if final_result:
             for output in final_result.outputs:
-                action_name = Action.parse_name_only(output.text.strip())
+                response_text = output.text.strip()
+                # DEBUG: Print Phase 1 response
+                print(f"\n[PHASE 1 RESPONSE]\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
+                action_name = Action.parse_name_only(response_text)
                 if action_name:
                     action_types.append(action_name)
 
@@ -453,6 +470,9 @@ class SamplingLayer:
                         n=1,
                     )
 
+                # DEBUG: Print Phase 2 prompt
+                print(f"\n{'=' * 80}\n[PHASE 2 PROMPT - ARGUMENTS] Sample {sample_idx}\n{'=' * 80}\n{args_prompt}\n{'=' * 80}\n")
+
                 result_generator = worker.engine.generate(args_prompt, sampling_params, step_id)
                 final_result = None
                 async for result in result_generator:
@@ -460,6 +480,8 @@ class SamplingLayer:
 
                 if final_result and final_result.outputs:
                     args_text = final_result.outputs[0].text.strip()
+                    # DEBUG: Print Phase 2 response
+                    print(f"\n[PHASE 2 RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{args_text}\n{'=' * 80}\n")
 
                     # Clean up: Remove action name prefix if model incorrectly generated it
                     # e.g., "select_column ([ "Team" ]" -> "[ "Team" ]"

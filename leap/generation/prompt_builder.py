@@ -78,7 +78,8 @@ class PromptBuilder:
         """Instruction text for iterative generation."""
         # Get action descriptions from registry (as per Chain-of-Table paper Figure 9)
         # Pass action_history to filter out already-used actions
-        action_descriptions = REGISTRY.get_action_descriptions(action_history)
+        # For iterative mode, we don't exclude terminating actions on first step
+        action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=False)
 
         if worker.use_constraints:
             # When using constraints, still show action descriptions
@@ -117,8 +118,9 @@ class PromptBuilder:
 
         # Get action descriptions and list from registry
         # Pass action_history to filter out already-used actions
-        action_descriptions = REGISTRY.get_action_descriptions(action_history)
-        actions_text = REGISTRY.get_prompt_text_cot(action_history)
+        # For CoT mode, we exclude terminating actions on first step (empty history)
+        action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=True)
+        actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
         prompt += f"{action_descriptions}\n\n"
         prompt += f"Available actions: {actions_text}\n"
         instruction_prompt = "What action should be performed next to answer the question?\n"
@@ -130,8 +132,8 @@ class PromptBuilder:
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
             prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
             # Re-get filtered descriptions and actions for fallback case
-            action_descriptions = REGISTRY.get_action_descriptions(action_history)
-            actions_text = REGISTRY.get_prompt_text_cot(action_history)
+            action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=True)
+            actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
             prompt += f"{action_descriptions}\n\n"
             prompt += f"Available actions: {actions_text}\n"
             instruction_prompt = "What action should be performed next?\nAction: "

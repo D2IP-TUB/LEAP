@@ -31,6 +31,18 @@ class ActionDefinition(ABC):
         """Whether this action requires arguments. Default: True unless overridden."""
         return self.name != "end"
 
+    @property
+    def is_terminating(self) -> bool:
+        """
+        Whether this action terminates the reasoning chain.
+
+        Terminating actions (end, direct_query) should not be available as first actions
+        in Chain-of-Table generation, as per the original paper.
+
+        Default: False. Override for terminating actions.
+        """
+        return False
+
     @abstractmethod
     def generate_params(self, table: Table) -> List[str]:
         """
@@ -217,7 +229,7 @@ class ActionRegistry:
             # Multiple actions: "op1, op2, or op3"
             return ", ".join(action_texts[:-1]) + f", or {action_texts[-1]}"
 
-    def get_prompt_text_cot(self, action_history: Optional[List[str]] = None) -> str:
+    def get_prompt_text_cot(self, action_history: Optional[List[str]] = None, exclude_terminating_on_first: bool = True) -> str:
         """
         Generate prompt text for CoT strategy.
 
@@ -226,18 +238,23 @@ class ActionRegistry:
         Args:
             action_history: List of actions already taken. If provided, these actions
                           will be filtered out from the available options (except 'end').
+            exclude_terminating_on_first: If True, exclude terminating actions when action_history is empty.
+                                         This follows the Chain-of-Table paper convention.
         """
         enabled = self.get_enabled_names()
 
+        # On first step (empty history), exclude terminating actions
+        if exclude_terminating_on_first and (not action_history or len(action_history) == 0):
+            enabled = [name for name in enabled if not self._actions[name].is_terminating]
         # Filter out already-used actions (but always keep 'end' as an option)
-        if action_history:
+        elif action_history:
             used_actions = self._extract_action_names_from_history(action_history)
             enabled = [name for name in enabled if name not in used_actions or name == "end"]
 
         action_texts = [self._actions[name].get_prompt_text_cot() for name in enabled]
         return ", ".join(action_texts)
 
-    def get_action_descriptions(self, action_history: Optional[List[str]] = None) -> str:
+    def get_action_descriptions(self, action_history: Optional[List[str]] = None, exclude_terminating_on_first: bool = True) -> str:
         """
         Generate formatted action descriptions for prompts.
 
@@ -254,11 +271,16 @@ class ActionRegistry:
         Args:
             action_history: List of actions already taken. If provided, these actions
                           will be filtered out from the available options (except 'end').
+            exclude_terminating_on_first: If True, exclude terminating actions when action_history is empty.
+                                         This follows the Chain-of-Table paper convention.
         """
         enabled = self.get_enabled_names()
 
+        # On first step (empty history), exclude terminating actions
+        if exclude_terminating_on_first and (not action_history or len(action_history) == 0):
+            enabled = [name for name in enabled if not self._actions[name].is_terminating]
         # Filter out already-used actions (but always keep 'end' as an option)
-        if action_history:
+        elif action_history:
             used_actions = self._extract_action_names_from_history(action_history)
             enabled = [name for name in enabled if name not in used_actions or name == "end"]
 

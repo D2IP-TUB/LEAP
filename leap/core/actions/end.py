@@ -28,6 +28,11 @@ class EndAction(ActionDefinition):
     def requires_args(self) -> bool:
         return False
 
+    @property
+    def is_terminating(self) -> bool:
+        """End is a terminating action."""
+        return True
+
     def generate_params(self, table: Table) -> List[str]:
         """End takes no parameters."""
         return []
