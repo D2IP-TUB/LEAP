@@ -94,6 +94,88 @@ class SamplingLayer:
         """
         return table, action_history
 
+    def _get_available_actions(self, action_history: List[str]) -> List[str]:
+        """
+        Get available actions based on action history.
+
+        Filters out already-used actions (except 'end' which is always available)
+        and excludes terminating actions on the first step.
+
+        Args:
+            action_history: List of action strings taken so far
+
+        Returns:
+            List of available action names
+        """
+        available_actions = REGISTRY.get_enabled_names()
+
+        if action_history:
+            used_actions = REGISTRY._extract_action_names_from_history(action_history)
+            # Filter out used actions but keep 'end' always available
+            available_actions = [name for name in available_actions if name not in used_actions or name == "end"]
+
+        # On first step, exclude terminating actions
+        if not action_history or len(action_history) == 0:
+            available_actions = [name for name in available_actions if not REGISTRY.get(name).is_terminating]
+
+        return available_actions
+
+    async def _generate_action_type(
+        self,
+        worker,
+        action_history: List[str],
+        table: Table,
+        question: str,
+        request_id: str,
+        step: int,
+        temperature_action: float,
+        state_machines,
+        prompt_builder,
+    ) -> str:
+        """
+        Generate the action type, optimizing for single-option scenarios.
+
+        If only one action is available, returns it directly without calling LLM.
+        Otherwise, calls LLM to generate the action type.
+
+        Args:
+            worker: Worker process with LLM
+            action_history: List of actions taken so far
+            table: Current table state
+            question: Question being answered
+            request_id: Request identifier
+            step: Current step number
+            temperature_action: Temperature for action generation
+            state_machines: State machines for constraints
+            prompt_builder: Prompt builder instance
+
+        Returns:
+            The action type name (e.g., "select_row", "end")
+        """
+        # Optimization: If only one action is available, skip LLM call (matches official implementation)
+        available_actions = self._get_available_actions(action_history)
+
+        if len(available_actions) == 1:
+            # Only one action available - skip LLM call and return it directly
+            action_type = available_actions[0]
+            if self.config.debug:
+                print(f"[SAMPLING DEBUG] Only one action available: {action_type}, skipping LLM call")
+        else:
+            # Generate action type via LLM
+            action_prompt = prompt_builder.build_cot_action_prompt(
+                question=question, table=table, action_history=action_history, worker=worker
+            )
+
+            action_types = await self.generate_action_types(worker, action_prompt, 1, request_id, step, temperature_action, state_machines)
+
+            # Take the generated action type (fallback to "end" if generation failed)
+            action_type = action_types[0] if action_types else "end"
+
+        if self.config.debug:
+            print(f"[SAMPLING DEBUG] Selected action type: {action_type}")
+
+        return action_type
+
     async def sample_action(
         self,
         worker,
@@ -106,6 +188,33 @@ class SamplingLayer:
         step: int,
     ) -> SamplingResult:
         """Generate and vote on action candidates."""
+
+        # Optimization: If only one action is available, skip LLM call (matches official implementation)
+        available_actions = self._get_available_actions(action_history)
+
+        if len(available_actions) == 1:
+            # Only one action available - skip LLM call and return it directly
+            action_name = available_actions[0]
+            action_def = REGISTRY.get(action_name)
+
+            if self.config.debug:
+                print(f"[SAMPLING DEBUG] Only one action available: {action_name}, skipping LLM call")
+
+            # Return the action with empty arguments if it doesn't require args, otherwise fail
+            if action_def and not action_def.requires_args:
+                return SamplingResult(
+                    action=Action(action_name, []),
+                    n_requested=1,
+                    n_generated=1,
+                    n_valid=1,
+                    winner_votes=1,
+                    total_votes=1,
+                )
+            else:
+                # This shouldn't happen in practice, but handle gracefully
+                # Fall through to normal generation
+                pass
+
         n_samples = self.config.n_samples
 
         if self.config.debug:
@@ -176,26 +285,28 @@ class SamplingLayer:
         if self.config.debug:
             print(f"\n[SAMPLING DEBUG] Two-phase generation for {request_id} step {step}")
 
-        # Phase 1: Generate single action type (no voting needed)
-        action_prompt = prompt_builder.build_cot_action_prompt(question=question, table=table, action_history=action_history, worker=worker)
-
-        action_types = await self.generate_action_types(worker, action_prompt, 1, request_id, step, temperature_action, state_machines)
-
-        # Take the single generated action type
-        winning_action = action_types[0] if action_types else "end"
-
-        if self.config.debug:
-            print(f"[SAMPLING DEBUG] Phase 1 - Selected action type: {winning_action}")
+        # Phase 1: Generate action type (optimized to skip LLM when only one option)
+        action_type = await self._generate_action_type(
+            worker=worker,
+            action_history=action_history,
+            table=table,
+            question=question,
+            request_id=request_id,
+            step=step,
+            temperature_action=temperature_action,
+            state_machines=state_machines,
+            prompt_builder=prompt_builder,
+        )
 
         # Check if this action requires arguments
-        # Some actions like 'end' and 'direct_query' don't need argument generation
-        action_def = REGISTRY.get(winning_action)
+        # Some actions like 'end' don't need argument generation
+        action_def = REGISTRY.get(action_type)
 
         if action_def and not action_def.requires_args:
             if self.config.debug:
-                print(f"[SAMPLING DEBUG] Action '{winning_action}' requires no arguments, skipping Phase 2")
+                print(f"[SAMPLING DEBUG] Action '{action_type}' requires no arguments, skipping Phase 2")
             return SamplingResult(
-                action=Action(winning_action, []),
+                action=Action(action_type, []),
                 n_requested=1,
                 n_generated=1,
                 n_valid=1,
@@ -205,14 +316,14 @@ class SamplingLayer:
 
         # Phase 2: Generate N argument sets based on action type
         # Use per_action_samples config to determine how many samples for this action
-        n_samples = self.config.get_n_samples(winning_action)
+        n_samples = self.config.get_n_samples(action_type)
 
         if self.config.debug:
-            print(f"[SAMPLING DEBUG] Phase 2 - Generating {n_samples} argument sets for '{winning_action}'")
+            print(f"[SAMPLING DEBUG] Phase 2 - Generating {n_samples} argument sets for '{action_type}'")
 
         args_candidates = await self.generate_arguments(
             worker,
-            winning_action,
+            action_type,
             n_samples,
             table,
             action_history,
