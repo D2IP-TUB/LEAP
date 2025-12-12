@@ -15,11 +15,11 @@ from .registry import REGISTRY, ActionDefinition
 from .select_column import SelectColumnAction
 from .select_row import SelectRowAction
 
-# Register all actions
+# Register all actions that the LLM can pick
 REGISTRY.register(SelectRowAction())
 REGISTRY.register(SelectColumnAction())
 REGISTRY.register(EndAction())
-REGISTRY.register(DirectQueryAction())
+# Note: DirectQueryAction is NOT registered - it's applied automatically after end()
 
 __all__ = [
     "Action",

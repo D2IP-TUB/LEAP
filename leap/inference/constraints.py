@@ -91,8 +91,8 @@ class ConstraintStateMachine:
         # Get enabled actions from registry
         enabled_actions = REGISTRY.get_enabled_names()
 
-        # Terminating actions (can only be used as final step)
-        terminating_actions = {"end", "direct_query"}
+        # Terminating action: only 'end' (direct_query is applied automatically after end)
+        terminating_actions = {"end"}
 
         # Non-terminating actions (table transformations)
         transformation_actions = [a for a in enabled_actions if a not in terminating_actions]

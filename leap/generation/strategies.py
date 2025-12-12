@@ -134,6 +134,8 @@ class BaseGenerationStrategy:
 
                 if action.name == "end":
                     action_history.append(action.to_string())
+                    # Automatically append direct_query() after end() as per paper
+                    action_history.append("direct_query()")
                     if logging_callback:
                         logging_callback(
                             request_id,

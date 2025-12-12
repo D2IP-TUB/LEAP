@@ -20,7 +20,7 @@ dataset:
   path: null
 
 run:
-  max_examples: 10
+  max_examples: 1
 
 generation:
   use_constraints: false
@@ -29,21 +29,19 @@ generation:
 
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:
-    - select_row
+    #- select_row
     - select_column
     - end
-    # Uncomment to enable new actions:
-    - direct_query
+    # Note: direct_query is automatically applied after end(), not a separate action
 
   sampling:
     enabled: true
     n_samples: 8
     per_action_samples:
-      select_row: 8
+      select_row: 1
       select_column: 8
       end: 1
-      # Add sampling config for new actions:
-      direct_query: 1
+      # Note: direct_query doesn't need sampling config (applied automatically)
     debug: true
     shuffle_invariant: false  # Enable shuffle-invariant sampling for robustness 
 

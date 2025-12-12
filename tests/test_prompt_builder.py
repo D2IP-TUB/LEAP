@@ -57,7 +57,8 @@ def prompt_builder_non_instruct(tokenizer):
 @pytest.fixture
 def setup_registry():
     """Set up the registry with all actions enabled."""
-    REGISTRY.set_enabled_actions(["select_row", "select_column", "end", "direct_query"])
+    # Note: direct_query is not included - it's applied automatically after end()
+    REGISTRY.set_enabled_actions(["select_row", "select_column", "end"])
     yield
     # Reset after test
     REGISTRY.set_enabled_actions(["select_row", "select_column", "end"])
@@ -80,13 +81,11 @@ class TestIterativePromptFiltering:
         assert "select_row" in prompt
         assert "select_column" in prompt
         assert "end()" in prompt
-        assert "direct_query()" in prompt
 
         # Should show all operation descriptions
         assert "f_select_row:" in prompt
         assert "f_select_column:" in prompt
         assert "f_end:" in prompt
-        assert "f_direct_query:" in prompt
 
     def test_filters_out_used_select_row(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """After using select_row, it should be filtered from available actions."""
@@ -108,7 +107,6 @@ class TestIterativePromptFiltering:
         # Other actions should still be present
         assert "select_column" in choose_from_section
         assert "end()" in choose_from_section
-        assert "direct_query()" in choose_from_section
 
         # select_row should also not be in operations descriptions
         operations_section = prompt.split("Operations:")[1].split("What should be")[0]
@@ -137,7 +135,6 @@ class TestIterativePromptFiltering:
 
         # Unused actions should remain
         assert "end()" in choose_from_section
-        assert "direct_query()" in choose_from_section
 
     def test_end_action_always_available(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """The 'end' action should always be available, even if used before."""
@@ -196,9 +193,8 @@ class TestCoTPromptFiltering:
         available_section = prompt.split("Available actions:")[1].split("\n")[0]
         assert "select_row" in available_section
         assert "select_column" in available_section
-        # Terminating actions should NOT be shown on first step
+        # Terminating action should NOT be shown on first step
         assert "end" not in available_section
-        assert "direct_query" not in available_section
 
     def test_cot_action_prompt_filters_used_actions(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """CoT action prompt filters out already-used actions."""
@@ -216,7 +212,6 @@ class TestCoTPromptFiltering:
         assert "select_row" not in available_section
         assert "select_column" in available_section
         assert "end" in available_section
-        assert "direct_query" in available_section
 
         # Also check operations section
         operations_section = prompt.split("Operations:")[1].split("Available actions:")[0]
@@ -310,8 +305,8 @@ class TestEdgeCases:
         assert "select_row" not in choose_from_section
         assert "select_column" not in choose_from_section
 
-    def test_only_end_and_direct_query_remaining(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
-        """When only terminating actions remain, they should be shown."""
+    def test_only_end_remaining(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
+        """When only the terminating action remains, it should be shown."""
         action_history = [
             "select_row([0, 1])",
             "select_column(['Name', 'Age'])",
@@ -327,12 +322,8 @@ class TestEdgeCases:
 
         choose_from_section = prompt.split("Choose from:")[-1].split("Next action:")[0]
 
-        # Only terminating actions should remain
+        # Only the terminating action should remain
         assert "end()" in choose_from_section
-        assert "direct_query()" in choose_from_section
-
-        # Format should be "action1 or action2" for two actions
-        assert " or " in choose_from_section
 
 
 class TestPromptStructure:
@@ -427,9 +418,8 @@ class TestCoTFirstActionRestrictions:
         # Check available actions section
         available_section = prompt.split("Available actions:")[1].split("\n")[0]
 
-        # Terminating actions should NOT be available on first step
+        # Terminating action should NOT be available on first step
         assert "end" not in available_section
-        assert "direct_query" not in available_section
 
         # Non-terminating actions should be available
         assert "select_row" in available_section
@@ -438,14 +428,13 @@ class TestCoTFirstActionRestrictions:
         # Also check operations section
         operations_section = prompt.split("Operations:")[1].split("Available actions:")[0]
         assert "f_end:" not in operations_section
-        assert "f_direct_query:" not in operations_section
         assert "f_select_row:" in operations_section
         assert "f_select_column:" in operations_section
 
-    def test_cot_subsequent_actions_include_terminating_actions(
+    def test_cot_subsequent_actions_include_terminating_action(
         self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry
     ):
-        """After first action, 'end' and 'direct_query' should be available."""
+        """After first action, 'end' should be available."""
         action_history = ["select_row([0, 1])"]
 
         prompt = prompt_builder_non_instruct.build_cot_action_prompt(
@@ -458,9 +447,8 @@ class TestCoTFirstActionRestrictions:
         # Check available actions section
         available_section = prompt.split("Available actions:")[1].split("\n")[0]
 
-        # After first action, terminating actions should be available
+        # After first action, terminating action should be available
         assert "end" in available_section
-        assert "direct_query" in available_section
 
         # select_row should be filtered (already used)
         assert "select_row" not in available_section

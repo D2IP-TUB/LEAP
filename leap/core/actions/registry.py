@@ -36,8 +36,9 @@ class ActionDefinition(ABC):
         """
         Whether this action terminates the reasoning chain.
 
-        Terminating actions (end, direct_query) should not be available as first actions
+        Terminating action (end) should not be available as first action
         in Chain-of-Table generation, as per the original paper.
+        Note: direct_query is automatically applied after end(), not a separate action.
 
         Default: False. Override for terminating actions.
         """
