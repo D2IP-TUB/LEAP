@@ -189,6 +189,30 @@ class PromptBuilder:
 
         return self._append_instruction(prompt, instruction_prompt)
 
+    def build_query_prompt(
+        self,
+        *,
+        question: str,
+        table: Table,
+        action_history: Sequence[str],
+        worker,
+    ) -> str:
+        """
+        Build Query(T,Q) prompt for answer generation.
+
+        This follows Chain-of-Table paper Section 3.4 and Appendix E.3.
+        The final table from the operation chain is used to generate the answer.
+        """
+        # Use similar max_chars as final query in paper
+        table_str = table.to_csv(max_chars=2000)
+
+        prompt = "Here is the table to answer this question. Please understand the table and answer the question:\n\n"
+        prompt += f"{table_str}\n\n"
+        prompt += f"Question: {question}\n"
+        instruction_prompt = "The answer is: "
+
+        return self._append_instruction(prompt, instruction_prompt)
+
     def _append_instruction(self, prompt: str, instruction_prompt: str) -> str:
         if self.is_instruct:
             message = [{"role": "user", "content": instruction_prompt}]

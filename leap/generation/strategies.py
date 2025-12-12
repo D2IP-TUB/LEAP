@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
+from vllm import SamplingParams
+
 from leap.core import Action, InferenceRequest, InferenceResult, Table
 from leap.evaluation.evaluator import calculate_execution_accuracy_with_dataset_answers
 from leap.generation.prompt_builder import PromptBuilder
@@ -205,6 +207,20 @@ class BaseGenerationStrategy:
                     print(f"Critical error detected: {exc}. Stopping generation for this instance.")
                     break
 
+        # Generate answers if direct_query() is in action history
+        generated_answers = None
+        if "direct_query()" in action_history:
+            with profiler.time_operation("answer_generation"):
+                generated_answers = await self._generate_answers(
+                    worker=worker,
+                    question=question,
+                    final_table=current_table,
+                    action_history=action_history,
+                    request_id=request_id,
+                )
+            if generated_answers:
+                print(f"Generated answers: {generated_answers}")
+
         with profiler.time_operation("evaluation"):
             accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
                 action_history, current_table, ground_truth_answers, original_table
@@ -230,7 +246,79 @@ class BaseGenerationStrategy:
             ground_truth_answers=ground_truth_answers,
             profiling_data=profiling_data,
             sampling_metadata=sampling_metadata_list if sampling_metadata_list else None,
+            generated_answers=generated_answers,
         )
+
+    async def _generate_answers(
+        self,
+        worker,
+        question: str,
+        final_table: Table,
+        action_history: List[str],
+        request_id: str,
+    ) -> Optional[List[str]]:
+        """
+        Generate answers using Query(T,Q).
+
+        Args:
+            worker: Worker with LLM access
+            question: Original question
+            final_table: Final table after all transformations
+            action_history: History of actions taken
+            request_id: Request identifier
+
+        Returns:
+            List of generated answer strings, or None if generation fails
+        """
+        try:
+            # Build Query(T,Q) prompt using prompt builder
+            query_prompt = self.prompt_builder.build_query_prompt(
+                question=question,
+                table=final_table,
+                action_history=action_history,
+                worker=worker,
+            )
+
+            # Print prompt for direct_query (similar to other actions)
+            print(f"\n{'=' * 80}")
+            print("DIRECT_QUERY PROMPT:")
+            print(f"{'=' * 80}")
+            print(query_prompt)
+            print(f"{'=' * 80}\n")
+
+            # Generate answer from LLM using worker.generate_text()
+            # Use temperature=0.0 for deterministic answer generation
+            sampling_params = SamplingParams(
+                temperature=0.0,
+                max_tokens=200,  # Reasonable limit for answer length
+                stop_token_ids=[worker.tokenizer.eos_token_id],
+            )
+
+            response = await worker.generate_text(
+                query_prompt,
+                f"{request_id}_query",
+                sampling_params,
+            )
+
+            # Print response for direct_query (similar to other actions)
+            print(f"\n{'=' * 80}")
+            print("DIRECT_QUERY RESPONSE:")
+            print(f"{'=' * 80}")
+            print(response if response else "(empty response)")
+            print(f"{'=' * 80}\n")
+
+            if not response or not response.strip():
+                print(f"Warning: Empty response from Query(T,Q) for {request_id}")
+                return None
+
+            # Return as single-item list to match expected format
+            # The answer is the direct LLM output
+            answer = response.strip()
+            return [answer]
+
+        except Exception as e:
+            print(f"Error in answer generation for {request_id}: {str(e)}")
+            return None
 
 
 class IterativeGenerationStrategy(BaseGenerationStrategy):
