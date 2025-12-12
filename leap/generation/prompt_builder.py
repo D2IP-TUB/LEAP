@@ -208,8 +208,13 @@ class PromptBuilder:
 
         prompt = "Here is the table to answer this question. Please understand the table and answer the question:\n\n"
         prompt += f"{table_str}\n\n"
-        prompt += f"Question: {question}\n"
-        instruction_prompt = "The answer is: "
+        prompt += f"Question: {question}\n\n"
+        prompt += "Provide your answer(s) as a Python list of strings.\n"
+        prompt += "Examples:\n"
+        prompt += '- Single answer: ["Italy"]\n'
+        prompt += '- Multiple answers: ["Italy", "Spain", "France"]\n'
+        prompt += '- Yes/no: ["yes"] or ["no"]\n'
+        instruction_prompt = "Answer: "
 
         return self._append_instruction(prompt, instruction_prompt)
 

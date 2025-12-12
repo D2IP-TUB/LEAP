@@ -311,14 +311,53 @@ class BaseGenerationStrategy:
                 print(f"Warning: Empty response from Query(T,Q) for {request_id}")
                 return None
 
-            # Return as single-item list to match expected format
-            # The answer is the direct LLM output
-            answer = response.strip()
-            return [answer]
+            # Parse and clean the answer(s)
+            answers = self._parse_and_clean_answers(response)
+            return answers if answers else None
 
         except Exception as e:
             print(f"Error in answer generation for {request_id}: {str(e)}")
             return None
+
+    def _parse_and_clean_answers(self, response: str) -> List[str]:
+        """
+        Parse answer(s) from LLM response.
+
+        Expected format: Python list of strings like ["Italy"] or ["Italy", "Spain", "France"]
+
+        Args:
+            response: Raw LLM response
+
+        Returns:
+            List of answer strings
+        """
+        import ast
+
+        response = response.strip()
+
+        # Try to parse as Python list using ast.literal_eval (safe evaluation)
+        try:
+            parsed = ast.literal_eval(response)
+            if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+                return [answer.strip() for answer in parsed if answer.strip()]
+        except (ValueError, SyntaxError):
+            pass
+
+        # Fallback: if response looks like it might be a list but has minor formatting issues
+        # Try to extract content between [ and ]
+        if response.startswith("[") and response.endswith("]"):
+            try:
+                # Try to fix common issues like single quotes vs double quotes
+                fixed_response = response.replace("'", '"')
+                parsed = ast.literal_eval(fixed_response)
+                if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+                    return [answer.strip() for answer in parsed if answer.strip()]
+            except (ValueError, SyntaxError):
+                pass
+
+        # Fallback: treat entire response as single answer
+        print(f"Warning: Could not parse response as list, treating as single answer: {response}")
+        return [response]
 
 
 class IterativeGenerationStrategy(BaseGenerationStrategy):
