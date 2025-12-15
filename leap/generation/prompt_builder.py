@@ -206,17 +206,36 @@ class PromptBuilder:
         # Use similar max_chars as final query in paper
         table_str = table.to_csv(max_chars=2000)
 
-        prompt = "Here is the table to answer this question. Please understand the table and answer the question:\n\n"
-        prompt += f"{table_str}\n\n"
-        prompt += f"Question: {question}\n\n"
-        prompt += "Provide your answer(s) as a Python list of strings.\n"
-        prompt += "Examples:\n"
-        prompt += '- Single answer: ["Italy"]\n'
-        prompt += '- Multiple answers: ["Italy", "Spain", "France"]\n'
-        prompt += '- Yes/no: ["yes"] or ["no"]\n'
-        instruction_prompt = "Answer: "
+        instruction_prompt = "<s>[INST] Here is the table to answer this question. Please understand the table and answer the question:\n\n"
 
-        return self._append_instruction(prompt, instruction_prompt)
+        instruction_prompt += "Provide your answer(s) as a Python list of strings.\n"
+        instruction_prompt += "Examples:\n"
+        instruction_prompt += '- Single answer: ["Italy"]\n'
+        instruction_prompt += '- Multiple answers: ["Italy", "Spain", "France"]\n'
+        instruction_prompt += '- Yes/no: ["yes"] or ["no"]\n'
+
+        # Add 1-shot example to demonstrate format (output ONLY the list)
+        instruction_prompt += "Example:\n"
+        instruction_prompt += "Table:\n"
+        instruction_prompt += " ,Rank,City,Passengers Number,Ranking,Airline\n"
+        instruction_prompt += "row 0,1,United States, Los Angeles,14749,2,Alaska Airlines\n"
+        instruction_prompt += "row 1,2,United States, Houston,5465,8,United Express\n"
+        instruction_prompt += "row 2,3,Canada, Calgary,3761,5,Air Transat, WestJet\n"
+        instruction_prompt += "row 3,4,Canada, Saskatoon,2282,4,\n"
+        instruction_prompt += "row 4,5,Canada, Vancouver,2103,2,Air Transat\n"
+        instruction_prompt += "row 5,6,United States, Phoenix,1829,1,US Airways\n"
+        instruction_prompt += "row 6,7,Canada, Toronto,1202,1,Air Transat, CanJet\n"
+        instruction_prompt += "row 7,8,Canada, Edmonton,110,2,\n"
+        instruction_prompt += "row 8,9,United States, Oakland,107,5,\n\n"
+        instruction_prompt += "Question: how many more passengers flew to los angeles than to saskatoon from manzanillo airport in 2013?\n"
+        instruction_prompt += 'Answer: [/INST] ["12467"] </s>'
+
+        # Now the actual query
+        instruction_prompt += f"<s>[INST] Table:\n{table_str}\n\n"
+        instruction_prompt += f"Question: {question}\n"
+        instruction_prompt += "Answer: [/INST]"
+
+        return instruction_prompt
 
     def _append_instruction(self, prompt: str, instruction_prompt: str) -> str:
         if self.is_instruct:

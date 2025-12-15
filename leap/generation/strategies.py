@@ -220,11 +220,27 @@ class BaseGenerationStrategy:
                 )
             if generated_answers:
                 print(f"Generated answers: {generated_answers}")
+                if ground_truth_answers:
+                    print(f"Expected answers:  {ground_truth_answers}")
+                    # Check if any generated answer matches any ground truth answer
+                    matches = [ans for ans in generated_answers if ans in ground_truth_answers]
+                    if matches:
+                        print(f"✓ Match found: {matches}")
+                    else:
+                        print("✗ No match")
 
         with profiler.time_operation("evaluation"):
             accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-                action_history, current_table, ground_truth_answers, original_table
+                action_history, current_table, ground_truth_answers, original_table, generated_answers
             )
+
+        # Print evaluation results
+        print(
+            f"[EVALUATION RESULT] Execution Accuracy: {accuracy_metrics.execution_accuracy:.2f} | "
+            f"Answer Found: {accuracy_metrics.answer_found_in_final} | "
+            f"Terminated Properly: {accuracy_metrics.terminated_properly} | "
+            f"Matched: {accuracy_metrics.matched_answers_final}"
+        )
 
         # Print per-request timing summary
         total_time = profiler.get_total_time()
@@ -292,6 +308,7 @@ class BaseGenerationStrategy:
                 temperature=0.0,
                 max_tokens=200,  # Reasonable limit for answer length
                 stop_token_ids=[worker.tokenizer.eos_token_id],
+                stop=["\n\n", "\nExplanation:", "\nNote:"],  # Stop at double newline or explanation markers
             )
 
             response = await worker.generate_text(
