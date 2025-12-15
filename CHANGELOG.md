@@ -2,11 +2,20 @@
 
 All notable changes to the LEAP project are documented in this file.
 
-## [Unreleased] - 10.12.2025
+## [Unreleased] - 15.12.2025
 
 ### Added
 
 #### Features
+- **Action Registry System**: Implemented centralized action management system
+  - New registry-based architecture for registering and managing actions
+  - Dedicated action package structure
+- **Direct Query Action**: New action type for direct question answering
+  - Automatically executed once after END action
+  - Cannot be selected directly by the model, triggered programmatically
+  - Best-effort parsing of query results and improved prompting
+- **Action History in Prompts**: Added action history context to prompts
+- **Single Action Optimization**: Skip action type generation when only one action is available
 - **Sampling Layer**: Implemented multi-sample generation with voting mechanism for improved action selection
   - Generates N candidate actions and selects winner via majority voting
   - Support for per-action sample configuration (e.g., different sample counts for different action types)
@@ -16,8 +25,15 @@ All notable changes to the LEAP project are documented in this file.
 - **Shuffle Invariant SamplingLayer**: Implement shuffle invariant sampling for an equivariance action behavior
 
 #### Refactoring
-  - Extract shared orchesteration for generation strategies
-  - Use sampling layer as an interface for single response requests
+- Renamed `inference.py` to `types.py` for better clarity
+- Moved `action.py` from `leap/core/` to `leap/core/actions/`
+- Extract shared orchesteration for generation strategies
+- Use sampling layer as an interface for single response requests
+- Enhanced evaluator, prompt builder, and sampling logic
+- Refactored inference constraints for better maintainability
+
+### Changed
+- Updated configuration schema in `configs/default.yaml` for action registry support
 
 ## [0.1.0] - 2025-12-03
 
