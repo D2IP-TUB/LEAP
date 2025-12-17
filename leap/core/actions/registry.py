@@ -292,7 +292,7 @@ class ActionRegistry:
         for name in enabled:
             action = self._actions[name]
             desc = action.get_description()
-            lines.append(f"f_{name}: {desc}")
+            lines.append(f"{name}: {desc}")
 
         return "\n".join(lines)
 

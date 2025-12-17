@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Optional, Sequence
 
 from leap.core import Table
 from leap.core.actions import REGISTRY
+from leap.generation.action_examples import ActionPromptBuilder
 
 
 @dataclass
@@ -37,11 +38,21 @@ class PromptBuilder:
         is_instruct: bool,
         iterative_settings: IterativePromptSettings | None = None,
         cot_settings: CotPromptSettings | None = None,
+        use_action_examples: bool = True,
     ):
         self.tokenizer = tokenizer
         self.is_instruct = is_instruct
         self.iterative_settings = iterative_settings or IterativePromptSettings()
         self.cot_settings = cot_settings or CotPromptSettings()
+
+        # Initialize action examples system (builds templates once)
+        self.action_examples: Optional[ActionPromptBuilder] = None
+        if use_action_examples:
+            try:
+                self.action_examples = ActionPromptBuilder()
+            except FileNotFoundError:
+                # If examples file doesn't exist, fall back to old behavior
+                self.action_examples = None
 
     def build_iterative_prompt(
         self,
@@ -106,39 +117,48 @@ class PromptBuilder:
         worker,
     ) -> str:
         """Prompt for CoT action selection (dynamic plan)."""
+        # Check if we have examples for action selection
+        examples_str = ""
+        if self.action_examples and self.action_examples.has_prompt("action_selection"):
+            examples_str = self.action_examples.get_examples("action_selection")
+
         table_str = table.to_csv(max_chars=self.cot_settings.action_table_chars)
-        prompt = f"Table:\n{table_str}\n\n"
-        prompt += f"Question: {question}\n\n"
+        instruction_prompt = f"Table:\n{table_str}\n\n"
+        instruction_prompt += f"Question: {question}\n\n"
 
         if action_history:
-            prompt += "Actions taken so far:\n"
+            instruction_prompt += "Actions taken so far:\n"
             for idx, action in enumerate(action_history):
-                prompt += f"{idx + 1}. {action}\n"
-            prompt += "\n"
+                instruction_prompt += f"{idx + 1}. {action}\n"
+            instruction_prompt += "\n"
 
         # Get action descriptions and list from registry
         # Pass action_history to filter out already-used actions
         # For CoT mode, we exclude terminating actions on first step (empty history)
         action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=True)
         actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
-        prompt += f"{action_descriptions}\n\n"
-        prompt += f"Available actions: {actions_text}\n"
-        instruction_prompt = "What action should be performed next to answer the question?\n"
+        instruction_prompt += f"{action_descriptions}\n\n"
+        instruction_prompt += f"Available actions: {actions_text}\n"
+        instruction_prompt += "What action should be performed next to answer the question?\n"
         instruction_prompt += "Action: "
 
-        estimated_length = len(prompt) // 4
+        # Prepend examples to instruction_prompt (so they go inside [INST] tags)
+        if examples_str:
+            instruction_prompt = examples_str + instruction_prompt
+
+        estimated_length = len(instruction_prompt) // 4
         if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
             table_str = table.to_csv(max_chars=self.cot_settings.action_fallback_table_chars)
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
-            prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
+            instruction_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
             # Re-get filtered descriptions and actions for fallback case
             action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=True)
             actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
-            prompt += f"{action_descriptions}\n\n"
-            prompt += f"Available actions: {actions_text}\n"
-            instruction_prompt = "What action should be performed next?\nAction: "
+            instruction_prompt += f"{action_descriptions}\n\n"
+            instruction_prompt += f"Available actions: {actions_text}\n"
+            instruction_prompt += "What action should be performed next?\nAction: "
 
-        return self._append_instruction(prompt, instruction_prompt)
+        return self._append_instruction("", instruction_prompt)
 
     def build_cot_arguments_prompt(
         self,
@@ -150,6 +170,12 @@ class PromptBuilder:
         worker,
     ) -> str:
         """Prompt for CoT argument generation."""
+        # Check if we have examples for this action
+        examples_str = ""
+        if self.action_examples and self.action_examples.has_prompt(action_name):
+            examples_str = self.action_examples.get_examples(action_name)
+
+        # Original prompt structure
         table_str = table.to_csv(max_chars=self.cot_settings.args_table_chars)
         prompt = f"Table:\n{table_str}\n\n"
         prompt += f"Question: {question}\n\n"
@@ -186,6 +212,11 @@ class PromptBuilder:
             else:
                 sample_cols = list(table.columns)[:3]
                 instruction_prompt = f"Which columns from {sample_cols}...?\nColumn names: "
+
+        # If we have examples, prepend them to instruction_prompt instead of prompt
+        # This ensures they go INSIDE [INST] tags in instruct mode
+        if examples_str:
+            instruction_prompt = examples_str + instruction_prompt
 
         return self._append_instruction(prompt, instruction_prompt)
 

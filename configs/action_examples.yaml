@@ -1,0 +1,44 @@
+# Action Examples for Prompt Building
+#
+# Each action has a list of examples used to build prompts.
+# Examples are loaded once and cached for performance.
+
+examples:
+  direct_query:
+    - table: " ,Date,Division,League,Regular Season,Playoffs,Open Cup\nrow 0,2001/01/02,2,USL A-League,4th Western,Quarterfinals,Did not qualify\nrow 1,2002/08/06,2,USL A-League,2nd Pacific,1st Round,Did not qualify\nrow 2,2005/03/24,2,USL First Division,5th,Quarterfinals,4th Round"
+      question: "what was the last year where this team was a part of the usl a-league?"
+      explanation: "The table shows league information across different years. We need to identify rows with USL A-League and find the latest year."
+      answer: "direct_query()"
+
+  select_row:
+    - table: " ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd\nrow 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836\nrow 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154\nrow 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651"
+      question: "Whose home team score is higher, richmond or st kilda?"
+      explanation: "The question asks about the home team score of richmond and st kilda. We need to know the information of richmond and st kilda in row 0 and row 2. We select row 0 and row 2."
+      answer: "select_row([0, 2])"
+
+    - table: " ,home team,home team score,away team,away team score,venue,crowd\nrow 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836\nrow 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154\nrow 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651\nrow 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108\nrow 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271\nrow 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749"
+      question: "what is the away team with the highest score?"
+      explanation: "the statement want to ask the away team of highest away team score. the highest away team score is 23.11 (149). it is on row 4. so we need row 4."
+      answer: "select_row([4])"
+
+  select_column:
+    - table: " ,competition,total matches,cardiff win,draw,swansea win\nrow 0,league,55,19,16,20\nrow 1,fa cup,2,0,0,2\nrow 2,league cup,5,2,0,3"
+      question: "there are no cardiff wins that have a draw greater than 27."
+      answer: 'select_column(["cardiff win", "draw"])'
+
+    - table: " ,Rank,Cyclist,Team,Time,UCI ProTour Points\nrow 0,1,Alejandro Valverde (ESP),Caisse d'Epargne,5h 29' 10\",40\nrow 1,2,Alexandr Kolobnev (RUS),Team CSC Saxo Bank,s.t.,30\nrow 2,3,Davide Rebellin (ITA),Gerolsteiner,s.t.,25"
+      question: "which country had the most cyclists finish within the top 10?"
+      answer: 'select_column(["Rank", "Cyclist"])'
+
+  action_selection:
+    - table: " ,Year,Division,League,Regular Season,Playoffs,Open Cup\nrow 0,2001,2,USL A-League,4th Western,Quarterfinals,Did not qualify\nrow 1,2002,2,USL A-League,2nd Pacific,1st Round,Did not qualify\nrow 2,2003,2,USL A-League,3rd Pacific,Did not qualify,Did not qualify\nrow 3,2004,2,USL A-League,1st Western,Quarterfinals,4th Round\nrow 4,2005,2,USL First Division,5th,Quarterfinals,4th Round"
+      question: "what was the last year where this team was a part of the usl a-league?"
+      answer: "select_row"
+
+    - table: " ,Rank,Cyclist,Team,Time,UCI ProTour Points\nrow 0,1,Alejandro Valverde (ESP),Caisse d'Epargne,5h 29' 10\",40\nrow 1,2,Alexandr Kolobnev (RUS),Team CSC Saxo Bank,s.t.,30\nrow 2,3,Davide Rebellin (ITA),Gerolsteiner,s.t.,25"
+      question: "which country had the most cyclists finish within the top 10?"
+      answer: "select_column"
+
+    - table: " ,Name,Age,Country\nrow 0,Alice,25,USA"
+      question: "What is Alice's age?"
+      answer: "end"
