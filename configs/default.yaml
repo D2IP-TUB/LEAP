@@ -20,7 +20,7 @@ dataset:
   path: null
 
 run:
-  max_examples: 100
+  max_examples: 150
 
 generation:
   use_constraints: false
@@ -29,7 +29,7 @@ generation:
 
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:
-    #- select_row
+    - select_row
     - select_column
     - end
     # Note: direct_query is automatically applied after end(), not a separate action

@@ -264,10 +264,10 @@ class ActionRegistry:
 
         Example output:
         "Operations:
-        f_select_row: selects a subset of rows
-        f_select_column: selects a subset of columns
-        f_end: indicates completion
-        f_direct_query: answer directly without transformation"
+        select_row: selects a subset of rows
+        select_column: selects a subset of columns
+        end: indicates completion
+        direct_query: answer directly without transformation"
 
         Args:
             action_history: List of actions already taken. If provided, these actions

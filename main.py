@@ -197,6 +197,7 @@ def main():
         },
         tensor_parallel_size=model_settings.hardware.tensor_parallel_size,
         max_concurrent_requests=model_settings.hardware.max_concurrent_requests,
+        max_model_len=model_settings.hardware.max_model_len,
     )
 
     try:

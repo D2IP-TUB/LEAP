@@ -147,26 +147,28 @@ class PromptBuilder:
             action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=True)
             actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
             instruction_prompt += f"{action_descriptions}\n\n"
-            instruction_prompt += f"Available actions: {actions_text}\n"
+            instruction_prompt += f"The next operation must be one of the following: {actions_text}\n"
             instruction_prompt += "What action should be performed next?\nAction: "
 
         # For action_selection, format examples as conversation history (for instruct models)
-        # Each example should be: <s>[INST]...[/INST]answer</s>
+        # Use messages/dictionary abstraction with apply_chat_template for model-agnostic formatting
         if self.action_examples and self.action_examples.has_prompt("action_selection"):
             examples = self.action_examples.examples_manager.get_examples("action_selection")
             if examples and self.is_instruct:
-                # Build conversation history with examples
-                examples_history = ""
+                # Build conversation history with examples using messages format
+                messages = []
                 for example in examples:
-                    # Format each example as a complete conversation turn
+                    # Format each example as a conversation turn (user message + assistant response)
                     example_table_str = example.table.to_csv(max_chars=2000, crop=False)
                     example_prompt = f"Table:\n{example_table_str}\n\nQuestion: {example.question}\n\nWhat action should be performed next to answer the question?\nAction: "
-                    example_response = example.answer
-                    # Wrap in instruct format
-                    examples_history += f"<s>[INST] {example_prompt} [/INST] {example_response}</s>"
+                    messages.append({"role": "user", "content": example_prompt})
+                    messages.append({"role": "assistant", "content": example.answer})
 
-                # Prepend examples history, then add current instance with [INST]
-                return examples_history + self._append_instruction("", instruction_prompt)
+                # Add current instance as final user message
+                messages.append({"role": "user", "content": instruction_prompt})
+
+                # Use tokenizer to format the entire conversation - model-agnostic!
+                return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
         # No examples or non-instruct mode: use regular formatting
         return self._append_instruction("", instruction_prompt)
@@ -248,36 +250,54 @@ class PromptBuilder:
         # Use similar max_chars as final query in paper
         table_str = table.to_csv(max_chars=2000)
 
-        instruction_prompt = "<s>[INST] Here is the table to answer this question. Please understand the table and answer the question:\n\n"
+        # Build messages for conversation with 1-shot example
+        messages = []
 
-        instruction_prompt += "Provide your answer(s) as a Python list of strings.\n"
-        instruction_prompt += "Examples:\n"
-        instruction_prompt += '- Single answer: ["Italy"]\n'
-        instruction_prompt += '- Multiple answers: ["Italy", "Spain", "France"]\n'
-        instruction_prompt += '- Yes/no: ["yes"] or ["no"]\n'
+        # Add 1-shot example to demonstrate format
+        example_table = " ,Rank,City,Passengers Number,Ranking,Airline\n"
+        example_table += "row 0,1,United States, Los Angeles,14749,2,Alaska Airlines\n"
+        example_table += "row 1,2,United States, Houston,5465,8,United Express\n"
+        example_table += "row 2,3,Canada, Calgary,3761,5,Air Transat, WestJet\n"
+        example_table += "row 3,4,Canada, Saskatoon,2282,4,\n"
+        example_table += "row 4,5,Canada, Vancouver,2103,2,Air Transat\n"
+        example_table += "row 5,6,United States, Phoenix,1829,1,US Airways\n"
+        example_table += "row 6,7,Canada, Toronto,1202,1,Air Transat, CanJet\n"
+        example_table += "row 7,8,Canada, Edmonton,110,2,\n"
+        example_table += "row 8,9,United States, Oakland,107,5,\n"
 
-        # Add 1-shot example to demonstrate format (output ONLY the list)
-        instruction_prompt += "Example:\n"
-        instruction_prompt += "Table:\n"
-        instruction_prompt += " ,Rank,City,Passengers Number,Ranking,Airline\n"
-        instruction_prompt += "row 0,1,United States, Los Angeles,14749,2,Alaska Airlines\n"
-        instruction_prompt += "row 1,2,United States, Houston,5465,8,United Express\n"
-        instruction_prompt += "row 2,3,Canada, Calgary,3761,5,Air Transat, WestJet\n"
-        instruction_prompt += "row 3,4,Canada, Saskatoon,2282,4,\n"
-        instruction_prompt += "row 4,5,Canada, Vancouver,2103,2,Air Transat\n"
-        instruction_prompt += "row 5,6,United States, Phoenix,1829,1,US Airways\n"
-        instruction_prompt += "row 6,7,Canada, Toronto,1202,1,Air Transat, CanJet\n"
-        instruction_prompt += "row 7,8,Canada, Edmonton,110,2,\n"
-        instruction_prompt += "row 8,9,United States, Oakland,107,5,\n\n"
-        instruction_prompt += "Question: how many more passengers flew to los angeles than to saskatoon from manzanillo airport in 2013?\n"
-        instruction_prompt += 'Answer: [/INST] ["12467"] </s>'
+        example_instruction = "Here is the table to answer this question. Please understand the table and answer the question:\n\n"
+        example_instruction += "Provide your answer(s) as a Python list of strings.\n"
+        example_instruction += "Examples:\n"
+        example_instruction += '- Single answer: ["Italy"]\n'
+        example_instruction += '- Multiple answers: ["Italy", "Spain", "France"]\n'
+        example_instruction += '- Yes/no: ["yes"] or ["no"]\n\n'
+        example_instruction += f"Table:\n{example_table}\n"
+        example_instruction += "Question: how many more passengers flew to los angeles than to saskatoon from manzanillo airport in 2013?\n"
 
-        # Now the actual query
-        instruction_prompt += f"<s>[INST] Table:\n{table_str}\n\n"
-        instruction_prompt += f"Question: {question}\n"
-        instruction_prompt += "Answer: [/INST]"
+        messages.append({"role": "user", "content": example_instruction})
+        messages.append({"role": "assistant", "content": 'Answer:["12467"]'})
 
-        return instruction_prompt
+        # Add current query
+        current_instruction = "Here is the table to answer this question. Please understand the table and answer the question:\n\n"
+        current_instruction += "Provide your answer(s) as a Python list of strings.\n\n"
+        current_instruction += f"Table:\n{table_str}\n\n"
+        current_instruction += f"Question: {question}\n"
+
+        messages.append({"role": "user", "content": current_instruction})
+    
+
+        # Use tokenizer to format the conversation - model-agnostic!
+        if self.is_instruct:
+            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) + "Answer:"
+        else:
+            # For non-instruct models, just concatenate the messages
+            result = ""
+            for msg in messages:
+                if msg["role"] == "user":
+                    result += msg["content"] + "\n"
+                else:
+                    result += msg["content"] + "\n\n"
+            return result
 
     def _append_instruction(self, prompt: str, instruction_prompt: str) -> str:
         if self.is_instruct:
