@@ -6,7 +6,7 @@ Adjusted version of the Official Evaluator for WikiTableQuestions Dataset
 Main changes:
 - runs on python3
 - uses the Evaluator class to evaluate
-- uses question to search instead of id 
+- uses question to search instead of id
 
 
 Official documentation:
@@ -52,24 +52,30 @@ A target item T matches a predicted item P if one of the following is true:
 3. T can be interpreted as a date T_D, P is a date, and P = T_D
    (exact match on all fields; e.g., xx-01-12 and 1990-01-12 do not match)
 """
-__version__ = '1.0.2'
 
-import sys, os, re, argparse
+__version__ = "1.0.2"
+
+import sys
+import os
+import re
+import argparse
 import unicodedata
 from math import isnan, isinf
 from abc import ABC, abstractmethod
 
 ################ String Normalization ################
 
+
 def normalize(x):
     if not isinstance(x, str):
-        x = str(x, 'utf8', errors='ignore')
+        x = str(x, "utf8", errors="ignore")
     # Remove diacritics
-    x = ''.join(c for c in unicodedata.normalize('NFKD', x)
-                if unicodedata.category(c) != 'Mn')
+    x = "".join(
+        c for c in unicodedata.normalize("NFKD", x) if unicodedata.category(c) != "Mn"
+    )
     # Normalize quotes and dashes
     x = re.sub(r"[‘’´`]", "'", x)
-    x = re.sub(r"[“”]", "\"", x)
+    x = re.sub(r"[“”]", '"', x)
     x = re.sub(r"[‐‑‒–—−]", "-", x)
     while True:
         old_x = x
@@ -78,21 +84,21 @@ def normalize(x):
         # Remove details in parenthesis
         x = re.sub(r"(?<!^)( \([^)]*\))*$", "", x.strip())
         # Remove outermost quotation mark
-        x = re.sub(r'^"([^"]*)"$', r'\1', x.strip())
+        x = re.sub(r'^"([^"]*)"$', r"\1", x.strip())
         if x == old_x:
             break
     # Remove final '.'
-    if x and x[-1] == '.':
+    if x and x[-1] == ".":
         x = x[:-1]
     # Collapse whitespaces and convert to lower case
-    x = re.sub(r'\s+', ' ', x, flags=re.UNICODE).lower().strip()
+    x = re.sub(r"\s+", " ", x, flags=re.UNICODE).lower().strip()
     return x
 
 
 ################ Value Types ################
 
-class Value(ABC):
 
+class Value(ABC):
     # Should be populated with the normalized string
     _normalized = None
 
@@ -113,7 +119,6 @@ class Value(ABC):
 
 
 class StringValue(Value):
-
     def __init__(self, content):
         assert isinstance(content, str)
         self._normalized = normalize(content)
@@ -126,7 +131,8 @@ class StringValue(Value):
         return self._hash
 
     def __str__(self):
-        return 'S' +  str([self.normalized])
+        return "S" + str([self.normalized])
+
     __repr__ = __str__
 
     def match(self, other):
@@ -135,7 +141,6 @@ class StringValue(Value):
 
 
 class NumberValue(Value):
-
     def __init__(self, amount, original_string=None):
         assert isinstance(amount, (int, float))
         if abs(amount - round(amount)) < 1e-6:
@@ -159,7 +164,8 @@ class NumberValue(Value):
         return self._hash
 
     def __str__(self):
-        return ('N(%f)' % self.amount) + str([self.normalized])
+        return ("N(%f)" % self.amount) + str([self.normalized])
+
     __repr__ = __str__
 
     def match(self, other):
@@ -179,17 +185,16 @@ class NumberValue(Value):
         """
         try:
             return int(text)
-        except:
+        except Exception:
             try:
                 amount = float(text)
                 assert not isnan(amount) and not isinf(amount)
                 return amount
-            except:
+            except Exception:
                 return None
 
 
 class DateValue(Value):
-
     def __init__(self, year, month, day, original_string=None):
         """Create a new DateValue. Placeholders are marked as -1."""
         assert isinstance(year, int)
@@ -200,10 +205,11 @@ class DateValue(Value):
         self._month = month
         self._day = day
         if not original_string:
-            self._normalized = '{}-{}-{}'.format(
-                year if year != -1 else 'xx',
-                month if month != -1 else 'xx',
-                day if day != '-1' else 'xx')
+            self._normalized = "{}-{}-{}".format(
+                year if year != -1 else "xx",
+                month if month != -1 else "xx",
+                day if day != "-1" else "xx",
+            )
         else:
             self._normalized = normalize(original_string)
         self._hash = hash((self._year, self._month, self._day))
@@ -219,8 +225,10 @@ class DateValue(Value):
         return self._hash
 
     def __str__(self):
-        return (('D(%d,%d,%d)' % (self._year, self._month, self._day))
-                + str([self._normalized]))
+        return ("D(%d,%d,%d)" % (self._year, self._month, self._day)) + str(
+            [self._normalized]
+        )
+
     __repr__ = __str__
 
     def match(self, other):
@@ -239,20 +247,21 @@ class DateValue(Value):
             tuple (year, month, date) if successful; otherwise None.
         """
         try:
-            ymd = text.lower().split('-')
+            ymd = text.lower().split("-")
             assert len(ymd) == 3
-            year = -1 if ymd[0] in ('xx', 'xxxx') else int(ymd[0])
-            month = -1 if ymd[1] == 'xx' else int(ymd[1])
-            day = -1 if ymd[2] == 'xx' else int(ymd[2])
+            year = -1 if ymd[0] in ("xx", "xxxx") else int(ymd[0])
+            month = -1 if ymd[1] == "xx" else int(ymd[1])
+            day = -1 if ymd[2] == "xx" else int(ymd[2])
             assert not (year == month == day == -1)
             assert month == -1 or 1 <= month <= 12
             assert day == -1 or 1 <= day <= 31
             return (year, month, day)
-        except:
+        except Exception:
             return None
 
 
 ################ Value Instantiation ################
+
 
 def to_value(original_string, corenlp_value=None):
     """Convert the string to Value object.
@@ -282,6 +291,7 @@ def to_value(original_string, corenlp_value=None):
     # String.
     return StringValue(original_string)
 
+
 def to_value_list(original_strings, corenlp_values=None):
     """Convert a list of strings to a list of Values
 
@@ -295,17 +305,19 @@ def to_value_list(original_strings, corenlp_values=None):
     if corenlp_values is not None:
         assert isinstance(corenlp_values, (list, tuple, set))
         assert len(original_strings) == len(corenlp_values)
-        return list(set(to_value(x, y) for (x, y)
-                in zip(original_strings, corenlp_values)))
+        return list(
+            set(to_value(x, y) for (x, y) in zip(original_strings, corenlp_values))
+        )
     else:
         return list(set(to_value(x) for x in original_strings))
 
 
 ################ Check the Predicted Denotations ################
 
+
 def check_denotation(target_values, predicted_values):
     """Return True if the predicted denotation is correct.
-    
+
     Args:
         target_values (list[Value])
         predicted_values (list[Value])
@@ -324,6 +336,7 @@ def check_denotation(target_values, predicted_values):
 
 ################ Batch Mode ################
 
+
 def tsv_unescape(x):
     """Unescape strings in the TSV file.
     Escaped characters include:
@@ -336,7 +349,8 @@ def tsv_unescape(x):
     Returns:
         a str
     """
-    return x.replace(r'\n', '\n').replace(r'\p', '|').replace('\\\\', '\\')
+    return x.replace(r"\n", "\n").replace(r"\p", "|").replace("\\\\", "\\")
+
 
 def tsv_unescape_list(x):
     """Unescape a list in the TSV file.
@@ -347,29 +361,31 @@ def tsv_unescape_list(x):
     Returns:
         a list of str
     """
-    return [tsv_unescape(y) for y in x.split('|')]
+    return [tsv_unescape(y) for y in x.split("|")]
+
 
 class Evaluator:
-    def __init__(self, tagged_dataset_path=os.path.join('.', 'tagged', 'data')):
+    def __init__(self, tagged_dataset_path=os.path.join(".", "tagged", "data")):
         self.target_values_map = {}
         self.load_tagged_dataset(tagged_dataset_path)
-    
+
     def load_tagged_dataset(self, tagged_dataset_path):
         # ID string --> list[Value]
         for filename in os.listdir(tagged_dataset_path):
             filename = os.path.join(tagged_dataset_path, filename)
-            print('Reading dataset from', filename, file=sys.stderr)
-            with open(filename, 'r', encoding='utf8') as fin:
-                header = fin.readline().rstrip('\n').split('\t')
+            print("Reading dataset from", filename, file=sys.stderr)
+            with open(filename, "r", encoding="utf8") as fin:
+                header = fin.readline().rstrip("\n").split("\t")
                 for line in fin:
-                    stuff = dict(zip(header, line.rstrip('\n').split('\t')))
+                    stuff = dict(zip(header, line.rstrip("\n").split("\t")))
                     # replace the original script "id" with question search "utterance"
-                    ex_id = stuff['utterance']
-                    original_strings = tsv_unescape_list(stuff['targetValue'])
-                    canon_strings = tsv_unescape_list(stuff['targetCanon'])
+                    ex_id = stuff["utterance"]
+                    original_strings = tsv_unescape_list(stuff["targetValue"])
+                    canon_strings = tsv_unescape_list(stuff["targetCanon"])
                     self.target_values_map[ex_id] = to_value_list(
-                            original_strings, canon_strings)
-        print('Read', len(self.target_values_map), 'examples', file=sys.stderr)
+                        original_strings, canon_strings
+                    )
+        print("Read", len(self.target_values_map), "examples", file=sys.stderr)
 
     def evaluate(self, ex_id, predicted_values):
         if ex_id not in self.target_values_map:
@@ -379,22 +395,36 @@ class Evaluator:
             target_values = self.target_values_map[ex_id]
             predicted_values = to_value_list(predicted_values)
             correct = check_denotation(target_values, predicted_values)
-            print(u'%s\t%s\t%s\t%s' % (ex_id, correct,
-                    target_values, predicted_values))
+            print("%s\t%s\t%s\t%s" % (ex_id, correct, target_values, predicted_values))
             return correct
+
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-t', '--tagged-dataset-path',
-            default=os.path.join('.', 'tagged', 'data'),
-            help='Directory containing CoreNLP-tagged dataset TSV file')
-    
+    parser.add_argument(
+        "-t",
+        "--tagged-dataset-path",
+        default=os.path.join(".", "tagged", "data"),
+        help="Directory containing CoreNLP-tagged dataset TSV file",
+    )
+
     args = parser.parse_args()
-    
+
     evaluator = Evaluator(args.tagged_dataset_path)
 
-    correct = evaluator.evaluate("congressmen re-elected with at least 60% of the vote", ["Wayne Gilchrest","Ben Cardin","Albert Wynn","Steny Hoyer","Roscoe Bartlett","Elijah Cummings"])    
+    correct = evaluator.evaluate(
+        "congressmen re-elected with at least 60% of the vote",
+        [
+            "Wayne Gilchrest",
+            "Ben Cardin",
+            "Albert Wynn",
+            "Steny Hoyer",
+            "Roscoe Bartlett",
+            "Elijah Cummings",
+        ],
+    )
     print(correct)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

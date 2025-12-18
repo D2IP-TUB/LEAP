@@ -5,6 +5,7 @@ from constraints import (
     ConstraintStateMachine,
 )
 
+
 @pytest.fixture(scope="module")
 def gpt2_tokenizer():
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -12,9 +13,11 @@ def gpt2_tokenizer():
         tokenizer.pad_token = tokenizer.eos_token
     return tokenizer
 
+
 def make_table(num_rows=5, columns=None):
     cols = columns or ["foo", "bar", "baz"]
     return {"columns": cols, "rows": [{"row": idx} for idx in range(num_rows)]}
+
 
 def test_initial_allowed_tokens_respect_action_history(gpt2_tokenizer):
     table = make_table()

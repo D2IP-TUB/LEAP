@@ -139,6 +139,14 @@ function renderStep() {
           '</div>';
         metadataGrid.appendChild(accuracyDiv);
       }
+      if (questionStep.model_id) {
+        const modelDiv = document.createElement("div");
+        modelDiv.className = "metadata-item";
+        modelDiv.innerHTML =
+          '<div class="metadata-label">Model</div>' +
+          '<div class="metadata-value">' + questionStep.model_id + '</div>';
+        metadataGrid.appendChild(modelDiv);
+      }
       if (questionStep.generation_mode) {
         const generationDiv = document.createElement("div");
         generationDiv.className = "metadata-item";
@@ -202,13 +210,53 @@ function renderStep() {
       status.className = stepData.success ? "success" : "failure";
     }
     container.appendChild(status);
+    const samplingInfo = stepData.sampling_for_step;
+  if (samplingInfo) {
+    const samplingContainer = document.createElement("div");
+    samplingContainer.className = "sampling-container";
 
-    let tableData = null;
-    if (stepData.csv_data && stepData.csv_data.columns && stepData.csv_data.columns.length > 0) {
-      tableData = stepData.csv_data;
-    } else {
-      tableData = parseTablePreview(stepData.table_preview);
-    }
+    const title = document.createElement("h3");
+    title.textContent = "Sampling Candidates (this step)";
+    samplingContainer.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "sampling-meta";
+    meta.textContent =
+      `Requested: ${samplingInfo.n_requested}, ` +
+      `Generated: ${samplingInfo.n_generated}, ` +
+      `Valid: ${samplingInfo.n_valid}, ` +
+      `Winner votes: ${samplingInfo.winner_votes}/${samplingInfo.total_votes}`;
+    samplingContainer.appendChild(meta);
+
+    const list = document.createElement("ul");
+    list.className = "sampling-list";
+
+    const candidates = samplingInfo.candidate_actions || [];
+    const winnerDict = samplingInfo.winner;
+    const winnerStr = winnerDict
+      ? `${winnerDict.action}(${(winnerDict.args || []).map(a => JSON.stringify(a)).join(", ")})`
+      : null;
+
+    candidates.forEach((c) => {
+      const li = document.createElement("li");
+      li.textContent = c;
+      if (winnerStr && c === winnerStr) {
+        li.classList.add("sampling-winner");
+      }
+      list.appendChild(li);
+    });
+
+    samplingContainer.appendChild(list);
+    container.appendChild(samplingContainer);
+  }
+
+    let tableData = stepData.table_data || { columns: [], rows: [] };
+    // let tableData = null;
+    // if (stepData.csv_data && stepData.csv_data.columns && stepData.csv_data.columns.length > 0) {
+    //   tableData = stepData.csv_data;
+    // } else {
+    //   tableData = parseTablePreview(stepData.table_preview);
+    // }
 
     const tableContainer = document.createElement("div");
     tableContainer.className = "table-container";

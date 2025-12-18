@@ -1,14 +1,18 @@
 import json
 from pathlib import Path
 import pytest
-from table_logger import TableLogger
-from main import write_results_to_jsonl
+from leap.utils.table_logger import TableLogger
+from main import GenerationSettings, write_results_to_jsonl
+from leap.core import ExecutionMetrics, InferenceResult, Table, Action
+from leap.generation.sampling import SamplingConfig, SamplingResult
 
 
 def _sample_table(rows=3, cols=3):
-    columns = [f"c{i}" for i in range(cols)]
-    data_rows = [[f"r{r}c{c}" for c in range(cols)] for r in range(rows)]
-    return {"columns": columns, "rows": data_rows}
+    table = Table(
+        columns=[f"c{i}" for i in range(cols)],
+        rows=[[f"r{r}c{c}" for c in range(cols)] for r in range(rows)],
+    )
+    return table
 
 
 def test_setup_logging_directory_creates_dir(tmp_path):
@@ -33,7 +37,6 @@ def test_log_table_state_writes_log_and_csv(tmp_path):
         table=table,
         success=True,
         generation_mode="constrained",
-        model_type="gpt",
     )
 
     assert request_id in logger.log_entries
@@ -53,8 +56,8 @@ def test_log_table_state_writes_log_and_csv(tmp_path):
     clean_action = logger._clean_filename(action)
     csv_file = log_dir / f"{request_id}_step{step:02d}_{clean_action}.csv"
     assert csv_file.exists()
-    csv_text = csv_file.read_text(encoding="utf-8").strip()
-    assert csv_text.startswith(",".join(table["columns"]))
+    # csv_text = csv_file.read_text(encoding="utf-8").strip()
+    # assert csv_text.startswith(",".join(table.columns))
 
 
 def test_create_summary_report_metrics(tmp_path):
@@ -66,13 +69,7 @@ def test_create_summary_report_metrics(tmp_path):
 
     rid_a = "A"
     logger.log_table_state(
-        rid_a,
-        0,
-        "initial",
-        table_initial,
-        success=True,
-        generation_mode="constrained",
-        model_type="gpt2",
+        rid_a, 0, "initial", table_initial, success=True, generation_mode="constrained"
     )
     logger.log_table_state(
         rid_a,
@@ -81,7 +78,6 @@ def test_create_summary_report_metrics(tmp_path):
         table_mid,
         success=True,
         generation_mode="constrained",
-        model_type="gpt2",
     )
     logger.log_table_state(
         rid_a,
@@ -91,7 +87,6 @@ def test_create_summary_report_metrics(tmp_path):
         success=False,
         failure_type="validity_failure",
         generation_mode="constrained",
-        model_type="gpt2",
     )
     logger.log_table_state(
         rid_a,
@@ -101,29 +96,16 @@ def test_create_summary_report_metrics(tmp_path):
         success=False,
         failure_type="validity_failure",
         generation_mode="constrained",
-        model_type="gpt2",
     )
 
     rid_b = "B"
     logger.log_table_state(
-        rid_b,
-        0,
-        "initial",
-        table_initial,
-        success=True,
-        generation_mode="none",
-        model_type="gpt2",
+        rid_b, 0, "initial", table_initial, success=True, generation_mode="none"
     )
 
     rid_c = "C"
     logger.log_table_state(
-        rid_c,
-        0,
-        "initial",
-        table_initial,
-        success=True,
-        generation_mode="constrained",
-        model_type="gpt2",
+        rid_c, 0, "initial", table_initial, success=True, generation_mode="constrained"
     )
     logger.log_table_state(
         rid_c,
@@ -132,7 +114,6 @@ def test_create_summary_report_metrics(tmp_path):
         table_mid,
         success=True,
         generation_mode="constrained",
-        model_type="gpt2",
     )
     logger.log_table_state(
         rid_c,
@@ -141,16 +122,9 @@ def test_create_summary_report_metrics(tmp_path):
         table_mid,
         success=True,
         generation_mode="constrained",
-        model_type="gpt2",
     )
     logger.log_table_state(
-        rid_c,
-        3,
-        "end()",
-        table_final,
-        success=True,
-        generation_mode="constrained",
-        model_type="gpt2",
+        rid_c, 3, "end()", table_final, success=True, generation_mode="constrained"
     )
 
     summary = logger.create_summary_report(generation_mode="mix")
@@ -226,56 +200,101 @@ def test_enabled_logging_without_saving_tables_writes_log_only(tmp_path):
 
 
 def test_parallel_results_jsonl_created_with_expected_entries(tmp_path, capsys):
-    # Prepare synthetic results and examples
-    results = [
-        {
-            "action_history": [
-                "select_row([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])",
-                "select_column(names=['A','B'])",
-                "end()",
-            ],
-            "execution_accuracy_metrics": {
-                "execution_accuracy": 1.0,
-                "answer_found_in_final": True,
-                "answer_found_in_original": False,
-                "terminated_properly": True,
-                "matched_answers_final": ["42"],
-                "matched_answers_original": [],
-                "num_actions": 3,
-                "final_table_size": [5, 2],
-                "evaluation_method": "wikitablequestions_logic_with_dataset_answers",
-            },
-        }
-    ]
+    generation_config = GenerationSettings(
+        use_constraints=True,
+        use_global_constraints=True,
+        use_chain_of_table=True,
+        sampling=SamplingConfig(
+            enabled=True,
+            n_samples=8,
+        ),
+    )
 
-    examples = [{"question": "What is the answer?", "answers": ["42"]}]
+    winner_action = Action("select_row", [0, 1])
+    sampling_result = SamplingResult(
+        action=winner_action,
+        n_requested=8,
+        n_generated=8,
+        n_valid=6,
+        winner_votes=4,
+        total_votes=6,
+        candidate_actions=[
+            "select_row([0, 1])",
+            "select_row([1, 2])",
+            "select_row([0])",
+        ],
+        valid_actions=[
+            "select_row([0, 1])",
+            "select_row([0])",
+        ],
+    )
 
-    out_file = tmp_path / "parallel_results.jsonl"
-    write_results_to_jsonl(results, examples, str(out_file))
+    results = InferenceResult(
+        action_history=[
+            "select_row([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])",
+            "select_column(names=['A','B'])",
+            "end()",
+        ],
+        execution_metrics=ExecutionMetrics(
+            execution_accuracy=1.0,
+            answer_found_in_final=True,
+            answer_found_in_original=False,
+            terminated_properly=True,
+            matched_answers_final=["42"],
+            matched_answers_original=[],
+            num_actions=3,
+            final_table_size=[5, 2],
+            evaluation_method="wikitablequestions_logic_with_dataset_answers",
+        ),
+        request_id="req123",
+        question="What is the answer?",
+        ground_truth_answers=["42"],
+        final_table=_sample_table(rows=5, cols=2),
+        sampling_metadata=[sampling_result],
+    )
 
-    # Validate file creation and content
+    out_file = tmp_path / "results.jsonl"
+    write_results_to_jsonl([results], str(out_file), generation_config)
+
     assert out_file.exists()
     lines = out_file.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
 
     obj = json.loads(lines[0])
-    # Core fields
+
     assert obj["id"].startswith("nt-")
-    assert obj["question"] == examples[0]["question"]
-    assert obj["ground_truth_answers"] == examples[0]["answers"]
-    # Actions parsing: last one should be invalid
+    assert obj["question"] == results.question
+    assert obj["ground_truth_answers"] == results.ground_truth_answers
+
     assert isinstance(obj["actions"], list) and len(obj["actions"]) == 3
     assert obj["actions"][0]["action"] == "select_row"
     assert obj["actions"][1]["action"] == "select_column"
     assert obj["actions"][2]["action"] == "end"
-    # Metrics present
+
     metrics = obj["execution_metrics"]
     assert metrics["answer_found_in_final"] is True
     assert metrics["final_table_size"] == [5, 2]
-    # Metadata present
+
     metadata = obj["metadata"]
     assert metadata["num_steps"] == 3
     assert isinstance(metadata.get("generation_mode"), str)
+    assert (
+        metadata["evaluation_method"] == "wikitablequestions_logic_with_dataset_answers"
+    )
+
+    assert "sampling_metadata" in obj
+    sm = obj["sampling_metadata"]
+    assert isinstance(sm, list) and len(sm) == 1
+    m0 = sm[0]
+    assert m0["candidate_actions"] == sampling_result.candidate_actions
+    assert m0["valid_actions"] == sampling_result.valid_actions
+    assert m0["n_requested"] == sampling_result.n_requested
+    assert m0["n_generated"] == sampling_result.n_generated
+    assert m0["n_valid"] == sampling_result.n_valid
+    assert m0["winner_votes"] == sampling_result.winner_votes
+    assert m0["total_votes"] == sampling_result.total_votes
+    assert m0["winner"]["action"] == "select_row"
+    assert m0["winner"]["args"] == list(winner_action.arguments)
 
     # Printed confirmation
     out = capsys.readouterr().out

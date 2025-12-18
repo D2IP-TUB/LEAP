@@ -8,3 +8,10 @@ dependencies = [
     "datasets>=4.4.1",
     "vllm==0.10.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.5.0",
+    "pytest>=9.0.1",
+    "pytest-cov>=7.0.0",
+]

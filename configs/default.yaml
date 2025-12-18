@@ -1,0 +1,54 @@
+model:
+  id: "gpt2"
+  presets_path: "configs/models.yaml"
+  # possible alternatives:
+  # "meta-llama/Llama-2-70b-hf"
+  # "meta-llama/Llama-2-70b-chat-hf"
+  # "mistralai/Mixtral-8x7B-Instruct-v0.1"
+  # "mistralai/Mixtral-8x7B-v0.1"
+  # "openai/gpt-oss-120b"
+  # "openai/gpt-oss-20b"
+
+  results_file: "./logs/results.jsonl"
+
+dataset:
+  loader: "huggingface"  # options: huggingface, json, disk
+  name: "wikitablequestions"
+  split: "train"
+  trust_remote_code: true
+  data_files: null
+  path: null
+
+run:
+  max_examples: 10
+
+generation:
+  use_constraints: false
+  use_global_constraints: false
+  use_chain_of_table: true
+
+  # Enabled actions - configure which actions are available for this experiment
+  enabled_actions:
+    - select_row
+    - select_column
+    - end
+    # Note: direct_query is automatically applied after end(), not a separate action
+
+  sampling:
+    enabled: true
+    n_samples: 8
+    per_action_samples:
+      select_row: 8
+      select_column: 8
+      end: 1
+      # Note: direct_query doesn't need sampling config (applied automatically)
+    debug: true
+    shuffle_invariant: false  # Enable shuffle-invariant sampling for robustness
+
+logging:
+  enable_logging: true
+  log_dir: "./logs/{model_log_dir}"
+  save_readable_tables: false
+  compress_logs: false
+  log_format: "readable"
+  max_table_chars: 10000
