@@ -20,12 +20,18 @@ dataset:
   path: null
 
 run:
-  max_examples: 150
+  max_examples: 10000
 
 generation:
   use_constraints: false
   use_global_constraints: false
   use_chain_of_table: true
+
+  # Generation strategy: "iterative", "cot", or "direct_query"
+  # - "iterative": single-phase iterative generation
+  # - "cot": two-phase Chain-of-Table generation
+  # - "direct_query": skip all table transformations, answer directly (baseline)
+  strategy: "direct_query"
 
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:

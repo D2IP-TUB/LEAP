@@ -455,3 +455,119 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
             prompt_builder=self.prompt_builder,
         )
         return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
+
+
+class DirectQueryGenerationStrategy(BaseGenerationStrategy):
+    """Direct answer generation without table transformations.
+
+    This strategy skips all action generation and table operations,
+    going directly to answer generation using the original table.
+    Useful for baseline comparisons and experiments.
+    """
+
+    def __init__(self, *, prompt_builder: PromptBuilder, sampling_layer, **kwargs) -> None:
+        super().__init__(prompt_builder=prompt_builder, sampling_layer=sampling_layer, **kwargs)
+
+    def get_generation_mode_string(self, worker) -> str:
+        """Override to return DirectQuery mode string."""
+        return "DirectQuery"
+
+    async def generate_action_step(
+        self,
+        worker,
+        current_table: Table,
+        action_history: List[str],
+        request_id: str,
+        state_machines,
+        question: str,
+        step: int,
+    ) -> ActionStepResult:
+        """This strategy doesn't generate actions - not called."""
+        raise NotImplementedError("DirectQueryGenerationStrategy does not generate actions")
+
+    async def generate_instance(
+        self,
+        request: InferenceRequest,
+        worker,
+        state_machines,
+        logging_callback: Optional[Callable] = None,
+    ) -> InferenceResult:
+        """
+        Generate answer directly without table transformations.
+        Overrides the base implementation to skip action generation entirely.
+        """
+        question = request.question
+        original_table: Table = request.table
+        ground_truth_answers = request.ground_truth_answers
+        request_id = request.request_id
+
+        # Initialize per-request profiler
+        profiler = RequestProfiler(request_id)
+
+        # Direct query baseline: use end() which automatically triggers direct_query()
+        action_history = ["end()", "direct_query()"]
+        generation_mode = self.get_generation_mode_string(worker)
+
+        print(f"Direct query mode: Skipping action generation, going straight to answer generation")
+
+        if logging_callback:
+            logging_callback(request_id, 0, "initial", original_table, generation_mode=generation_mode)
+            logging_callback(request_id, 1, "end()", original_table, generation_mode=generation_mode)
+
+        # Generate answer directly from original table
+        generated_answers = None
+        with profiler.time_operation("answer_generation"):
+            generated_answers = await self._generate_answers(
+                worker=worker,
+                question=question,
+                final_table=original_table,
+                action_history=action_history,
+                request_id=request_id,
+            )
+
+        if generated_answers:
+            print(f"Generated answers: {generated_answers}")
+            if ground_truth_answers:
+                print(f"Expected answers:  {ground_truth_answers}")
+                matches = [ans for ans in generated_answers if ans in ground_truth_answers]
+                if matches:
+                    print(f"✓ Match found: {matches}")
+                else:
+                    print("✗ No match")
+
+        # Evaluate results
+        with profiler.time_operation("evaluation"):
+            accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
+                action_history, original_table, ground_truth_answers, original_table, generated_answers
+            )
+
+        # Print evaluation results
+        print(
+            f"[EVALUATION RESULT] Execution Accuracy: {accuracy_metrics.execution_accuracy:.2f} | "
+            f"Answer Found: {accuracy_metrics.answer_found_in_final} | "
+            f"Terminated Properly: {accuracy_metrics.terminated_properly} | "
+            f"Matched: {accuracy_metrics.matched_answers_final}"
+        )
+
+        # Print timing summary
+        total_time = profiler.get_total_time()
+        print(f"Request {request_id} completed in {total_time:.2f}s - Operations: {profiler.timings}")
+
+        # Package profiling data
+        profiling_data = {
+            "total_time": total_time,
+            "operation_timings": profiler.timings,
+            "num_steps": 0,  # No action steps
+        }
+
+        return InferenceResult(
+            action_history=action_history,
+            final_table=original_table,
+            execution_metrics=accuracy_metrics,
+            request_id=request_id,
+            question=question,
+            ground_truth_answers=ground_truth_answers,
+            profiling_data=profiling_data,
+            sampling_metadata=None,  # No sampling for this strategy
+            generated_answers=generated_answers,
+        )

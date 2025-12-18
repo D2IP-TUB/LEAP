@@ -25,6 +25,7 @@ from leap.generation.sampling import SamplingConfig, SamplingLayer
 from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
 from leap.generation.strategies import (
     ChainOfTableGenerationStrategy,
+    DirectQueryGenerationStrategy,
     IterativeGenerationStrategy,
 )
 from leap.inference.vllm_server import ProcessParallelVLLM
@@ -173,6 +174,7 @@ def main():
     # Create sampling layer (always created, with n=1 when "disabled")
     sampling_layer = create_sampling_layer(generation_settings)
 
+    # Create strategies
     iterative_strategy = IterativeGenerationStrategy(
         prompt_builder=runtime.prompt_builder,
         sampling_layer=sampling_layer,
@@ -181,6 +183,17 @@ def main():
         prompt_builder=runtime.prompt_builder,
         sampling_layer=sampling_layer,
     )
+    direct_query_strategy = DirectQueryGenerationStrategy(
+        prompt_builder=runtime.prompt_builder,
+        sampling_layer=sampling_layer,
+    )
+
+    # Validate strategy selection
+    valid_strategies = ["iterative", "cot", "direct_query"]
+    if generation_settings.strategy not in valid_strategies:
+        raise ValueError(f"Invalid strategy '{generation_settings.strategy}'. Must be one of: {valid_strategies}")
+
+    print(f"Using generation strategy: {generation_settings.strategy}_generation")
 
     # Initialize the server with typed configs (no more dicts!)
     num_workers = model_settings.hardware.num_workers
@@ -194,6 +207,7 @@ def main():
         generation_functions={
             "iterative_generation": iterative_strategy.generate_instance,
             "cot_generation": cot_strategy.generate_instance,
+            "direct_query_generation": direct_query_strategy.generate_instance,
         },
         tensor_parallel_size=model_settings.hardware.tensor_parallel_size,
         max_concurrent_requests=model_settings.hardware.max_concurrent_requests,

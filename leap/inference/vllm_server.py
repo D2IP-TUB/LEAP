@@ -269,16 +269,13 @@ class VLLMWorkerProcess(mp.Process):
             InferenceResult object
         """
         try:
-            generation_mode = self._get_generation_mode_string()
-
-            # Get the appropriate generation function
-            if self.use_cot:
-                generation_func = self.generation_functions.get("cot_generation")
-            else:
-                generation_func = self.generation_functions.get("iterative_generation")
+            # Get the appropriate generation function based on strategy config
+            strategy = self.generation_config.strategy
+            function_name = strategy + "_generation"
+            generation_func = self.generation_functions.get(function_name)
 
             if not generation_func:
-                raise ValueError(f"No generation function configured for mode: {generation_mode}")
+                raise ValueError(f"No generation function configured for strategy: {strategy}")
 
             # Call the generation function with typed request
             result: InferenceResult = await generation_func(
