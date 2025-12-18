@@ -8,7 +8,7 @@ from leap.evaluation.evaluator import calculate_execution_accuracy_with_dataset_
 from leap.generation.prompt_builder import PromptBuilder
 from leap.utils.profiler import RequestProfiler
 
-DEFAULT_COT_ACTION_TEMPERATURE = 0.3
+DEFAULT_COT_ACTION_TEMPERATURE = 0.0
 DEFAULT_COT_ARGS_TEMPERATURE = 0.7
 
 

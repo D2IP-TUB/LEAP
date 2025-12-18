@@ -117,11 +117,7 @@ class PromptBuilder:
         worker,
     ) -> str:
         """Prompt for CoT action selection (dynamic plan)."""
-        # Check if we have examples for action selection
-        examples_str = ""
-        if self.action_examples and self.action_examples.has_prompt("action_selection"):
-            examples_str = self.action_examples.get_examples("action_selection")
-
+        # Build current instance prompt
         table_str = table.to_csv(max_chars=self.cot_settings.action_table_chars)
         instruction_prompt = f"Table:\n{table_str}\n\n"
         instruction_prompt += f"Question: {question}\n\n"
@@ -142,10 +138,6 @@ class PromptBuilder:
         instruction_prompt += "What action should be performed next to answer the question?\n"
         instruction_prompt += "Action: "
 
-        # Prepend examples to instruction_prompt (so they go inside [INST] tags)
-        if examples_str:
-            instruction_prompt = examples_str + instruction_prompt
-
         estimated_length = len(instruction_prompt) // 4
         if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
             table_str = table.to_csv(max_chars=self.cot_settings.action_fallback_table_chars)
@@ -158,6 +150,25 @@ class PromptBuilder:
             instruction_prompt += f"Available actions: {actions_text}\n"
             instruction_prompt += "What action should be performed next?\nAction: "
 
+        # For action_selection, format examples as conversation history (for instruct models)
+        # Each example should be: <s>[INST]...[/INST]answer</s>
+        if self.action_examples and self.action_examples.has_prompt("action_selection"):
+            examples = self.action_examples.examples_manager.get_examples("action_selection")
+            if examples and self.is_instruct:
+                # Build conversation history with examples
+                examples_history = ""
+                for example in examples:
+                    # Format each example as a complete conversation turn
+                    example_table_str = example.table.to_csv(max_chars=2000, crop=False)
+                    example_prompt = f"Table:\n{example_table_str}\n\nQuestion: {example.question}\n\nWhat action should be performed next to answer the question?\nAction: "
+                    example_response = example.answer
+                    # Wrap in instruct format
+                    examples_history += f"<s>[INST] {example_prompt} [/INST] {example_response}</s>"
+
+                # Prepend examples history, then add current instance with [INST]
+                return examples_history + self._append_instruction("", instruction_prompt)
+
+        # No examples or non-instruct mode: use regular formatting
         return self._append_instruction("", instruction_prompt)
 
     def build_cot_arguments_prompt(
