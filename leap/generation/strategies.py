@@ -508,7 +508,7 @@ class DirectQueryGenerationStrategy(BaseGenerationStrategy):
         action_history = ["end()", "direct_query()"]
         generation_mode = self.get_generation_mode_string(worker)
 
-        print(f"Direct query mode: Skipping action generation, going straight to answer generation")
+        print("Direct query mode: Skipping action generation, going straight to answer generation")
 
         if logging_callback:
             logging_callback(request_id, 0, "initial", original_table, generation_mode=generation_mode)
