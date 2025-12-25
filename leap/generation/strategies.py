@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
+from vllm import SamplingParams
+
 from leap.core import Action, InferenceRequest, InferenceResult, Table
 from leap.evaluation.evaluator import calculate_execution_accuracy_with_dataset_answers
 from leap.generation.prompt_builder import PromptBuilder
 from leap.utils.profiler import RequestProfiler
 
-DEFAULT_COT_ACTION_TEMPERATURE = 0.3
+DEFAULT_COT_ACTION_TEMPERATURE = 0.0
 DEFAULT_COT_ARGS_TEMPERATURE = 0.7
 
 
@@ -134,6 +136,8 @@ class BaseGenerationStrategy:
 
                 if action.name == "end":
                     action_history.append(action.to_string())
+                    # Automatically append direct_query() after end() as per paper
+                    action_history.append("direct_query()")
                     if logging_callback:
                         logging_callback(
                             request_id,
@@ -203,10 +207,40 @@ class BaseGenerationStrategy:
                     print(f"Critical error detected: {exc}. Stopping generation for this instance.")
                     break
 
+        # Generate answers if direct_query() is in action history
+        generated_answers = None
+        if "direct_query()" in action_history:
+            with profiler.time_operation("answer_generation"):
+                generated_answers = await self._generate_answers(
+                    worker=worker,
+                    question=question,
+                    final_table=current_table,
+                    action_history=action_history,
+                    request_id=request_id,
+                )
+            if generated_answers:
+                print(f"Generated answers: {generated_answers}")
+                if ground_truth_answers:
+                    print(f"Expected answers:  {ground_truth_answers}")
+                    # Check if any generated answer matches any ground truth answer
+                    matches = [ans for ans in generated_answers if ans in ground_truth_answers]
+                    if matches:
+                        print(f"✓ Match found: {matches}")
+                    else:
+                        print("✗ No match")
+
         with profiler.time_operation("evaluation"):
             accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-                action_history, current_table, ground_truth_answers, original_table
+                action_history, current_table, ground_truth_answers, original_table, generated_answers
             )
+
+        # Print evaluation results
+        print(
+            f"[EVALUATION RESULT] Execution Accuracy: {accuracy_metrics.execution_accuracy:.2f} | "
+            f"Answer Found: {accuracy_metrics.answer_found_in_final} | "
+            f"Terminated Properly: {accuracy_metrics.terminated_properly} | "
+            f"Matched: {accuracy_metrics.matched_answers_final}"
+        )
 
         # Print per-request timing summary
         total_time = profiler.get_total_time()
@@ -228,7 +262,119 @@ class BaseGenerationStrategy:
             ground_truth_answers=ground_truth_answers,
             profiling_data=profiling_data,
             sampling_metadata=sampling_metadata_list if sampling_metadata_list else None,
+            generated_answers=generated_answers,
         )
+
+    async def _generate_answers(
+        self,
+        worker,
+        question: str,
+        final_table: Table,
+        action_history: List[str],
+        request_id: str,
+    ) -> Optional[List[str]]:
+        """
+        Generate answers using Query(T,Q).
+
+        Args:
+            worker: Worker with LLM access
+            question: Original question
+            final_table: Final table after all transformations
+            action_history: History of actions taken
+            request_id: Request identifier
+
+        Returns:
+            List of generated answer strings, or None if generation fails
+        """
+        try:
+            # Build Query(T,Q) prompt using prompt builder
+            query_prompt = self.prompt_builder.build_query_prompt(
+                question=question,
+                table=final_table,
+                action_history=action_history,
+                worker=worker,
+            )
+
+            # Print prompt for direct_query (similar to other actions)
+            print(f"\n{'=' * 80}")
+            print("DIRECT_QUERY PROMPT:")
+            print(f"{'=' * 80}")
+            print(query_prompt)
+            print(f"{'=' * 80}\n")
+
+            # Generate answer from LLM using worker.generate_text()
+            # Use temperature=0.0 for deterministic answer generation
+            sampling_params = SamplingParams(
+                temperature=0.0,
+                max_tokens=200,  # Reasonable limit for answer length
+                stop_token_ids=[worker.tokenizer.eos_token_id],
+                stop=["\n\n", "\nExplanation:", "\nNote:"],  # Stop at double newline or explanation markers
+            )
+
+            response = await worker.generate_text(
+                query_prompt,
+                f"{request_id}_query",
+                sampling_params,
+            )
+
+            # Print response for direct_query (similar to other actions)
+            print(f"\n{'=' * 80}")
+            print("DIRECT_QUERY RESPONSE:")
+            print(f"{'=' * 80}")
+            print(response if response else "(empty response)")
+            print(f"{'=' * 80}\n")
+
+            if not response or not response.strip():
+                print(f"Warning: Empty response from Query(T,Q) for {request_id}")
+                return None
+
+            # Parse and clean the answer(s)
+            answers = self._parse_and_clean_answers(response)
+            return answers if answers else None
+
+        except Exception as e:
+            print(f"Error in answer generation for {request_id}: {str(e)}")
+            return None
+
+    def _parse_and_clean_answers(self, response: str) -> List[str]:
+        """
+        Parse answer(s) from LLM response.
+
+        Expected format: Python list of strings like ["Italy"] or ["Italy", "Spain", "France"]
+
+        Args:
+            response: Raw LLM response
+
+        Returns:
+            List of answer strings
+        """
+        import ast
+
+        response = response.strip()
+
+        # Try to parse as Python list using ast.literal_eval (safe evaluation)
+        try:
+            parsed = ast.literal_eval(response)
+            if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+                return [answer.strip() for answer in parsed if answer.strip()]
+        except (ValueError, SyntaxError):
+            pass
+
+        # Fallback: if response looks like it might be a list but has minor formatting issues
+        # Try to extract content between [ and ]
+        if response.startswith("[") and response.endswith("]"):
+            try:
+                # Try to fix common issues like single quotes vs double quotes
+                fixed_response = response.replace("'", '"')
+                parsed = ast.literal_eval(fixed_response)
+                if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+                    return [answer.strip() for answer in parsed if answer.strip()]
+            except (ValueError, SyntaxError):
+                pass
+
+        # Fallback: treat entire response as single answer
+        print(f"Warning: Could not parse response as list, treating as single answer: {response}")
+        return [response]
 
 
 class IterativeGenerationStrategy(BaseGenerationStrategy):
@@ -309,3 +455,119 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
             prompt_builder=self.prompt_builder,
         )
         return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
+
+
+class DirectQueryGenerationStrategy(BaseGenerationStrategy):
+    """Direct answer generation without table transformations.
+
+    This strategy skips all action generation and table operations,
+    going directly to answer generation using the original table.
+    Useful for baseline comparisons and experiments.
+    """
+
+    def __init__(self, *, prompt_builder: PromptBuilder, sampling_layer, **kwargs) -> None:
+        super().__init__(prompt_builder=prompt_builder, sampling_layer=sampling_layer, **kwargs)
+
+    def get_generation_mode_string(self, worker) -> str:
+        """Override to return DirectQuery mode string."""
+        return "DirectQuery"
+
+    async def generate_action_step(
+        self,
+        worker,
+        current_table: Table,
+        action_history: List[str],
+        request_id: str,
+        state_machines,
+        question: str,
+        step: int,
+    ) -> ActionStepResult:
+        """This strategy doesn't generate actions - not called."""
+        raise NotImplementedError("DirectQueryGenerationStrategy does not generate actions")
+
+    async def generate_instance(
+        self,
+        request: InferenceRequest,
+        worker,
+        state_machines,
+        logging_callback: Optional[Callable] = None,
+    ) -> InferenceResult:
+        """
+        Generate answer directly without table transformations.
+        Overrides the base implementation to skip action generation entirely.
+        """
+        question = request.question
+        original_table: Table = request.table
+        ground_truth_answers = request.ground_truth_answers
+        request_id = request.request_id
+
+        # Initialize per-request profiler
+        profiler = RequestProfiler(request_id)
+
+        # Direct query baseline: use end() which automatically triggers direct_query()
+        action_history = ["end()", "direct_query()"]
+        generation_mode = self.get_generation_mode_string(worker)
+
+        print("Direct query mode: Skipping action generation, going straight to answer generation")
+
+        if logging_callback:
+            logging_callback(request_id, 0, "initial", original_table, generation_mode=generation_mode)
+            logging_callback(request_id, 1, "end()", original_table, generation_mode=generation_mode)
+
+        # Generate answer directly from original table
+        generated_answers = None
+        with profiler.time_operation("answer_generation"):
+            generated_answers = await self._generate_answers(
+                worker=worker,
+                question=question,
+                final_table=original_table,
+                action_history=action_history,
+                request_id=request_id,
+            )
+
+        if generated_answers:
+            print(f"Generated answers: {generated_answers}")
+            if ground_truth_answers:
+                print(f"Expected answers:  {ground_truth_answers}")
+                matches = [ans for ans in generated_answers if ans in ground_truth_answers]
+                if matches:
+                    print(f"✓ Match found: {matches}")
+                else:
+                    print("✗ No match")
+
+        # Evaluate results
+        with profiler.time_operation("evaluation"):
+            accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
+                action_history, original_table, ground_truth_answers, original_table, generated_answers
+            )
+
+        # Print evaluation results
+        print(
+            f"[EVALUATION RESULT] Execution Accuracy: {accuracy_metrics.execution_accuracy:.2f} | "
+            f"Answer Found: {accuracy_metrics.answer_found_in_final} | "
+            f"Terminated Properly: {accuracy_metrics.terminated_properly} | "
+            f"Matched: {accuracy_metrics.matched_answers_final}"
+        )
+
+        # Print timing summary
+        total_time = profiler.get_total_time()
+        print(f"Request {request_id} completed in {total_time:.2f}s - Operations: {profiler.timings}")
+
+        # Package profiling data
+        profiling_data = {
+            "total_time": total_time,
+            "operation_timings": profiler.timings,
+            "num_steps": 0,  # No action steps
+        }
+
+        return InferenceResult(
+            action_history=action_history,
+            final_table=original_table,
+            execution_metrics=accuracy_metrics,
+            request_id=request_id,
+            question=question,
+            ground_truth_answers=ground_truth_answers,
+            profiling_data=profiling_data,
+            sampling_metadata=None,  # No sampling for this strategy
+            generated_answers=generated_answers,
+        )

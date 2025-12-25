@@ -2,6 +2,7 @@ import torch
 
 from leap.config.loader import TokenizerConfig
 from leap.core import Table
+from leap.core.actions import REGISTRY
 
 
 class ConstraintStateMachine:
@@ -28,41 +29,42 @@ class ConstraintStateMachine:
 
         self.reset()
 
-        # Extract table dimensions
-        num_rows = min(500, len(table.rows))
-        columns = list(table.columns)
+        # Generate valid parameters from registry
+        self.valid_params = REGISTRY.generate_constraint_params(table)
 
-        self.valid_params = {
-            "select_row": [f"row {i}" for i in range(num_rows)],
-            "select_column": columns,
-            "end": [],
-        }
+        # Limit rows for performance (max 500)
+        if "select_row" in self.valid_params:
+            max_rows = min(500, len(self.valid_params["select_row"]))
+            self.valid_params["select_row"] = self.valid_params["select_row"][:max_rows]
 
         self.column_token_map = {}
-        for col in self.valid_params["select_column"]:
-            quoted = f'"{col}"'
-            tokens = tokenizer.encode(quoted, add_special_tokens=False)
-            if tokens:
-                self.column_token_map[col] = tokens
+        if "select_column" in self.valid_params:
+            for col in self.valid_params["select_column"]:
+                quoted = f'"{col}"'
+                tokens = tokenizer.encode(quoted, add_special_tokens=False)
+                if tokens:
+                    self.column_token_map[col] = tokens
 
         self.row_token_map = {}
-        for row in self.valid_params["select_row"]:
-            quoted = f'"{row}"'
-            tokens = tokenizer.encode(quoted, add_special_tokens=False)
-            if tokens:
-                self.row_token_map[row] = tokens
+        if "select_row" in self.valid_params:
+            for row in self.valid_params["select_row"]:
+                quoted = f'"{row}"'
+                tokens = tokenizer.encode(quoted, add_special_tokens=False)
+                if tokens:
+                    self.row_token_map[row] = tokens
 
     def _parse_action_history(self, action_history):
         """Parse action history to extract previously used action types"""
         used_actions = set()
         if action_history:
+            # Get all enabled action names from registry
+            enabled_actions = REGISTRY.get_enabled_names()
             for action_str in action_history:
-                if "select_row" in action_str:
-                    used_actions.add("select_row")
-                elif "select_column" in action_str:
-                    used_actions.add("select_column")
-                elif "end" in action_str:
-                    used_actions.add("end")
+                # Check each enabled action
+                for action_name in enabled_actions:
+                    if action_name in action_str:
+                        used_actions.add(action_name)
+                        break  # Found the action, move to next history item
         return used_actions
 
     def reset(self):
@@ -86,29 +88,39 @@ class ConstraintStateMachine:
 
     def _get_allowed_actions_with_global_constraints(self):
         """Determine which actions are allowed based on global constraints"""
+        # Get enabled actions from registry
+        enabled_actions = REGISTRY.get_enabled_names()
+
+        # Terminating action: only 'end' (direct_query is applied automatically after end)
+        terminating_actions = {"end"}
+
+        # Non-terminating actions (table transformations)
+        transformation_actions = [a for a in enabled_actions if a not in terminating_actions]
+
         allowed = []
 
-        # If no actions have been taken yet, can't use 'end'
+        # If no actions have been taken yet, can't use terminating actions
         if not self.previously_used_actions:
-            # Only allow select_row and select_column for first action
-            allowed.extend(["select_row", "select_column"])
+            # Only allow transformation actions for first action
+            allowed.extend(transformation_actions)
         else:
-            # Check which actions haven't been used yet
-            if "select_row" not in self.previously_used_actions:
-                allowed.append("select_row")
-            if "select_column" not in self.previously_used_actions:
-                allowed.append("select_column")
+            # Check which transformation actions haven't been used yet
+            for action in transformation_actions:
+                if action not in self.previously_used_actions:
+                    allowed.append(action)
 
-            # 'end' is allowed only if at least one other action has been taken
-            # and no other actions are available
-            if not allowed:  # No other actions available
-                allowed.append("end")
+            # Terminating actions are allowed only if:
+            # - At least one other action has been taken
+            # - No other transformation actions are available
+            if not allowed:  # No transformation actions available
+                # Add all enabled terminating actions
+                allowed.extend([a for a in terminating_actions if a in enabled_actions])
 
         return allowed
 
     def _get_allowed_actions_without_global_constraints(self):
-        """Get all actions without global constraints (original behavior)"""
-        return ["select_row", "select_column", "end"]
+        """Get all enabled actions without global constraints"""
+        return REGISTRY.get_enabled_names()
 
     def update_state(self, token):
         if self.finished:
@@ -358,13 +370,18 @@ class ActionOnlyConstraintStateMachine:
 
     def __init__(self, tokenizer):
         self.tokenizer = tokenizer
+        # Pre-compute action tokens from enabled actions
+        self.action_tokens = {}
+        for action_name in REGISTRY.get_enabled_names():
+            self.action_tokens[action_name] = tokenizer.encode(action_name, add_special_tokens=False)
         self.reset()
 
     def reset(self):
         self.state = "start"
         self.generated_tokens = []
         self.finished = False
-        self.possible_actions = ["select_row", "select_column", "end"]
+        # Get enabled action names from registry
+        self.possible_actions = REGISTRY.get_enabled_names()
         self.action_prefix = []
 
     def update_state(self, token):
@@ -379,15 +396,9 @@ class ActionOnlyConstraintStateMachine:
             self._handle_action(token)
 
     def _handle_start(self, token):
-        action_tokens = {
-            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
-            "end": self.tokenizer.encode("end", add_special_tokens=False),
-        }
-
         matching_actions = []
         for action in self.possible_actions:
-            tokens = action_tokens[action]
+            tokens = self.action_tokens[action]
             if tokens and token == tokens[0]:
                 matching_actions.append(action)
 
@@ -397,17 +408,11 @@ class ActionOnlyConstraintStateMachine:
             self.action_prefix = [token]
 
     def _handle_action(self, token):
-        action_tokens = {
-            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
-            "end": self.tokenizer.encode("end", add_special_tokens=False),
-        }
-
         self.action_prefix.append(token)
 
         # Check if any action is completed
         for action in self.possible_actions:
-            tokens = action_tokens[action]
+            tokens = self.action_tokens[action]
             if tokens and self.action_prefix == tokens:
                 self.finished = True
                 return
@@ -415,7 +420,7 @@ class ActionOnlyConstraintStateMachine:
         # Filter possible actions
         next_possible = []
         for action in self.possible_actions:
-            tokens = action_tokens[action]
+            tokens = self.action_tokens[action]
             if tokens and len(self.action_prefix) < len(tokens) and tokens[: len(self.action_prefix)] == self.action_prefix:
                 next_possible.append(action)
 
@@ -428,16 +433,10 @@ class ActionOnlyConstraintStateMachine:
         if self.finished:
             return [self.tokenizer.eos_token_id]
 
-        action_tokens = {
-            "select_row": self.tokenizer.encode("select_row", add_special_tokens=False),
-            "select_column": self.tokenizer.encode("select_column", add_special_tokens=False),
-            "end": self.tokenizer.encode("end", add_special_tokens=False),
-        }
-
         if self.state == "start":
             allowed = set()
             for action in self.possible_actions:
-                tokens = action_tokens[action]
+                tokens = self.action_tokens[action]
                 if tokens:
                     allowed.add(tokens[0])
             return list(allowed)
@@ -445,7 +444,7 @@ class ActionOnlyConstraintStateMachine:
         elif self.state == "in_action":
             allowed = set()
             for action in self.possible_actions:
-                tokens = action_tokens[action]
+                tokens = self.action_tokens[action]
                 if tokens and len(self.action_prefix) < len(tokens):
                     allowed.add(tokens[len(self.action_prefix)])
             return list(allowed) if allowed else [self.tokenizer.eos_token_id]

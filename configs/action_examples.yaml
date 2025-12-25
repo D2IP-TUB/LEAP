@@ -1,0 +1,65 @@
+# Action Examples for Prompt Building
+#
+# Each action has a list of examples used to build prompts.
+# Examples are loaded once and cached for performance.
+
+examples:
+  direct_query:
+    - table: " ,Date,Division,League,Regular Season,Playoffs,Open Cup\nrow 0,2001/01/02,2,USL A-League,4th Western,Quarterfinals,Did not qualify\nrow 1,2002/08/06,2,USL A-League,2nd Pacific,1st Round,Did not qualify\nrow 2,2005/03/24,2,USL First Division,5th,Quarterfinals,4th Round"
+      question: "what was the last year where this team was a part of the usl a-league?"
+      explanation: "The table shows league information across different years. We need to identify rows with USL A-League and find the latest year."
+      answer: "direct_query()"
+
+  query_answer:
+    - table: " ,Rank,City,Passengers Number,Ranking,Airline\nrow 0,1,United States, Los Angeles,14749,2,Alaska Airlines\nrow 1,2,United States, Houston,5465,8,United Express\nrow 2,3,Canada, Calgary,3761,5,Air Transat, WestJet\nrow 3,4,Canada, Saskatoon,2282,4,\nrow 4,5,Canada, Vancouver,2103,2,Air Transat\nrow 5,6,United States, Phoenix,1829,1,US Airways\nrow 6,7,Canada, Toronto,1202,1,Air Transat, CanJet\nrow 7,8,Canada, Edmonton,110,2,\nrow 8,9,United States, Oakland,107,5,"
+      question: "how many more passengers flew to los angeles than to saskatoon from manzanillo airport in 2013?"
+      answer: '["12467"]'
+
+  select_row:
+    - table: " ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd\nrow 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836\nrow 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154\nrow 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651"
+      question: "Whose home team score is higher, richmond or st kilda?"
+      explanation: "The question asks about the home team score of richmond and st kilda. We need to know the information of richmond and st kilda in row 0 and row 2. We select row 0 and row 2."
+      answer: "select_row([0, 2])"
+
+    - table: " ,home team,home team score,away team,away team score,venue,crowd\nrow 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836\nrow 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154\nrow 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651\nrow 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108\nrow 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271\nrow 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749"
+      question: "what is the away team with the highest score?"
+      explanation: "the statement want to ask the away team of highest away team score. the highest away team score is 23.11 (149). it is on row 4. so we need row 4."
+      answer: "select_row([4])"
+
+  select_column:
+    - table: " ,competition,total matches,cardiff win,draw,swansea win\nrow 0,league,55,19,16,20\nrow 1,fa cup,2,0,0,2\nrow 2,league cup,5,2,0,3"
+      question: "there are no cardiff wins that have a draw greater than 27."
+      answer: 'select_column(["cardiff win", "draw"])'
+
+    - table: " ,Rank,Cyclist,Team,Time,UCI ProTour Points\nrow 0,1,Alejandro Valverde (ESP),Caisse d'Epargne,5h 29' 10\",40\nrow 1,2,Alexandr Kolobnev (RUS),Team CSC Saxo Bank,s.t.,30\nrow 2,3,Davide Rebellin (ITA),Gerolsteiner,s.t.,25"
+      question: "which country had the most cyclists finish within the top 10?"
+      answer: 'select_column(["Rank", "Cyclist"])'
+
+  action_selection:
+    - table: " ,Year,Division,League,Regular Season,Playoffs,Open Cup\nrow 0,2001,2,USL A-League,4th Western,Quarterfinals,Did not qualify\nrow 1,2002,2,USL A-League,2nd Pacific,1st Round,Did not qualify\nrow 2,2003,2,USL A-League,3rd Pacific,Did not qualify,Did not qualify\nrow 3,2004,2,USL A-League,1st Western,Quarterfinals,4th Round\nrow 4,2005,2,USL First Division,5th,Quarterfinals,4th Round"
+      question: "what was the last year where this team was a part of the usl a-league?"
+      answer: "select_row"
+
+    - table: " ,Rank,Cyclist,Team,Time,UCI ProTour Points\nrow 0,1,Alejandro Valverde (ESP),Caisse d'Epargne,5h 29' 10\",40\nrow 1,2,Alexandr Kolobnev (RUS),Team CSC Saxo Bank,s.t.,30\nrow 2,3,Davide Rebellin (ITA),Gerolsteiner,s.t.,25"
+      question: "which country had the most cyclists finish within the top 10?"
+      answer: "select_column"
+
+    - table: " ,Name,Age,Country\nrow 0,Alice,25,USA"
+      question: "What is Alice's age?"
+      answer: "end"
+
+    - table: " ,Date,Division,League,Regular Season,Playoffs,Open Cup\nrow 0,2001/01/02,2,USL A-League,4th Western,Quarterfinals,Did not qualify\nrow 1,2002/08/06,2,USL A-League,2nd Pacific,1st Round,Did not qualify\nrow 2,2005/03/24,2,USL First Division,5th,Quarterfinals,4th Round"
+      question: "what was the last year where this team was a part of the usl a-league?"
+      answer: "select_row([0, 1]) -> select_column([Date, League]) -> end"
+
+    - table: " ,Player,Position,School,Hometown,College,NBA Draft\nrow 0,Corey Brewer,Forward,Dunbar HS,Portland TN,Florida,2007 / Round 1 / Pick 7\nrow 1,Jarrett Jack,Guard,Dimond HS,Anchorage AK,Georgia Tech,2005 / Round 1 / Pick 22\nrow 2,Steven Hill,Forward,Proviso East HS,Maywood IL,Arkansas,Undrafted\nrow 3,Dwayne Jones,Forward/Center,Morse HS,San Diego CA,Saint Joseph's,2005 / Round 2 / Pick 52"
+      question: "how many players were drafted in the first round?"
+      answer: "select_row([0, 1]) -> select_column([Player, NBA Draft]) -> end"
+
+    - table: " ,School,Location,Mascot,Enrollment,Founded\nrow 0,Atlantic,Delray Beach,Eagles,1842,1990\nrow 1,Boynton Beach,Boynton Beach,Tigers,1968,1997\nrow 2,Olympic Heights,Boca Raton,Lions,2094,2000\nrow 3,Santaluces,Lantana,Chiefs,2277,2002\nrow 4,Seminole Ridge,Loxahatchee,Hawks,1545,2008"
+      question: "which schools were founded after 2000?"
+      answer: "select_row([2, 3, 4]) -> select_column([School, Founded]) -> end"
+
+    - table: " ,Rank,Nation,Gold,Silver,Bronze,Total\nrow 0,1,United States,46,29,29,104\nrow 1,2,China,38,27,23,88\nrow 2,3,Great Britain,29,17,19,65\nrow 3,4,Russia,24,26,32,82\nrow 4,5,South Korea,13,8,7,28\nrow 5,6,Germany,11,19,14,44"
+      question: "what is the total number of medals won by the top 3 nations?"
+      answer: "select_row([0, 1, 2]) -> select_column([Nation, Total]) -> end"

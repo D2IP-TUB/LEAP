@@ -20,12 +20,25 @@ dataset:
   path: null
 
 run:
-  max_examples: 10
+  max_examples: 100
 
 generation:
-  use_constraints: true
-  use_global_constraints: true
-  use_chain_of_table: true
+  use_constraints: false
+  use_global_constraints: false
+
+  # Generation strategy: "iterative", "cot", or "direct_query"
+  # - "iterative": single-phase iterative generation
+  # - "cot": two-phase Chain-of-Table generation
+  # - "direct_query": skip all table transformations, answer directly (baseline)
+  strategy: "direct_query"
+
+  # Enabled actions - configure which actions are available for this experiment
+  enabled_actions:
+    - select_row
+    - select_column
+    - end
+    # Note: direct_query is automatically applied after end(), not a separate action
+
   sampling:
     enabled: true
     n_samples: 8
@@ -33,8 +46,9 @@ generation:
       select_row: 8
       select_column: 8
       end: 1
+      # Note: direct_query doesn't need sampling config (applied automatically)
     debug: true
-    shuffle_invariant: true  # Enable shuffle-invariant sampling for robustness 
+    shuffle_invariant: false  # Enable shuffle-invariant sampling for robustness 
 
 logging:
   enable_logging: true

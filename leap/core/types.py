@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from .action import Action
+from .actions import Action
 from .table import Table
 
 
@@ -163,6 +163,7 @@ class InferenceResult:
     ground_truth_answers: Optional[List[str]] = None  # Expected answers from request
     profiling_data: Optional[Dict[str, Any]] = None  # Profiling timings from worker
     sampling_metadata: Optional[List[Any]] = None  # List of SamplingResult objects
+    generated_answers: Optional[List[str]] = None  # Generated answers from Query(T,Q)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "InferenceResult":
@@ -214,6 +215,7 @@ class InferenceResult:
             ground_truth_answers=data.get("ground_truth_answers"),
             profiling_data=data.get("profiling_data"),
             sampling_metadata=data.get("sampling_metadata"),
+            generated_answers=data.get("generated_answers"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -231,6 +233,7 @@ class InferenceResult:
             "ground_truth_answers": self.ground_truth_answers,
             "profiling_data": self.profiling_data,
             "sampling_metadata": self.sampling_metadata,
+            "generated_answers": self.generated_answers,
         }
 
     def get_actions(self) -> List[Action]:

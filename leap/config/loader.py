@@ -13,6 +13,7 @@ class HardwareConfig:
     tensor_parallel_size: int
     gpu_allocation: List[int]
     max_concurrent_requests: int = 16  # For continuous batching optimization
+    max_model_len: int = 2048  # Maximum sequence length for the model
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ class LoggingConfig:
 class GenerationConfig:
     use_constraints: bool
     use_global_constraints: bool
-    use_chain_of_table: bool
+    strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
 
 
@@ -108,6 +109,14 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
     """
     raw_config = _load_app_config(config_path)
 
+    # Configure enabled actions early, before building model config
+    from leap.core.actions import REGISTRY
+
+    generation_section = raw_config.get("generation", {})
+    enabled_actions = generation_section.get("enabled_actions")
+    if enabled_actions:
+        REGISTRY.set_enabled_actions(enabled_actions)
+
     model_section = raw_config.get("model")
     if not model_section or "id" not in model_section:
         raise ValueError("Configuration must define 'model.id'")
@@ -143,7 +152,7 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
     generation_config = GenerationConfig(
         use_constraints=generation_section.get("use_constraints", False),
         use_global_constraints=generation_section.get("use_global_constraints", False),
-        use_chain_of_table=generation_section.get("use_chain_of_table", False),
+        strategy=generation_section.get("strategy", "cot"),
         sampling=sampling_config,
     )
 
@@ -203,12 +212,12 @@ def _build_tokenizer_config(tokenizer_section: Dict[str, Any], tokenizer) -> Tok
 
     closing_quotes_tokens = [int(v) for v in closing_quote_token_ids.values()]
 
-    # Build action tokens
-    action_tokens = {
-        "select_row": tokenizer.encode("select_row", add_special_tokens=False),
-        "select_column": tokenizer.encode("select_column", add_special_tokens=False),
-        "end": tokenizer.encode("end", add_special_tokens=False),
-    }
+    # Build action tokens dynamically from registry
+    from leap.core.actions import REGISTRY
+
+    action_tokens = {}
+    for action_name in REGISTRY.get_enabled_names():
+        action_tokens[action_name] = tokenizer.encode(action_name, add_special_tokens=False)
 
     return TokenizerConfig(
         is_llama_tokenizer=is_llama_tokenizer,
@@ -246,6 +255,7 @@ def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any], 
         tensor_parallel_size=hardware_defaults["tensor_parallel_size"],
         gpu_allocation=list(hardware_defaults["gpu_allocation"]),
         max_concurrent_requests=hardware_defaults.get("max_concurrent_requests", 16),
+        max_model_len=hardware_defaults.get("max_model_len", 2048),
     )
 
     # Build tokenizer config

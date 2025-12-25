@@ -105,6 +105,7 @@ models:
       tensor_parallel_size: 1
       gpu_allocation: [2, 3]
       max_concurrent_requests: 1
+      max_model_len: 2048
     tokenizer:
       llama_tokenizer: true
       closing_quote_token_ids:
