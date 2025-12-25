@@ -160,7 +160,12 @@ class PromptBuilder:
                 for example in examples:
                     # Format each example as a conversation turn (user message + assistant response)
                     example_table_str = example.table.to_csv(max_chars=2000, crop=False)
-                    example_prompt = f"Table:\n{example_table_str}\n\nQuestion: {example.question}\n\nWhat action should be performed next to answer the question?\nAction: "
+                    example_prompt = (
+                        f"Table:\n{example_table_str}\n\n"
+                        f"Question: {example.question}\n\n"
+                        "What action should be performed next to answer the question?\n"
+                        "Action: "
+                    )
                     messages.append({"role": "user", "content": example_prompt})
                     messages.append({"role": "assistant", "content": example.answer})
 
@@ -253,29 +258,25 @@ class PromptBuilder:
         # Build messages for conversation with 1-shot example
         messages = []
 
-        # Add 1-shot example to demonstrate format
-        example_table = " ,Rank,City,Passengers Number,Ranking,Airline\n"
-        example_table += "row 0,1,United States, Los Angeles,14749,2,Alaska Airlines\n"
-        example_table += "row 1,2,United States, Houston,5465,8,United Express\n"
-        example_table += "row 2,3,Canada, Calgary,3761,5,Air Transat, WestJet\n"
-        example_table += "row 3,4,Canada, Saskatoon,2282,4,\n"
-        example_table += "row 4,5,Canada, Vancouver,2103,2,Air Transat\n"
-        example_table += "row 5,6,United States, Phoenix,1829,1,US Airways\n"
-        example_table += "row 6,7,Canada, Toronto,1202,1,Air Transat, CanJet\n"
-        example_table += "row 7,8,Canada, Edmonton,110,2,\n"
-        example_table += "row 8,9,United States, Oakland,107,5,\n"
+        # Load example from YAML
+        query_examples = self.action_examples.examples_manager.get_examples("query_answer")
+        example = query_examples[0]
+        example_table = example.format_table_for_prompt()
+        example_question = example.question
+        example_answer = example.answer
 
+        # Build example instruction with format guidelines
         example_instruction = "Here is the table to answer this question. Please understand the table and answer the question:\n\n"
         example_instruction += "Provide your answer(s) as a Python list of strings.\n"
         example_instruction += "Examples:\n"
         example_instruction += '- Single answer: ["Italy"]\n'
         example_instruction += '- Multiple answers: ["Italy", "Spain", "France"]\n'
         example_instruction += '- Yes/no: ["yes"] or ["no"]\n\n'
-        example_instruction += f"Table:\n{example_table}\n"
-        example_instruction += "Question: how many more passengers flew to los angeles than to saskatoon from manzanillo airport in 2013?\n"
+        example_instruction += f"Table:\n{example_table}\n\n"
+        example_instruction += f"Question: {example_question}\n"
 
         messages.append({"role": "user", "content": example_instruction})
-        messages.append({"role": "assistant", "content": 'Answer:["12467"]'})
+        messages.append({"role": "assistant", "content": f"Answer:{example_answer}"})
 
         # Add current query
         current_instruction = "Here is the table to answer this question. Please understand the table and answer the question:\n\n"
@@ -284,7 +285,6 @@ class PromptBuilder:
         current_instruction += f"Question: {question}\n"
 
         messages.append({"role": "user", "content": current_instruction})
-    
 
         # Use tokenizer to format the conversation - model-agnostic!
         if self.is_instruct:

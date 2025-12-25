@@ -30,7 +30,7 @@ generation:
   # - "iterative": single-phase iterative generation
   # - "cot": two-phase Chain-of-Table generation
   # - "direct_query": skip all table transformations, answer directly (baseline)
-  strategy: "cot"
+  strategy: "direct_query"
 
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:
