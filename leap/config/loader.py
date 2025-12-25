@@ -53,7 +53,6 @@ class LoggingConfig:
 class GenerationConfig:
     use_constraints: bool
     use_global_constraints: bool
-    use_chain_of_table: bool
     strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
 
@@ -153,7 +152,6 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
     generation_config = GenerationConfig(
         use_constraints=generation_section.get("use_constraints", False),
         use_global_constraints=generation_section.get("use_global_constraints", False),
-        use_chain_of_table=generation_section.get("use_chain_of_table", False),
         strategy=generation_section.get("strategy", "cot"),
         sampling=sampling_config,
     )

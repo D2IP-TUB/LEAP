@@ -25,7 +25,6 @@ run:
 generation:
   use_constraints: false
   use_global_constraints: false
-  use_chain_of_table: true
 
   # Generation strategy: "iterative", "cot", or "direct_query"
   # - "iterative": single-phase iterative generation

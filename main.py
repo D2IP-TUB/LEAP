@@ -131,7 +131,7 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
 
 def get_generation_mode_string(generation_config: GenerationSettings):
     """Get a descriptive string for the current generation mode"""
-    if generation_config.use_chain_of_table:
+    if generation_config.strategy == "cot":
         constraint_desc = "with_constraints" if generation_config.use_constraints else "without_constraints"
         return f"chain_of_table_{constraint_desc}"
     elif generation_config.use_constraints:

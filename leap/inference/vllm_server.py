@@ -79,7 +79,7 @@ class VLLMWorkerProcess(mp.Process):
 
         # Extract commonly used fields for convenience
         self.use_constraints = generation_config.use_constraints
-        self.use_cot = generation_config.use_chain_of_table
+        self.use_cot = generation_config.strategy == "cot"
         self.use_global_constraints = generation_config.use_global_constraints
 
         # vLLM components (will be set after engine initialization)
@@ -570,7 +570,7 @@ class ProcessParallelVLLM:
 
     def _get_generation_mode_description(self) -> str:
         """Get description of current generation mode"""
-        use_cot = self.generation_config.use_chain_of_table
+        use_cot = self.generation_config.strategy == "cot"
         use_constraints = self.generation_config.use_constraints
 
         if use_cot:
@@ -785,10 +785,12 @@ def setup_standard_vllm_server(
     app_config = load_runtime_config(config_path, tokenizer)
 
     # Override specific settings using dataclass replace (since they're frozen)
+    # Convert use_cot to strategy
+    strategy = "cot" if use_cot else app_config.generation.strategy
     generation_config = replace(
         app_config.generation,
         use_constraints=use_constraints,
-        use_chain_of_table=use_cot,
+        strategy=strategy,
     )
 
     logging_config = replace(app_config.logging, enable_logging=enable_logging, log_dir=log_dir)
