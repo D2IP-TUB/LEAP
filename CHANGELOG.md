@@ -59,7 +59,9 @@ All notable changes to the LEAP project are documented in this file.
 - Enhanced prompt templates with better example formatting
 - Improved action type selection prompt with additional examples
 - Reduced temperature for action type selection for more consistent results (similar to CoTables paper)
-
+- Replaced `use_chain_of_table` config flag with generation strategy `cot`
+- Generation strategies are now uniformly configured through the strategy selection in config
+- Direct query action now reads examples from `action_examples.yaml`
 
 ## [0.1.0] - 2025-12-03
 
