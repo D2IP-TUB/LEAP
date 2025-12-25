@@ -236,11 +236,29 @@ class ActionPromptBuilder:
         # Define instructions for each action
         instructions = {
             "direct_query": "This action generates an answer directly from the current table without transformation.",
-            "select_row": "Using f_select_row() to select relevant rows in the given table that support or oppose the statement.\nPlease use f_select_row([*]) to select all rows in the table.",
-            "select_column": "Use f_select_column() to filter out useless columns in the table according to information in the statement and the table.",
-            "add_column": "To answer the question, we can first use f_add_column() to add more columns to the table.\n\nThe added columns should have these data types:\n1. Numerical: the numerical strings that can be used in sort, sum\n2. Datetype: the strings that describe a date, such as year, month, day\n3. String: other strings",
+            "select_row": (
+                "Using f_select_row() to select relevant rows in the given table that support or oppose the statement.\n"
+                "Please use f_select_row([*]) to select all rows in the table."
+            ),
+            "select_column": (
+                "Use f_select_column() to filter out useless columns in the table according to information in the statement and the table."
+            ),
+            "add_column": (
+                "To answer the question, we can first use f_add_column() to add more columns to the table.\n\n"
+                "The added columns should have these data types:\n"
+                "1. Numerical: the numerical strings that can be used in sort, sum\n"
+                "2. Datetype: the strings that describe a date, such as year, month, day\n"
+                "3. String: other strings"
+            ),
             "group_by": "To answer the question, we can first use f_group_by() to group the values in a column.",
-            "sort_by": 'To answer the question, we can first use f_sort_by() to sort the values in a column to get the order of the items. The order can be "large to small" or "small to large".\n\nThe column to sort should have these data types:\n1. Numerical: the numerical strings that can be used in sort\n2. DateType: the strings that describe a date, such as year, month, day\n3. String: other strings',
+            "sort_by": (
+                "To answer the question, we can first use f_sort_by() to sort the values in a column to get the order of the items."
+                " The order can be 'large to small' or 'small to large'.\n\n"
+                "The column to sort should have these data types:\n"
+                "1. Numerical: the numerical strings that can be used in sort\n"
+                "2. DateType: the strings that describe a date, such as year, month, day\n"
+                "3. String: other strings"
+            ),
             "action_selection": "",  # No instruction needed for action selection examples
         }
 
