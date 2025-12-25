@@ -4,12 +4,6 @@
 # Examples are loaded once and cached for performance.
 
 examples:
-  direct_query:
-    - table: " ,Date,Division,League,Regular Season,Playoffs,Open Cup\nrow 0,2001/01/02,2,USL A-League,4th Western,Quarterfinals,Did not qualify\nrow 1,2002/08/06,2,USL A-League,2nd Pacific,1st Round,Did not qualify\nrow 2,2005/03/24,2,USL First Division,5th,Quarterfinals,4th Round"
-      question: "what was the last year where this team was a part of the usl a-league?"
-      explanation: "The table shows league information across different years. We need to identify rows with USL A-League and find the latest year."
-      answer: "direct_query()"
-
   query_answer:
     - table: " ,Rank,City,Passengers Number,Ranking,Airline\nrow 0,1,United States, Los Angeles,14749,2,Alaska Airlines\nrow 1,2,United States, Houston,5465,8,United Express\nrow 2,3,Canada, Calgary,3761,5,Air Transat, WestJet\nrow 3,4,Canada, Saskatoon,2282,4,\nrow 4,5,Canada, Vancouver,2103,2,Air Transat\nrow 5,6,United States, Phoenix,1829,1,US Airways\nrow 6,7,Canada, Toronto,1202,1,Air Transat, CanJet\nrow 7,8,Canada, Edmonton,110,2,\nrow 8,9,United States, Oakland,107,5,"
       question: "how many more passengers flew to los angeles than to saskatoon from manzanillo airport in 2013?"
@@ -34,6 +28,39 @@ examples:
     - table: " ,Rank,Cyclist,Team,Time,UCI ProTour Points\nrow 0,1,Alejandro Valverde (ESP),Caisse d'Epargne,5h 29' 10\",40\nrow 1,2,Alexandr Kolobnev (RUS),Team CSC Saxo Bank,s.t.,30\nrow 2,3,Davide Rebellin (ITA),Gerolsteiner,s.t.,25"
       question: "which country had the most cyclists finish within the top 10?"
       answer: 'select_column(["Rank", "Cyclist"])'
+
+  add_column:
+    - table: " ,Rank,Cyclist,Team,Time,UCI ProTour Points\nrow 0,1,Alejandro Valverde (ESP),Caisse d'Epargne,5h 29' 10\",40\nrow 1,2,Alexandr Kolobnev (RUS),Team CSC Saxo Bank,s.t.,30\nrow 2,3,Davide Rebellin (ITA),Gerolsteiner,s.t.,25\nrow 3,4,Paolo Bettini (ITA),Quick Step,s.t.,20"
+      question: "which country had the most cyclists finish within the top 10?"
+      explanation: "The question asks about countries, but the Cyclist column contains both name and country code in parentheses. We need to extract the country code into a separate column."
+      answer: "add_column(Country, [ESP, RUS, ITA, ITA])"
+
+    - table: " ,Week,When,Kickoff,Opponent,Results Final score,Results Team record\nrow 0,1,Saturday April 13,7:00 p.m.,at Rhein Fire,W 27-21,1-0\nrow 1,2,Saturday April 20,7:00 p.m.,London Monarchs,W 37-3,2-0\nrow 2,3,Sunday April 28,6:00 p.m.,at Barcelona Dragons,W 33-29,3-0"
+      question: "what is the date of the competition with highest attendance?"
+      explanation: "The question asks about dates and attendance, but attendance is in a separate column not shown. We need to extract the year from the When column to help identify dates."
+      answer: "add_column(Year, [April 13, April 20, April 28])"
+
+  group_by:
+    - table: " ,Rank,Lane,Athlete,Time,Country\nrow 0,1,6,Manjeet Kaur (IND),52.17,IND\nrow 1,2,5,Olga Tereshkova (KAZ),51.86,KAZ\nrow 2,3,4,Pinki Pramanik (IND),53.06,IND\nrow 3,4,1,Tang Xiaoyin (CHN),53.66,CHN\nrow 4,5,8,Marina Maslyonko (KAZ),53.99,KAZ"
+      question: "tell me the number of athletes from each country."
+      explanation: "The question asks to count athletes by country. We can group by the Country column to get counts for each country."
+      answer: "group_by(Country)"
+
+    - table: " ,Rank,Cyclist,Country\nrow 0,1,Alejandro,ESP\nrow 1,2,Alexandr,RUS\nrow 2,3,Davide,ITA\nrow 3,4,Paolo,ITA\nrow 4,5,Franco,ITA"
+      question: "which country had the most cyclists in the top 5?"
+      explanation: "We need to count how many cyclists each country has. Grouping by Country will give us the counts."
+      answer: "group_by(Country)"
+
+  sort_by:
+    - table: " ,Position,Club,Played,Points,Wins\nrow 0,1,Malaga CF,42,79,22\nrow 1,10,CP Merida,42,59,15\nrow 2,3,CD Numancia,42,73,21"
+      question: "what club placed in the last position?"
+      explanation: "The question asks about the last position. We need to sort by Position from large to small to find the last position."
+      answer: "sort_by(Position, desc)"
+
+    - table: " ,Rank,Cyclist,Points\nrow 0,1,Alejandro,40\nrow 1,2,Alexandr,30\nrow 2,3,Davide,25"
+      question: "who has the lowest points?"
+      explanation: "We need to order by Points from small to large to find who has the lowest."
+      answer: "sort_by(Points, asc)"
 
   action_selection:
     - table: " ,Year,Division,League,Regular Season,Playoffs,Open Cup\nrow 0,2001,2,USL A-League,4th Western,Quarterfinals,Did not qualify\nrow 1,2002,2,USL A-League,2nd Pacific,1st Round,Did not qualify\nrow 2,2003,2,USL A-League,3rd Pacific,Did not qualify,Did not qualify\nrow 3,2004,2,USL A-League,1st Western,Quarterfinals,4th Round\nrow 4,2005,2,USL First Division,5th,Quarterfinals,4th Round"
@@ -63,3 +90,15 @@ examples:
     - table: " ,Rank,Nation,Gold,Silver,Bronze,Total\nrow 0,1,United States,46,29,29,104\nrow 1,2,China,38,27,23,88\nrow 2,3,Great Britain,29,17,19,65\nrow 3,4,Russia,24,26,32,82\nrow 4,5,South Korea,13,8,7,28\nrow 5,6,Germany,11,19,14,44"
       question: "what is the total number of medals won by the top 3 nations?"
       answer: "select_row([0, 1, 2]) -> select_column([Nation, Total]) -> end"
+
+    - table: " ,Rank,Cyclist,Team\nrow 0,1,Alejandro Valverde (ESP),Caisse d'Epargne\nrow 1,2,Alexandr Kolobnev (RUS),Team CSC\nrow 2,3,Davide Rebellin (ITA),Gerolsteiner\nrow 3,4,Paolo Bettini (ITA),Quick Step"
+      question: "which country had the most cyclists in the top 10?"
+      answer: "add_column"
+
+    - table: " ,Rank,Cyclist,Country\nrow 0,1,Alejandro,ESP\nrow 1,2,Alexandr,RUS\nrow 2,3,Davide,ITA\nrow 3,4,Paolo,ITA"
+      question: "how many cyclists are from each country?"
+      answer: "group_by"
+
+    - table: " ,Position,Club,Points\nrow 0,3,CD Numancia,73\nrow 1,1,Malaga CF,79\nrow 2,10,CP Merida,59"
+      question: "which club has the highest points?"
+      answer: "sort_by"

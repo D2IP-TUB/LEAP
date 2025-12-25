@@ -235,7 +235,6 @@ class ActionPromptBuilder:
         """Build templates for all actions (called once during init)."""
         # Define instructions for each action
         instructions = {
-            "direct_query": "This action generates an answer directly from the current table without transformation.",
             "select_row": (
                 "Using f_select_row() to select relevant rows in the given table that support or oppose the statement.\n"
                 "Please use f_select_row([*]) to select all rows in the table."
