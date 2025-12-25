@@ -83,9 +83,9 @@ class TestIterativePromptFiltering:
         assert "end()" in prompt
 
         # Should show all operation descriptions
-        assert "f_select_row:" in prompt
-        assert "f_select_column:" in prompt
-        assert "f_end:" in prompt
+        assert "select_row:" in prompt
+        assert "select_column:" in prompt
+        assert "end:" in prompt
 
     def test_filters_out_used_select_row(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """After using select_row, it should be filtered from available actions."""
@@ -262,9 +262,9 @@ class TestConstraintMode:
         # With constraints, only operations are shown (no "Choose from")
         # But select_row should still be filtered from operations
         operations_section = prompt.split("Operations:")[1].split("Next action:")[0]
-        assert "f_select_row:" not in operations_section
-        assert "f_select_column:" in operations_section
-        assert "f_end:" in operations_section
+        assert "select_row:" not in operations_section
+        assert "select_column:" in operations_section
+        assert "end:" in operations_section
 
 
 class TestEdgeCases:
@@ -427,9 +427,9 @@ class TestCoTFirstActionRestrictions:
 
         # Also check operations section
         operations_section = prompt.split("Operations:")[1].split("Available actions:")[0]
-        assert "f_end:" not in operations_section
-        assert "f_select_row:" in operations_section
-        assert "f_select_column:" in operations_section
+        assert "end:" not in operations_section
+        assert "select_row:" in operations_section
+        assert "select_column:" in operations_section
 
     def test_cot_subsequent_actions_include_terminating_action(
         self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry
