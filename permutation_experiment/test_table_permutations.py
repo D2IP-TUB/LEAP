@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Standalone script to test table row selection with different permutations.
+Standalone script to test table row selection robustness with different permutations.
 
 This script:
 1. Loads 5 instances from WikiTableQuestions dataset with ≤10 rows per table
 2. Generates all permutations for each table
 3. Sends async requests to vLLM with proper chat templates to select relevant rows
-4. Analyzes consistency of responses across permutations
+4. Analyzes TWO distinct metrics across permutations:
+   - SEMANTIC CONSISTENCY: Does the model select the same semantic rows regardless of position?
+   - POSITIONAL BIAS: Does the model prefer certain positions (e.g., always top rows)?
 
 Usage:
 1. Start vLLM server in terminal:
@@ -125,6 +127,40 @@ def generate_permutations(num_rows: int) -> List[List[int]]:
 def apply_permutation(rows: List[List[Any]], permutation: List[int]) -> List[List[Any]]:
     """Apply a permutation to table rows."""
     return [rows[i] for i in permutation]
+
+
+def invert_permutation(permutation: List[int]) -> List[int]:
+    """Compute the inverse of a permutation.
+
+    If permutation[i] = j, then inverse[j] = i.
+    This maps new positions back to original positions.
+
+    Example: permutation = [2, 0, 1] means:
+      - original row 2 is now at position 0
+      - original row 0 is now at position 1
+      - original row 1 is now at position 2
+    Inverse = [1, 2, 0] means:
+      - position 0 contains original row 2
+      - position 1 contains original row 0
+      - position 2 contains original row 1
+    """
+    inverse = [0] * len(permutation)
+    for new_pos, orig_pos in enumerate(permutation):
+        inverse[orig_pos] = new_pos
+    return inverse
+
+
+def map_to_original_indices(selected_indices: List[int], permutation: List[int]) -> List[int]:
+    """Map selected row indices back to their original positions.
+
+    Args:
+        selected_indices: Row indices selected in the permuted table
+        permutation: The permutation that was applied
+
+    Returns:
+        The original row indices (semantic rows)
+    """
+    return sorted([permutation[i] for i in selected_indices if i < len(permutation)])
 
 
 def build_select_row_prompt(table_csv: str, question: str) -> List[Dict[str, str]]:
@@ -256,8 +292,12 @@ async def process_permutation(
     semaphore: asyncio.Semaphore,
     perm_idx: int = 0,
     return_prompt: bool = False,
-) -> Tuple[List[int], str, Any, List[int]]:
-    """Process a single permutation: apply permutation, query model, return predicted rows."""
+) -> Tuple[List[int], List[int], str, Any, List[int]]:
+    """Process a single permutation: apply permutation, query model, return predicted rows.
+
+    Returns:
+        Tuple of (predicted_rows_in_permuted_table, original_semantic_rows, response, messages, permutation)
+    """
     async with semaphore:
         # Apply permutation to table
         permuted_rows = apply_permutation(rows, permutation)
@@ -271,13 +311,16 @@ async def process_permutation(
         # Query model
         response = await query_vllm(client, messages)
 
-        # Parse response
-        predicted_rows = parse_select_row_response(response)
+        # Parse response (these are indices in the permuted table)
+        predicted_rows_permuted = parse_select_row_response(response)
+
+        # Map back to original indices (semantic rows)
+        original_semantic_rows = map_to_original_indices(predicted_rows_permuted, permutation)
 
         # Return messages if requested (for samples)
         messages_to_return = messages if return_prompt else None
 
-        return predicted_rows, response, messages_to_return, list(permutation)
+        return predicted_rows_permuted, original_semantic_rows, response, messages_to_return, list(permutation)
 
 
 async def evaluate_instance(
@@ -320,10 +363,12 @@ async def evaluate_instance(
     else:
         results = await asyncio.gather(*tasks)
 
-    # Collect and analyze results
-    response_groups = defaultdict(list)  # Group permutations by response
+    # Collect and analyze results with BOTH metrics
+    positional_groups = defaultdict(list)  # Group by raw position indices (positional bias)
+    semantic_groups = defaultdict(list)    # Group by original semantic rows (robustness)
     samples_shown = 0
 
+<<<<<<< HEAD
     for idx, (predicted, response, messages, permutation) in enumerate(results):
         # Group by parsed row selection
         key = tuple(sorted(predicted))
@@ -332,6 +377,30 @@ async def evaluate_instance(
             'response': response,
             'parsed': predicted,
         })
+=======
+    for idx, (predicted_permuted, predicted_original, response, messages, permutation) in enumerate(results):
+        # METRIC 1: Positional bias - group by raw selected positions
+        positional_key = tuple(sorted(predicted_permuted))
+        positional_groups[positional_key].append(
+            {
+                "permutation": permutation,
+                "response": response,
+                "parsed_permuted": predicted_permuted,
+                "parsed_original": predicted_original,
+            }
+        )
+
+        # METRIC 2: Semantic consistency - group by original semantic rows
+        semantic_key = tuple(predicted_original)  # Already sorted in map_to_original_indices
+        semantic_groups[semantic_key].append(
+            {
+                "permutation": permutation,
+                "response": response,
+                "parsed_permuted": predicted_permuted,
+                "parsed_original": predicted_original,
+            }
+        )
+>>>>>>> eeb2993 (account for the reverse permutation for the permutation sweep)
 
         # Show sample prompt/response if available
         if messages and samples_shown < 3 and SHOW_SAMPLE_EVERY > 0:
@@ -349,19 +418,32 @@ async def evaluate_instance(
                 print()
             print(f"  RESPONSE:")
             print(f"  {response}")
+<<<<<<< HEAD
             print(f"\n  PARSED ROWS: {predicted}")
             print(f"  {'='*70}\n")
+=======
+            print(f"\n  PARSED ROWS (in permuted table): {predicted_permuted}")
+            print(f"  SEMANTIC ROWS (original indices): {predicted_original}")
+            print(f"  {'=' * 70}\n")
+>>>>>>> eeb2993 (account for the reverse permutation for the permutation sweep)
 
     total = len(results)
-    num_unique_responses = len(response_groups)
 
-    # Find most common response
-    most_common = max(response_groups.items(), key=lambda x: len(x[1]))
-    most_common_rows, most_common_examples = most_common
-    consistency = len(most_common_examples) / total if total > 0 else 0
+    # METRIC 1: Positional bias analysis
+    num_unique_positional = len(positional_groups)
+    most_common_positional = max(positional_groups.items(), key=lambda x: len(x[1]))
+    most_common_pos_rows, most_common_pos_examples = most_common_positional
+    positional_consistency = len(most_common_pos_examples) / total if total > 0 else 0
+
+    # METRIC 2: Semantic consistency analysis
+    num_unique_semantic = len(semantic_groups)
+    most_common_semantic = max(semantic_groups.items(), key=lambda x: len(x[1]))
+    most_common_sem_rows, most_common_sem_examples = most_common_semantic
+    semantic_consistency = len(most_common_sem_examples) / total if total > 0 else 0
 
     print(f"  Results:")
     print(f"    Total permutations: {total}")
+<<<<<<< HEAD
     print(f"    Unique responses: {num_unique_responses}")
     print(f"    Most common response: {list(most_common_rows)} ({len(most_common_examples)}/{total} = {consistency:.2%})")
     print(f"    Response distribution:")
@@ -387,6 +469,66 @@ async def evaluate_instance(
             'percentage': len(v) / total,
             'example_permutations': [ex['permutation'][:3] for ex in v[:3]]  # First 3 permutations as examples
         } for k, v in sorted_responses],
+=======
+    print()
+    print("  SEMANTIC CONSISTENCY (robustness to row order):")
+    print(f"    Unique semantic responses: {num_unique_semantic}")
+    print(f"    Most common semantic rows: {list(most_common_sem_rows)} ({len(most_common_sem_examples)}/{total} = {semantic_consistency:.2%})")
+    print("    Top semantic responses:")
+    sorted_semantic = sorted(semantic_groups.items(), key=lambda x: len(x[1]), reverse=True)
+    for i, (rows, examples) in enumerate(sorted_semantic[:5]):
+        print(f"      {i + 1}. Original rows {list(rows)}: {len(examples)} times ({len(examples) / total:.1%})")
+
+    print()
+    print("  POSITIONAL BIAS (preference for specific positions):")
+    print(f"    Unique positional responses: {num_unique_positional}")
+    print(f"    Most common positions: {list(most_common_pos_rows)} ({len(most_common_pos_examples)}/{total} = {positional_consistency:.2%})")
+    print("    Top positional responses:")
+    sorted_positional = sorted(positional_groups.items(), key=lambda x: len(x[1]), reverse=True)
+    for i, (rows, examples) in enumerate(sorted_positional[:5]):
+        print(f"      {i + 1}. Positions {list(rows)}: {len(examples)} times ({len(examples) / total:.1%})")
+
+    return {
+        "instance_idx": instance_idx,
+        "id": instance.get("id", ""),
+        "question": question,
+        "num_rows": num_rows,
+        "num_permutations": total,
+
+        # Semantic consistency metrics
+        "semantic_consistency": {
+            "num_unique_responses": num_unique_semantic,
+            "most_common_response": list(most_common_sem_rows),
+            "consistency_percentage": semantic_consistency,
+            "response_distribution": {str(list(k)): len(v) for k, v in sorted_semantic},
+            "all_responses": [
+                {
+                    "rows": list(k),
+                    "count": len(v),
+                    "percentage": len(v) / total,
+                    "example_permutations": [ex["permutation"][:3] for ex in v[:3]],
+                }
+                for k, v in sorted_semantic
+            ],
+        },
+
+        # Positional bias metrics
+        "positional_bias": {
+            "num_unique_responses": num_unique_positional,
+            "most_common_response": list(most_common_pos_rows),
+            "consistency_percentage": positional_consistency,
+            "response_distribution": {str(list(k)): len(v) for k, v in sorted_positional},
+            "all_responses": [
+                {
+                    "rows": list(k),
+                    "count": len(v),
+                    "percentage": len(v) / total,
+                    "example_permutations": [ex["permutation"][:3] for ex in v[:3]],
+                }
+                for k, v in sorted_positional
+            ],
+        },
+>>>>>>> eeb2993 (account for the reverse permutation for the permutation sweep)
     }
 
 
@@ -420,23 +562,39 @@ async def main():
     print("SUMMARY")
     print("=" * 80)
 
+<<<<<<< HEAD
     total_permutations = sum(r['num_permutations'] for r in all_results)
     avg_consistency = sum(r['consistency'] for r in all_results) / len(all_results) if all_results else 0
     total_unique_responses = sum(r['num_unique_responses'] for r in all_results)
+=======
+    total_permutations = sum(r["num_permutations"] for r in all_results)
+    avg_semantic_consistency = sum(r["semantic_consistency"]["consistency_percentage"] for r in all_results) / len(all_results) if all_results else 0
+    avg_positional_consistency = sum(r["positional_bias"]["consistency_percentage"] for r in all_results) / len(all_results) if all_results else 0
+    total_unique_semantic = sum(r["semantic_consistency"]["num_unique_responses"] for r in all_results)
+    total_unique_positional = sum(r["positional_bias"]["num_unique_responses"] for r in all_results)
+>>>>>>> eeb2993 (account for the reverse permutation for the permutation sweep)
 
     print(f"\nTotal permutations tested: {total_permutations}")
-    print(f"Average consistency: {avg_consistency:.2%}")
-    print(f"Total unique responses across all instances: {total_unique_responses}")
+    print()
+    print("SEMANTIC CONSISTENCY (robustness to row order):")
+    print(f"  Average semantic consistency: {avg_semantic_consistency:.2%}")
+    print(f"  Total unique semantic responses: {total_unique_semantic}")
+    print()
+    print("POSITIONAL BIAS (preference for specific positions):")
+    print(f"  Average positional consistency: {avg_positional_consistency:.2%}")
+    print(f"  Total unique positional responses: {total_unique_positional}")
 
     print("\nPer-instance breakdown:")
     for r in all_results:
         print(f"\n  Instance {r['instance_idx'] + 1} (ID: {r['id']}, {r['num_rows']} rows):")
         print(f"    Question: {r['question'][:80]}...")
-        print(f"    Consistency: {r['consistency']:.2%}")
-        print(f"    Unique responses: {r['num_unique_responses']}")
-        print(f"    Most common: Rows {r['most_common_response']}")
+        print(f"    Semantic consistency: {r['semantic_consistency']['consistency_percentage']:.2%} (most common: {r['semantic_consistency']['most_common_response']})")
+        print(f"    Positional consistency: {r['positional_bias']['consistency_percentage']:.2%} (most common: {r['positional_bias']['most_common_response']})")
+        print(f"    Unique semantic responses: {r['semantic_consistency']['num_unique_responses']}")
+        print(f"    Unique positional responses: {r['positional_bias']['num_unique_responses']}")
 
     # Save results to JSON
+<<<<<<< HEAD
     output_file = 'permutation_test_results.json'
     with open(output_file, 'w') as f:
         json.dump({
@@ -444,6 +602,24 @@ async def main():
                 'total_permutations': total_permutations,
                 'avg_consistency': avg_consistency,
                 'total_unique_responses': total_unique_responses,
+=======
+    output_file = "permutation_test_results.json"
+    with open(output_file, "w") as f:
+        json.dump(
+            {
+                "summary": {
+                    "total_permutations": total_permutations,
+                    "semantic_consistency": {
+                        "avg_consistency": avg_semantic_consistency,
+                        "total_unique_responses": total_unique_semantic,
+                    },
+                    "positional_bias": {
+                        "avg_consistency": avg_positional_consistency,
+                        "total_unique_responses": total_unique_positional,
+                    },
+                },
+                "instances": all_results,
+>>>>>>> eeb2993 (account for the reverse permutation for the permutation sweep)
             },
             'instances': all_results,
         }, f, indent=2)
