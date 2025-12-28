@@ -1,0 +1,455 @@
+#!/usr/bin/env python3
+"""
+Standalone script to test table row selection with different permutations.
+
+This script:
+1. Loads 5 instances from WikiTableQuestions dataset with ≤10 rows per table
+2. Generates all permutations for each table
+3. Sends async requests to vLLM with proper chat templates to select relevant rows
+4. Analyzes consistency of responses across permutations
+
+Usage:
+1. Start vLLM server in terminal:
+   vllm serve <model_name> --host 0.0.0.0 --port 8000
+2. Run this script:
+   python test_table_permutations.py
+
+Testing without vLLM:
+   Set MOCK_MODE = True in the configuration section to test without a server
+"""
+
+import asyncio
+import itertools
+import random
+from typing import List, Dict, Any, Tuple
+from collections import defaultdict
+import json
+
+try:
+    from tqdm.asyncio import tqdm as async_tqdm
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+    print("Note: Install tqdm for progress bars: pip install tqdm")
+
+from openai import AsyncOpenAI
+
+
+# Configuration
+VLLM_API_BASE = "http://localhost:8000/v1"
+VLLM_MODEL_NAME = None  # Model name (None = use vLLM default, or set to specific model name)
+MAX_ROWS = 10  # Maximum rows per table to keep permutations manageable
+NUM_INSTANCES = 5  # Number of instances to test
+MAX_CONCURRENT_REQUESTS = 64 * 4  # Limit concurrent requests
+RANDOM_SEED = 42  # For reproducibility
+MOCK_MODE = False  # Set to True to test without vLLM server
+SHOW_SAMPLE_EVERY = 100  # Show sample prompt/response every N permutations (0 to disable)
+
+# Set random seed
+random.seed(RANDOM_SEED)
+
+
+def load_table_instances() -> List[Dict[str, Any]]:
+    """Load WikiTableQuestions dataset and filter instances with ≤10 rows."""
+    print("Loading WikiTableQuestions dataset...")
+
+    import datasets
+
+    try:
+        dataset = datasets.load_dataset('wikitablequestions', split='train')
+    except Exception as e:
+        print(f"Error loading WikiTableQuestions: {e}")
+        return []
+
+    print(f"Loaded {len(dataset)} examples from WikiTableQuestions")
+
+    filtered_instances = []
+    for item in dataset:
+        # WikiTableQuestions format
+        table = item['table']
+        header = table['header']
+        rows = table['rows']
+        num_rows = len(rows)
+
+        if num_rows <= MAX_ROWS and num_rows > 0:
+            question = item.get('question', 'Select relevant rows from this table.')
+
+            # Convert to our format
+            table_formatted = [header] + rows
+
+            # No ground truth row annotations in WTQ, so we'll just track responses
+            filtered_instances.append({
+                'table': table_formatted,
+                'question': question,
+                'answers': item.get('answers', []),
+                'id': item.get('id', ''),
+            })
+
+            if len(filtered_instances) >= NUM_INSTANCES:
+                break
+
+    print(f"Found {len(filtered_instances)} instances with ≤{MAX_ROWS} rows")
+    return filtered_instances
+
+
+def table_to_csv(header: List[str], rows: List[List[Any]]) -> str:
+    """Convert table format to CSV string matching LEAP format."""
+    import csv
+    import io
+
+    out = io.StringIO()
+    writer = csv.writer(out)
+
+    # Write header
+    header_strs = [str(col) for col in header]
+    writer.writerow([" "] + header_strs)
+
+    # Write rows
+    for i, row in enumerate(rows):
+        row_values = [str(cell) for cell in row]
+        writer.writerow([f"row {i}"] + row_values)
+
+    return out.getvalue().strip()
+
+
+def generate_permutations(num_rows: int) -> List[List[int]]:
+    """Generate all permutations of row indices."""
+    import math
+    indices = list(range(num_rows))
+    perms = list(itertools.permutations(indices))
+    print(f"  Generated {len(perms)} permutations ({math.factorial(num_rows)} total)")
+    return perms
+
+
+def apply_permutation(rows: List[List[Any]], permutation: List[int]) -> List[List[Any]]:
+    """Apply a permutation to table rows."""
+    return [rows[i] for i in permutation]
+
+
+def build_select_row_prompt(table_csv: str, question: str) -> List[Dict[str, str]]:
+    """Build prompt for select_row action in LEAP style with proper chat template."""
+    # System message with instructions
+    system_message = """You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else."""
+
+    # Few-shot examples as user/assistant pairs
+    example_1_user = """Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?"""
+
+    example_1_assistant = "select_row([0, 2])"
+
+    example_2_user = """Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?"""
+
+    example_2_assistant = "select_row([4])"
+
+    # Current query
+    current_user = f"""Table:
+{table_csv}
+
+Question: {question}"""
+
+    # Build messages array
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": example_1_user},
+        {"role": "assistant", "content": example_1_assistant},
+        {"role": "user", "content": example_2_user},
+        {"role": "assistant", "content": example_2_assistant},
+        {"role": "user", "content": current_user},
+    ]
+
+    return messages
+
+
+def parse_select_row_response(response: str) -> List[int]:
+    """Parse select_row response to extract row indices."""
+    import re
+
+    # Try to find select_row([...]) pattern
+    pattern = r'select_row\s*\(\s*\[([^\]]*)\]\s*\)'
+    match = re.search(pattern, response)
+
+    if match:
+        indices_str = match.group(1)
+        try:
+            indices = [int(x.strip()) for x in indices_str.split(',') if x.strip()]
+            return indices
+        except:
+            pass
+
+    # Fallback: try to extract any list of numbers
+    pattern2 = r'\[([0-9,\s]+)\]'
+    match2 = re.search(pattern2, response)
+    if match2:
+        try:
+            indices = [int(x.strip()) for x in match2.group(1).split(',') if x.strip()]
+            return indices
+        except:
+            pass
+
+    return []
+
+
+async def query_vllm(client: AsyncOpenAI, messages: List[Dict[str, str]]) -> str:
+    """Send async request to vLLM server with chat messages."""
+    if MOCK_MODE:
+        # Mock response for testing without vLLM server
+        await asyncio.sleep(0.01)  # Simulate network delay
+        # Return a random selection for testing
+        import re
+        # Get the last user message to parse table
+        last_message = messages[-1]['content']
+        rows = re.findall(r'row \d+', last_message)
+        if rows:
+            max_row = len(rows) - 1
+            # Randomly select 1-3 rows
+            num_select = random.randint(1, min(3, max_row + 1))
+            selected = random.sample(range(max_row + 1), num_select)
+            return f"select_row({selected})"
+        return "select_row([0])"
+
+    try:
+        # Get list of models to use the correct one
+        if VLLM_MODEL_NAME is None:
+            # Query available models and use the first one
+            models = await client.models.list()
+            model_name = models.data[0].id if models.data else "default"
+        else:
+            model_name = VLLM_MODEL_NAME
+
+        # Use chat completions API with proper messages
+        response = await client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            max_tokens=100,
+            temperature=0.0,
+            n=1,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Error querying vLLM: {e}")
+        return ""
+
+
+async def process_permutation(
+    client: AsyncOpenAI,
+    header: List[str],
+    rows: List[List[Any]],
+    permutation: List[int],
+    question: str,
+    semaphore: asyncio.Semaphore,
+    perm_idx: int = 0,
+    return_prompt: bool = False,
+) -> Tuple[List[int], str, Any, List[int]]:
+    """Process a single permutation: apply permutation, query model, return predicted rows."""
+    async with semaphore:
+        # Apply permutation to table
+        permuted_rows = apply_permutation(rows, permutation)
+
+        # Convert to CSV
+        table_csv = table_to_csv(header, permuted_rows)
+
+        # Build messages with chat template
+        messages = build_select_row_prompt(table_csv, question)
+
+        # Query model
+        response = await query_vllm(client, messages)
+
+        # Parse response
+        predicted_rows = parse_select_row_response(response)
+
+        # Return messages if requested (for samples)
+        messages_to_return = messages if return_prompt else None
+
+        return predicted_rows, response, messages_to_return, list(permutation)
+
+
+async def evaluate_instance(
+    client: AsyncOpenAI,
+    instance: Dict[str, Any],
+    instance_idx: int,
+) -> Dict[str, Any]:
+    """Evaluate a single instance across all permutations."""
+    table = instance['table']
+    header = table[0]
+    rows = table[1:]
+    question = instance['question']
+
+    num_rows = len(rows)
+    print(f"\nInstance {instance_idx + 1}: {num_rows} rows")
+    print(f"  Question: {question[:100]}...")
+    print(f"  ID: {instance.get('id', 'N/A')}")
+
+    # Generate all permutations
+    permutations = generate_permutations(num_rows)
+
+    # Process all permutations concurrently with rate limiting
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+    tasks = [
+        process_permutation(
+            client, header, rows, perm, question, semaphore,
+            perm_idx=idx,
+            return_prompt=(SHOW_SAMPLE_EVERY > 0 and idx % SHOW_SAMPLE_EVERY == 0)
+        )
+        for idx, perm in enumerate(permutations)
+    ]
+
+    print(f"  Processing {len(tasks)} permutations...")
+
+    # Use tqdm progress bar if available
+    if HAS_TQDM:
+        results = []
+        for coro in async_tqdm.as_completed(tasks, total=len(tasks), desc=f"  Instance {instance_idx + 1}"):
+            results.append(await coro)
+    else:
+        results = await asyncio.gather(*tasks)
+
+    # Collect and analyze results
+    response_groups = defaultdict(list)  # Group permutations by response
+    samples_shown = 0
+
+    for idx, (predicted, response, messages, permutation) in enumerate(results):
+        # Group by parsed row selection
+        key = tuple(sorted(predicted))
+        response_groups[key].append({
+            'permutation': permutation,
+            'response': response,
+            'parsed': predicted,
+        })
+
+        # Show sample prompt/response if available
+        if messages and samples_shown < 3 and SHOW_SAMPLE_EVERY > 0:
+            samples_shown += 1
+            print(f"\n  {'='*70}")
+            print(f"  SAMPLE {samples_shown} (Permutation {idx}):")
+            print(f"  {'='*70}")
+            print(f"  PERMUTATION: {permutation}")
+            print(f"\n  MESSAGES:")
+            for msg in messages:
+                print(f"    [{msg['role'].upper()}]:")
+                # Truncate long content
+                content = msg['content']
+                print(f"    {content}")
+                print()
+            print(f"  RESPONSE:")
+            print(f"  {response}")
+            print(f"\n  PARSED ROWS: {predicted}")
+            print(f"  {'='*70}\n")
+
+    total = len(results)
+    num_unique_responses = len(response_groups)
+
+    # Find most common response
+    most_common = max(response_groups.items(), key=lambda x: len(x[1]))
+    most_common_rows, most_common_examples = most_common
+    consistency = len(most_common_examples) / total if total > 0 else 0
+
+    print(f"  Results:")
+    print(f"    Total permutations: {total}")
+    print(f"    Unique responses: {num_unique_responses}")
+    print(f"    Most common response: {list(most_common_rows)} ({len(most_common_examples)}/{total} = {consistency:.2%})")
+    print(f"    Response distribution:")
+
+    # Show top 5 responses
+    sorted_responses = sorted(response_groups.items(), key=lambda x: len(x[1]), reverse=True)
+    for i, (rows, examples) in enumerate(sorted_responses[:5]):
+        print(f"      {i+1}. Rows {list(rows)}: {len(examples)} times ({len(examples)/total:.1%})")
+
+    return {
+        'instance_idx': instance_idx,
+        'id': instance.get('id', ''),
+        'question': question,
+        'num_rows': num_rows,
+        'num_permutations': total,
+        'num_unique_responses': num_unique_responses,
+        'most_common_response': list(most_common_rows),
+        'consistency': consistency,
+        'response_distribution': {str(list(k)): len(v) for k, v in sorted_responses},
+        'all_responses': [{
+            'rows': list(k),
+            'count': len(v),
+            'percentage': len(v) / total,
+            'example_permutations': [ex['permutation'][:3] for ex in v[:3]]  # First 3 permutations as examples
+        } for k, v in sorted_responses],
+    }
+
+
+async def main():
+    """Main execution function."""
+    print("=" * 80)
+    print("Table Permutation Robustness Test")
+    print("=" * 80)
+
+    # Load instances
+    instances = load_table_instances()
+
+    if not instances:
+        print("No suitable instances found!")
+        return
+
+    # Initialize OpenAI client for vLLM
+    client = AsyncOpenAI(
+        base_url=VLLM_API_BASE,
+        api_key="EMPTY",  # vLLM doesn't require API key
+    )
+
+    # Evaluate each instance
+    all_results = []
+    for i, instance in enumerate(instances):
+        result = await evaluate_instance(client, instance, i)
+        all_results.append(result)
+
+    # Print summary
+    print("\n" + "=" * 80)
+    print("SUMMARY")
+    print("=" * 80)
+
+    total_permutations = sum(r['num_permutations'] for r in all_results)
+    avg_consistency = sum(r['consistency'] for r in all_results) / len(all_results) if all_results else 0
+    total_unique_responses = sum(r['num_unique_responses'] for r in all_results)
+
+    print(f"\nTotal permutations tested: {total_permutations}")
+    print(f"Average consistency: {avg_consistency:.2%}")
+    print(f"Total unique responses across all instances: {total_unique_responses}")
+
+    print("\nPer-instance breakdown:")
+    for r in all_results:
+        print(f"\n  Instance {r['instance_idx'] + 1} (ID: {r['id']}, {r['num_rows']} rows):")
+        print(f"    Question: {r['question'][:80]}...")
+        print(f"    Consistency: {r['consistency']:.2%}")
+        print(f"    Unique responses: {r['num_unique_responses']}")
+        print(f"    Most common: Rows {r['most_common_response']}")
+
+    # Save results to JSON
+    output_file = 'permutation_test_results.json'
+    with open(output_file, 'w') as f:
+        json.dump({
+            'summary': {
+                'total_permutations': total_permutations,
+                'avg_consistency': avg_consistency,
+                'total_unique_responses': total_unique_responses,
+            },
+            'instances': all_results,
+        }, f, indent=2)
+
+    print(f"\nResults saved to {output_file}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

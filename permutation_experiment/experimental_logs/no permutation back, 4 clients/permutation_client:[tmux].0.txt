@@ -1,0 +1,1016 @@
+muaid@vega:~/git/LEAP$ source
+2401.04398v2.pdf               leap/                          __pycache__/                   table_logs/                    .venv/
+CHANGELOG.md                   logs/                          pyproject.toml                 test_logs/                     .vscode/
+.claude/                       main.py                        .pytest_cache/                 test_new_actions.py
+configs/                       PERMUTATION_TEST_README.md     .python-version                tests/
+.git/                          permutation_test_results.json  README.md                      test_table_permutations.py
+.gitignore                     .pre-commit-config.yaml        .ruff_cache/                   uv.lock
+muaid@vega:~/git/LEAP$ source .venv/bin/activate
+(leap) muaid@vega:~/git/LEAP$ python test
+test_logs/                  test_new_actions.py         tests/                      test_table_permutations.py
+(leap) muaid@vega:~/git/LEAP$ python test
+test_logs/                  test_new_actions.py         tests/                      test_table_permutations.py
+(leap) muaid@vega:~/git/LEAP$ python test
+test_logs/                  test_new_actions.py         tests/                      test_table_permutations.py
+(leap) muaid@vega:~/git/LEAP$ python test_table_permutations.py
+================================================================================
+Table Permutation Robustness Test
+================================================================================
+Loading WikiTableQuestions dataset...
+Using the latest cached version of the dataset since wikitablequestions couldn't be found on the Hugging Face Hub
+Found the latest cached dataset configuration 'random-split-1' at /home/muaid/.cache/huggingface/datasets/wikitablequestions/random-split-1/1.0.2/4845d83f334ed5e4a8e0420731e64d57f6
+96feb62e7d3a47b84037864fb8317c (last modified on Mon Oct 27 09:03:22 2025).
+Loaded 11321 examples from WikiTableQuestions
+Found 5 instances with ≤10 rows
+
+Instance 1: 10 rows
+  Question: what was the last year where this team was a part of the usl a-league?...
+  ID: nt-0
+  Generated 3628800 permutations (3628800 total)
+  Processing 3628800 permutations...
+  Instance 1:   5%|█████▍                                                                                                               | 168548/3628800 [38:34<16:05:00, 59.76it/s]
+  Instance 1:   5%|█████▍                                                                                                               | 168556/3628800 [38:34<15:10:54, 63.31it/s]
+  Instance 1:   5%|█████▍                                                                                                               | 168587/3628800 [38:34<12:08:50, 79.13it/s]
+  Instance 1:   5%|█████▍                                                                                                               | 168596/3628800 [38:34<16:56:58, 56.71it/s]
+  Instance 1:  89%|█████  Instance 1: 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3628800/3628800 [13
+:30:41<00:00, 74.60it/s]
+
+  ======================================================================
+  SAMPLE 1 (Permutation 103):
+  ======================================================================
+  PERMUTATION: [7, 9, 5, 0, 4, 1, 8, 3, 2, 6]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,Year,Division,League,Regular Season,Playoffs,Open Cup,Avg. Attendance
+row 0,2008,2,USL First Division,11th,Did not qualify,1st Round,"8,567"
+row 1,2010,2,USSF D-2 Pro League,"3rd, USL (3rd)",Quarterfinals,3rd Round,"10,727"
+row 2,2006,2,USL First Division,11th,Did not qualify,3rd Round,"5,575"
+row 3,2001,2,USL A-League,"4th, Western",Quarterfinals,Did not qualify,"7,169"
+row 4,2005,2,USL First Division,5th,Quarterfinals,4th Round,"6,028"
+row 5,2002,2,USL A-League,"2nd, Pacific",1st Round,Did not qualify,"6,260"
+row 6,2009,2,USL First Division,1st,Semifinals,3rd Round,"9,734"
+row 7,2004,2,USL A-League,"1st, Western",Quarterfinals,4th Round,"5,628"
+row 8,2003,2,USL A-League,"3rd, Pacific",Did not qualify,Did not qualify,"5,871"
+row 9,2007,2,USL First Division,2nd,Semifinals,2nd Round,"6,851"
+
+Question: what was the last year where this team was a part of the usl a-league?
+
+  RESPONSE:
+  select\_row([8])
+
+  PARSED ROWS: [8]
+  ======================================================================
+
+
+  ======================================================================
+  SAMPLE 2 (Permutation 215):
+  ======================================================================
+  PERMUTATION: [6, 0, 4, 8, 9, 7, 1, 5, 2, 3]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,Year,Division,League,Regular Season,Playoffs,Open Cup,Avg. Attendance
+row 0,2007,2,USL First Division,2nd,Semifinals,2nd Round,"6,851"
+row 1,2001,2,USL A-League,"4th, Western",Quarterfinals,Did not qualify,"7,169"
+row 2,2005,2,USL First Division,5th,Quarterfinals,4th Round,"6,028"
+row 3,2009,2,USL First Division,1st,Semifinals,3rd Round,"9,734"
+row 4,2010,2,USSF D-2 Pro League,"3rd, USL (3rd)",Quarterfinals,3rd Round,"10,727"
+row 5,2008,2,USL First Division,11th,Did not qualify,1st Round,"8,567"
+row 6,2002,2,USL A-League,"2nd, Pacific",1st Round,Did not qualify,"6,260"
+row 7,2006,2,USL First Division,11th,Did not qualify,3rd Round,"5,575"
+row 8,2003,2,USL A-League,"3rd, Pacific",Did not qualify,Did not qualify,"5,871"
+row 9,2004,2,USL A-League,"1st, Western",Quarterfinals,4th Round,"5,628"
+
+Question: what was the last year where this team was a part of the usl a-league?
+
+  RESPONSE:
+  select\_row([1, 6, 8])
+
+The last year this team was a part of the USL A-League was in 2003 (row 8).
+
+  PARSED ROWS: [1, 6, 8]
+  ======================================================================
+
+
+  ======================================================================
+  SAMPLE 3 (Permutation 266):
+  ======================================================================
+  PERMUTATION: [9, 7, 5, 0, 3, 8, 1, 6, 2, 4]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,Year,Division,League,Regular Season,Playoffs,Open Cup,Avg. Attendance
+row 0,2010,2,USSF D-2 Pro League,"3rd, USL (3rd)",Quarterfinals,3rd Round,"10,727"
+row 1,2008,2,USL First Division,11th,Did not qualify,1st Round,"8,567"
+row 2,2006,2,USL First Division,11th,Did not qualify,3rd Round,"5,575"
+row 3,2001,2,USL A-League,"4th, Western",Quarterfinals,Did not qualify,"7,169"
+row 4,2004,2,USL A-League,"1st, Western",Quarterfinals,4th Round,"5,628"
+row 5,2009,2,USL First Division,1st,Semifinals,3rd Round,"9,734"
+row 6,2002,2,USL A-League,"2nd, Pacific",1st Round,Did not qualify,"6,260"
+row 7,2007,2,USL First Division,2nd,Semifinals,2nd Round,"6,851"
+row 8,2003,2,USL A-League,"3rd, Pacific",Did not qualify,Did not qualify,"5,871"
+row 9,2005,2,USL First Division,5th,Quarterfinals,4th Round,"6,028"
+
+Question: what was the last year where this team was a part of the usl a-league?
+
+  RESPONSE:
+  select\_row([2, 3, 6, 8]) \
+The last year where this team was a part of the USL A-League was in the year 2005, which is row number 8 in the table.
+
+  PARSED ROWS: [2, 3, 6, 8]
+  ======================================================================
+
+  Results:
+    Total permutations: 3628800
+    Unique responses: 1225
+    Most common response: [8] (879023/3628800 = 24.22%)
+    Response distribution:
+      1. Rows [8]: 879023 times (24.2%)
+      2. Rows [7]: 410440 times (11.3%)
+      3. Rows [6]: 384157 times (10.6%)
+      4. Rows [4]: 304342 times (8.4%)
+      5. Rows [5]: 166727 times (4.6%)
+
+Instance 2: 7 rows
+  Question: how many people stayed at least 3 years in office?...
+  ID: nt-5
+  Generated 5040 permutations (5040 total)
+  Processing 5040 permutations...
+  Instance 2:  57%|██████████████████████████████████████████████████████████████████████████▊                                                        | 2876/5040 [00:57<00:40, 53.3
+3it/s]source /home/muaid/git/LEAP/.venv/bin/activate
+  Instance 2:  61%|███████████████████████████████████████████████████████████████████████████████▌                                                   | 3062/5040 [01:00<00:38, 50.7
+5it/s]  Instance 2:  61%|███████████████████████████████████████████████████████████████████████████████▊                                                   | 3069/5040 [01:00<00:46
+, 42.64it/s]  Instance 2:  61%|████████████████████████████████████████████████████████████████████████████████                                                   | 3078/5040 [01:00
+<00:39, 49.73it/s]  Instance 2:  61%|████████████████████████████████████████████████████████████████████████████████▏                                                  | 3086/5040
+[01:00<00:41, 47.44it/s]  Instance 2:  62%|████████████████████████████████████████████████████████████████████████████████▋                                                  | 3103
+/5040 [01:01<00:49, 38.87it/s]  Instance 2:  62%|████████████████████████████████████████████████████████████████████████████████▉
+| 3116/5040 [01:01<00:57, 33.47it/s]  Instance 2: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████
+██████| 5040/5040 [01:37<00:00, 51.55it/s]
+
+  ======================================================================
+  SAMPLE 1 (Permutation 115):
+  ======================================================================
+  PERMUTATION: [3, 6, 1, 4, 5, 0, 2]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,,Name,Took office,Left office,Party,Notes/Events
+row 0,14,Peter Little,"September 2, 1816","March 3, 1823",Democratic Republican,
+row 1,15,Benjamin C. Howard,"March 4, 1829","March 3, 1833",Jacksonian,
+row 2,12,Alexander McKim,"March 4, 1809","March 3, 1815",Democratic Republican,
+row 3,14,Peter Little,"March 4, 1823","March 3, 1825",Jacksonian DR,
+row 4,14,Peter Little,"March 4, 1825","March 3, 1829",Adams,
+row 5,11,William McCreery,"March 4, 1803","March 3, 1809",Democratic Republican,
+row 6,13,William Pinkney,"March 4, 1815","April 18, 1816",Democratic Republican,Resigned to accept position as Minister Plenipotentiary to Russia
+
+Question: how many people stayed at least 3 years in office?
+
+  RESPONSE:
+  The question asks for the number of people who stayed in office for at least 3 years, not the number of rows where the duration in office is at least 3 years. In this table, ther
+e are 4 people who stayed in office for at least 3 years: Peter Little (3 years in his 1st term, 2 years in his 2nd term, and 4 years in his 3rd term), Benjamin C. Howard (4 years)
+, William McCre
+
+  PARSED ROWS: []
+  ======================================================================
+
+
+  ======================================================================
+  SAMPLE 2 (Permutation 150):
+  ======================================================================
+  PERMUTATION: [0, 5, 1, 6, 3, 2, 4]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,,Name,Took office,Left office,Party,Notes/Events
+row 0,11,William McCreery,"March 4, 1803","March 3, 1809",Democratic Republican,
+row 1,14,Peter Little,"March 4, 1825","March 3, 1829",Adams,
+row 2,12,Alexander McKim,"March 4, 1809","March 3, 1815",Democratic Republican,
+row 3,15,Benjamin C. Howard,"March 4, 1829","March 3, 1833",Jacksonian,
+row 4,14,Peter Little,"September 2, 1816","March 3, 1823",Democratic Republican,
+row 5,13,William Pinkney,"March 4, 1815","April 18, 1816",Democratic Republican,Resigned to accept position as Minister Plenipotentiary to Russia
+row 6,14,Peter Little,"March 4, 1823","March 3, 1825",Jacksonian DR,
+
+Question: how many people stayed at least 3 years in office?
+
+  RESPONSE:
+  The question asks for people who stayed in office for at least 3 years, not exactly 3 years. Based on the table, there are 4 such people:
+1. William McCreery (took office in 1803, left office in 1809)
+2. Alexander McKim (took office in 1809, left office in 1815)
+3. Peter Little (served three non-consecut
+
+  PARSED ROWS: []
+  ======================================================================
+
+
+  ======================================================================
+  SAMPLE 3 (Permutation 238):
+  ======================================================================
+  PERMUTATION: [5, 2, 3, 4, 0, 1, 6]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,,Name,Took office,Left office,Party,Notes/Events
+row 0,14,Peter Little,"March 4, 1825","March 3, 1829",Adams,
+row 1,13,William Pinkney,"March 4, 1815","April 18, 1816",Democratic Republican,Resigned to accept position as Minister Plenipotentiary to Russia
+row 2,14,Peter Little,"September 2, 1816","March 3, 1823",Democratic Republican,
+row 3,14,Peter Little,"March 4, 1823","March 3, 1825",Jacksonian DR,
+row 4,11,William McCreery,"March 4, 1803","March 3, 1809",Democratic Republican,
+row 5,12,Alexander McKim,"March 4, 1809","March 3, 1815",Democratic Republican,
+row 6,15,Benjamin C. Howard,"March 4, 1829","March 3, 1833",Jacksonian,
+
+Question: how many people stayed at least 3 years in office?
+
+  RESPONSE:
+  This question requires understanding of what it means for a person to have stayed in office for at least 3 years. Looking at the table, we see that the "Took office" and "Left of
+fice" columns represent the start and end dates of each person's term. To find out how many people stayed in office for at least 3 years, we need to calculate the difference betwee
+n the "Left office" and "Took office" dates for each person.
+
+Let's
+
+  PARSED ROWS: []
+  ======================================================================
+
+  Results:
+    Total permutations: 5040
+    Unique responses: 114
+    Most common response: [] (2802/5040 = 55.60%)
+    Response distribution:
+      1. Rows []: 2802 times (55.6%)
+      2. Rows [1, 3, 5]: 172 times (3.4%)
+      3. Rows [1, 3, 4, 5]: 155 times (3.1%)
+      4. Rows [1, 3, 4, 6]: 143 times (2.8%)
+      5. Rows [1, 4, 5]: 119 times (2.4%)
+
+Instance 3: 10 rows
+  Question: what was the first venue for the asian games?...
+  ID: nt-11
+  Generated 3628800 permutations (3628800 total)
+  Processing 3628800 permutations...
+  Instance 3:  92%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████▊          | 3324141/3628800 [10:06:20<33:56, 149.6
+1it/s]  Instance 3:  92%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████▊          | 3324233/3628800 [10:06:21<43:16,
+ 117.28it/s]  Instance 3: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 3628800/3628800 [11:02:33
+<00:00, 91.28it/s]
+
+  ======================================================================
+  SAMPLE 1 (Permutation 80):
+  ======================================================================
+  PERMUTATION: [4, 7, 3, 1, 0, 2, 9, 6, 5, 8]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,Year,Competition,Venue,Position,Notes
+row 0,2001,World Championships,"Edmonton, Canada",13th (q),6.46 m
+row 1,2003,World Championships,"Paris, France",23rd (q),6.13 m
+row 2,2000,Olympic Games,"Sydney, Australia",14th (q),6.57 m
+row 3,1998,Asian Games,"Bangkok, Thailand",8th,6.07 m
+row 4,1996,Olympic Games,"Atlanta, United States",36th (q),5.55 m
+row 5,1999,World Championships,"Seville, Spain",23rd (q),6.40 m
+row 6,2004,Olympic Games,"Athens, Greece",11th,6.53 m
+row 7,2002,Asian Games,"Busan, South Korea",3rd,6.30 m
+row 8,2002,Asian Championships,"Colombo, Sri Lanka",1st,6.61 m
+row 9,2003,Asian Championships,"Manila, Philippines",6th,6.23 m
+
+Question: what was the first venue for the asian games?
+
+  RESPONSE:
+  select\_row([3])
+
+  PARSED ROWS: [3]
+  ======================================================================
+
+
+  ======================================================================
+  SAMPLE 2 (Permutation 128):
+  ======================================================================
+  PERMUTATION: [2, 7, 5, 4, 8, 0, 9, 3, 1, 6]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,Year,Competition,Venue,Position,Notes
+row 0,1999,World Championships,"Seville, Spain",23rd (q),6.40 m
+row 1,2003,World Championships,"Paris, France",23rd (q),6.13 m
+row 2,2002,Asian Championships,"Colombo, Sri Lanka",1st,6.61 m
+row 3,2001,World Championships,"Edmonton, Canada",13th (q),6.46 m
+row 4,2003,Asian Championships,"Manila, Philippines",6th,6.23 m
+row 5,1996,Olympic Games,"Atlanta, United States",36th (q),5.55 m
+row 6,2004,Olympic Games,"Athens, Greece",11th,6.53 m
+row 7,2000,Olympic Games,"Sydney, Australia",14th (q),6.57 m
+row 8,1998,Asian Games,"Bangkok, Thailand",8th,6.07 m
+row 9,2002,Asian Games,"Busan, South Korea",3rd,6.30 m
+
+Question: what was the first venue for the asian games?
+
+  RESPONSE:
+  select\_row([8])
+
+  PARSED ROWS: [8]
+  ======================================================================
+
+
+  ======================================================================
+  SAMPLE 3 (Permutation 425):
+  ======================================================================
+  PERMUTATION: [8, 0, 2, 6, 9, 3, 5, 7, 1, 4]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,Year,Competition,Venue,Position,Notes
+row 0,2003,Asian Championships,"Manila, Philippines",6th,6.23 m
+row 1,1996,Olympic Games,"Atlanta, United States",36th (q),5.55 m
+row 2,1999,World Championships,"Seville, Spain",23rd (q),6.40 m
+row 3,2002,Asian Games,"Busan, South Korea",3rd,6.30 m
+row 4,2004,Olympic Games,"Athens, Greece",11th,6.53 m
+row 5,2000,Olympic Games,"Sydney, Australia",14th (q),6.57 m
+row 6,2002,Asian Championships,"Colombo, Sri Lanka",1st,6.61 m
+row 7,2003,World Championships,"Paris, France",23rd (q),6.13 m
+row 8,1998,Asian Games,"Bangkok, Thailand",8th,6.07 m
+row 9,2001,World Championships,"Edmonton, Canada",13th (q),6.46 m
+
+Question: what was the first venue for the asian games?
+
+  RESPONSE:
+  select\_row([8])
+
+  PARSED ROWS: [8]
+  ======================================================================
+
+  Results:
+    Total permutations: 3628800
+    Unique responses: 633
+    Most common response: [] (805921/3628800 = 22.21%)
+    Response distribution:
+      1. Rows []: 805921 times (22.2%)
+      2. Rows [0]: 659989 times (18.2%)
+      3. Rows [1]: 449269 times (12.4%)
+      4. Rows [2]: 340873 times (9.4%)
+      5. Rows [5]: 262596 times (7.2%)
+
+Instance 4: 8 rows
+  Question: in how many games did the winning team score more than 4 points?...
+  ID: nt-19
+  Generated 40320 permutations (40320 total)
+  Processing 40320 permutations...
+  Instance 4: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 40320/40320 [07:06<00:00, 94.5
+6it/s]
+
+  ======================================================================
+  SAMPLE 1 (Permutation 85):
+  ======================================================================
+  PERMUTATION: [0, 1, 7, 6, 2, 5, 3, 4]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,Home Team,Score,Away Team,Date,Agg
+row 0,Aberdeen,7–1,Hamilton Academical,11-10-1978,8–1
+row 1,Airdrieonians,1–2,Arbroath,10-10-1978,2–3
+row 2,St. Mirren,0–0,Rangers,11-10-1978,2–3
+row 3,Motherwell,1–4,Celtic,11-10-1978,2–4
+row 4,Ayr United,1–1,Falkirk,11-10-1978,3–1
+row 5,Montrose,5–1,Raith Rovers,11-10-1978,5–4
+row 6,Clydebank,1–1,Hibernian,11-10-1978,1–2
+row 7,Morton,5–2,Kilmarnock,11-10-1978,5–4
+
+Question: in how many games did the winning team score more than 4 points?
+
+  RESPONSE:
+  select\_row([4, 5, 7])
+
+  PARSED ROWS: [4, 5, 7]
+  ======================================================================
+
+
+  ======================================================================
+  SAMPLE 2 (Permutation 140):
+  ======================================================================
+  PERMUTATION: [4, 2, 5, 1, 6, 7, 0, 3]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,Home Team,Score,Away Team,Date,Agg
+row 0,Morton,5–2,Kilmarnock,11-10-1978,5–4
+row 1,Ayr United,1–1,Falkirk,11-10-1978,3–1
+row 2,Montrose,5–1,Raith Rovers,11-10-1978,5–4
+row 3,Airdrieonians,1–2,Arbroath,10-10-1978,2–3
+row 4,Motherwell,1–4,Celtic,11-10-1978,2–4
+row 5,St. Mirren,0–0,Rangers,11-10-1978,2–3
+row 6,Aberdeen,7–1,Hamilton Academical,11-10-1978,8–1
+row 7,Clydebank,1–1,Hibernian,11-10-1978,1–2
+
+Question: in how many games did the winning team score more than 4 points?
+
+  RESPONSE:
+  select\_row([0, 2, 6])
+
+  PARSED ROWS: [0, 2, 6]
+  ======================================================================
+
+
+  ======================================================================
+  SAMPLE 3 (Permutation 148):
+  ======================================================================
+  PERMUTATION: [6, 5, 7, 2, 3, 0, 1, 4]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,Home Team,Score,Away Team,Date,Agg
+row 0,Motherwell,1–4,Celtic,11-10-1978,2–4
+row 1,Montrose,5–1,Raith Rovers,11-10-1978,5–4
+row 2,St. Mirren,0–0,Rangers,11-10-1978,2–3
+row 3,Ayr United,1–1,Falkirk,11-10-1978,3–1
+row 4,Clydebank,1–1,Hibernian,11-10-1978,1–2
+row 5,Aberdeen,7–1,Hamilton Academical,11-10-1978,8–1
+row 6,Airdrieonians,1–2,Arbroath,10-10-1978,2–3
+row 7,Morton,5–2,Kilmarnock,11-10-1978,5–4
+
+Question: in how many games did the winning team score more than 4 points?
+
+  RESPONSE:
+  select_row([1, 5, 7])
+
+  PARSED ROWS: [1, 5, 7]
+  ======================================================================
+
+  Results:
+    Total permutations: 40320
+    Unique responses: 232
+    Most common response: [2, 4, 5] (1156/40320 = 2.87%)
+    Response distribution:
+      1. Rows [2, 4, 5]: 1156 times (2.9%)
+      2. Rows [2, 3, 4]: 906 times (2.2%)
+      3. Rows [4, 5]: 783 times (1.9%)
+      4. Rows [2, 5, 6]: 776 times (1.9%)
+      5. Rows [2, 6, 7]: 729 times (1.8%)
+
+Instance 5: 5 rows
+  Question: which album released by the band schnell fenster produced the most singles appearing on the australi...
+  ID: nt-20
+  Generated 120 permutations (120 total)
+  Processing 120 permutations...
+  Instance 5: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 120/120 [00:04<00:00, 24.8
+2it/s]
+
+  ======================================================================
+  SAMPLE 1 (Permutation 8):
+  ======================================================================
+  PERMUTATION: [0, 1, 2, 3, 4]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,Year,Title,Peak chart positions\nAUS,Peak chart positions\nNZ,Album
+row 0,1988,"""Whisper""",58,42,The Sound Of Trees
+row 1,1988,"""Love-Hate Relationship""",81,46,The Sound Of Trees
+row 2,1989,"""This Illusion""",—,—,The Sound Of Trees
+row 3,1990,"""OK Alright A Huh O Yeah""",74,—,OK Alright A Huh O Yeah
+row 4,1991,"""Heroes Let You Down""",—,—,OK Alright A Huh O Yeah
+
+Question: which album released by the band schnell fenster produced the most singles appearing on the australian peak chart?
+
+  RESPONSE:
+  select\_row([0, 1])
+
+  PARSED ROWS: [0, 1]
+  ======================================================================
+
+
+  ======================================================================
+  SAMPLE 2 (Permutation 46):
+  ======================================================================
+  PERMUTATION: [4, 0, 3, 1, 2]
+
+  MESSAGES:
+    [SYSTEM]:
+    You are a helpful assistant that selects relevant rows from tables.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Only output the select_row function call, nothing else.
+
+    [USER]:
+    Table:
+ ,Home team,Home Team Score,Away Team,Away Team Score,Venue,Crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+
+Question: Whose home team score is higher, richmond or st kilda?
+
+    [ASSISTANT]:
+    select_row([0, 2])
+
+    [USER]:
+    Table:
+ ,home team,home team score,away team,away team score,venue,crowd
+row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836
+row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154
+row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651
+row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108
+row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271
+row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749
+
+Question: what is the away team with the highest score?
+
+    [ASSISTANT]:
+    select_row([4])
+
+    [USER]:
+    Table:
+,Year,Title,Peak chart positions\nAUS,Peak chart positions\nNZ,Album
+row 0,1991,"""Heroes Let You Down""",—,—,OK Alright A Huh O Yeah
+row 1,1988,"""Whisper""",58,42,The Sound Of Trees
+row 2,1990,"""OK Alright A Huh O Yeah""",74,—,OK Alright A Huh O Yeah
+row 3,1988,"""Love-Hate Relationship""",81,46,The Sound Of Trees
+row 4,1989,"""This Illusion""",—,—,The Sound Of Trees
+
+Question: which album released by the band schnell fenster produced the most singles appearing on the australian peak chart?
+
+  RESPONSE:
+  The table does not contain information about which album belongs to the band Schnell Fenster. Therefore, it's not possible to provide the row numbers that are relevant to answeri
+ng the question.
+
+  PARSED ROWS: []
+  ======================================================================
+
+  Results:
+    Total permutations: 120
+    Unique responses: 12
+    Most common response: [] (94/120 = 78.33%)
+    Response distribution:
+      1. Rows []: 94 times (78.3%)
+      2. Rows [0]: 9 times (7.5%)
+      3. Rows [0, 2]: 4 times (3.3%)
+      4. Rows [0, 1]: 3 times (2.5%)
+      5. Rows [2]: 3 times (2.5%)
+
+================================================================================
+SUMMARY
+================================================================================
+
+Total permutations tested: 7303080
+Average consistency: 36.65%
+Total unique responses across all instances: 2216
+
+Per-instance breakdown:
+
+  Instance 1 (ID: nt-0, 10 rows):
+    Question: what was the last year where this team was a part of the usl a-league?...
+    Consistency: 24.22%
+    Unique responses: 1225
+    Most common: Rows [8]
+
+  Instance 2 (ID: nt-5, 7 rows):
+    Question: how many people stayed at least 3 years in office?...
+    Consistency: 55.60%
+    Unique responses: 114
+    Most common: Rows []
+
+  Instance 3 (ID: nt-11, 10 rows):
+    Question: what was the first venue for the asian games?...
+    Consistency: 22.21%
+    Unique responses: 633
+    Most common: Rows []
+
+  Instance 4 (ID: nt-19, 8 rows):
+    Question: in how many games did the winning team score more than 4 points?...
+    Consistency: 2.87%
+    Unique responses: 232
+    Most common: Rows [2, 4, 5]
+
+  Instance 5 (ID: nt-20, 5 rows):
+    Question: which album released by the band schnell fenster produced the most singles appea...
+    Consistency: 78.33%
+    Unique responses: 12
+    Most common: Rows []
+
+Results saved to permutation_test_results.json
+(leap) muaid@vega:~/git/LEAP$ source .venv/bin/activatesource /home/muaid/git/LEAP/.venv/bin/activate
+-bash: .venv/bin/activatesource: No such file or directory
+(leap) muaid@vega:~/git/LEAP$
+
