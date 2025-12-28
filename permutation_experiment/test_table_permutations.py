@@ -47,6 +47,7 @@ MAX_CONCURRENT_REQUESTS = 64 * 4  # Limit concurrent requests
 RANDOM_SEED = 42  # For reproducibility
 MOCK_MODE = False  # Set to True to test without vLLM server
 SHOW_SAMPLE_EVERY = 100  # Show sample prompt/response every N permutations (0 to disable)
+MAX_PERMUTATIONS_PER_TABLE = 3000  # Maximum permutations to sample per table (None = use all permutations)
 
 # Set random seed
 random.seed(RANDOM_SEED)
@@ -115,13 +116,50 @@ def table_to_csv(header: List[str], rows: List[List[Any]]) -> str:
     return out.getvalue().strip()
 
 
-def generate_permutations(num_rows: int) -> List[List[int]]:
-    """Generate all permutations of row indices."""
+def generate_permutations(num_rows: int, max_permutations: int = None) -> List[List[int]]:
+    """Generate permutations of row indices, optionally sampling if total exceeds max.
+
+    Args:
+        num_rows: Number of rows to permute
+        max_permutations: Maximum number of permutations to return (None = return all)
+
+    Returns:
+        List of permutations (each permutation is a list of row indices)
+    """
     import math
     indices = list(range(num_rows))
-    perms = list(itertools.permutations(indices))
-    print(f"  Generated {len(perms)} permutations ({math.factorial(num_rows)} total)")
-    return perms
+    total_permutations = math.factorial(num_rows)
+
+    # If no limit or total is within limit, generate all permutations
+    if max_permutations is None or total_permutations <= max_permutations:
+        perms = list(itertools.permutations(indices))
+        print(f"  Generated all {len(perms)} permutations")
+        return perms
+
+    # Otherwise, randomly sample without replacement
+    print(f"  Sampling {max_permutations} permutations from {total_permutations} total")
+
+    # Use random.sample on the permutations iterator
+    # For efficiency, we use reservoir sampling for large factorial values
+    if total_permutations > 1000000:
+        # Use reservoir sampling for very large permutation spaces
+        perms = []
+        for i, perm in enumerate(itertools.permutations(indices)):
+            if i < max_permutations:
+                perms.append(list(perm))
+            else:
+                # Reservoir sampling: randomly replace elements with decreasing probability
+                j = random.randint(0, i)
+                if j < max_permutations:
+                    perms[j] = list(perm)
+            # Early termination after enough samples for reservoir to be unbiased
+            if i >= max_permutations * 100:  # Process enough for good randomness
+                break
+        return perms
+    else:
+        # For smaller spaces, generate all and sample
+        all_perms = list(itertools.permutations(indices))
+        return [list(p) for p in random.sample(all_perms, max_permutations)]
 
 
 def apply_permutation(rows: List[List[Any]], permutation: List[int]) -> List[List[Any]]:
@@ -339,8 +377,8 @@ async def evaluate_instance(
     print(f"  Question: {question[:100]}...")
     print(f"  ID: {instance.get('id', 'N/A')}")
 
-    # Generate all permutations
-    permutations = generate_permutations(num_rows)
+    # Generate permutations (all or sampled based on MAX_PERMUTATIONS_PER_TABLE)
+    permutations = generate_permutations(num_rows, MAX_PERMUTATIONS_PER_TABLE)
 
     # Process all permutations concurrently with rate limiting
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
