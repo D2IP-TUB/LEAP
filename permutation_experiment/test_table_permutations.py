@@ -42,12 +42,12 @@ from openai import AsyncOpenAI
 VLLM_API_BASE = "http://localhost:8000/v1"
 VLLM_MODEL_NAME = None  # Model name (None = use vLLM default, or set to specific model name)
 MAX_ROWS = 10  # Maximum rows per table to keep permutations manageable
-NUM_INSTANCES = 5  # Number of instances to test
+NUM_INSTANCES = 10  # Number of instances to test
 MAX_CONCURRENT_REQUESTS = 64 * 4  # Limit concurrent requests
 RANDOM_SEED = 42  # For reproducibility
 MOCK_MODE = False  # Set to True to test without vLLM server
 SHOW_SAMPLE_EVERY = 100  # Show sample prompt/response every N permutations (0 to disable)
-MAX_PERMUTATIONS_PER_TABLE = 3000  # Maximum permutations to sample per table (None = use all permutations)
+MAX_PERMUTATIONS_PER_TABLE = None  # Maximum permutations to sample per table (None = use all permutations)
 
 # Set random seed
 random.seed(RANDOM_SEED)
@@ -280,8 +280,12 @@ def parse_select_row_response(response: str) -> List[int]:
     return []
 
 
-async def query_vllm(client: AsyncOpenAI, messages: List[Dict[str, str]]) -> str:
-    """Send async request to vLLM server with chat messages."""
+async def query_vllm(client: AsyncOpenAI, messages: List[Dict[str, str]]) -> Tuple[str, int, int]:
+    """Send async request to vLLM server with chat messages.
+
+    Returns:
+        Tuple of (response_text, input_tokens, output_tokens)
+    """
     if MOCK_MODE:
         # Mock response for testing without vLLM server
         await asyncio.sleep(0.01)  # Simulate network delay
@@ -295,8 +299,8 @@ async def query_vllm(client: AsyncOpenAI, messages: List[Dict[str, str]]) -> str
             # Randomly select 1-3 rows
             num_select = random.randint(1, min(3, max_row + 1))
             selected = random.sample(range(max_row + 1), num_select)
-            return f"select_row({selected})"
-        return "select_row([0])"
+            return f"select_row({selected})", 0, 0
+        return "select_row([0])", 0, 0
 
     try:
         # Get list of models to use the correct one
@@ -315,10 +319,15 @@ async def query_vllm(client: AsyncOpenAI, messages: List[Dict[str, str]]) -> str
             temperature=0.0,
             n=1,
         )
-        return response.choices[0].message.content.strip()
+
+        # Extract token counts from usage field
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+
+        return response.choices[0].message.content.strip(), input_tokens, output_tokens
     except Exception as e:
         print(f"Error querying vLLM: {e}")
-        return ""
+        return "", 0, 0
 
 
 async def process_permutation(
@@ -330,11 +339,11 @@ async def process_permutation(
     semaphore: asyncio.Semaphore,
     perm_idx: int = 0,
     return_prompt: bool = False,
-) -> Tuple[List[int], List[int], str, Any, List[int]]:
+) -> Tuple[List[int], List[int], str, Any, List[int], int, int]:
     """Process a single permutation: apply permutation, query model, return predicted rows.
 
     Returns:
-        Tuple of (predicted_rows_in_permuted_table, original_semantic_rows, response, messages, permutation)
+        Tuple of (predicted_rows_in_permuted_table, original_semantic_rows, response, messages, permutation, input_tokens, output_tokens)
     """
     async with semaphore:
         # Apply permutation to table
@@ -347,7 +356,7 @@ async def process_permutation(
         messages = build_select_row_prompt(table_csv, question)
 
         # Query model
-        response = await query_vllm(client, messages)
+        response, input_tokens, output_tokens = await query_vllm(client, messages)
 
         # Parse response (these are indices in the permuted table)
         predicted_rows_permuted = parse_select_row_response(response)
@@ -358,7 +367,7 @@ async def process_permutation(
         # Return messages if requested (for samples)
         messages_to_return = messages if return_prompt else None
 
-        return predicted_rows_permuted, original_semantic_rows, response, messages_to_return, list(permutation)
+        return predicted_rows_permuted, original_semantic_rows, response, messages_to_return, list(permutation), input_tokens, output_tokens
 
 
 async def evaluate_instance(
@@ -403,20 +412,16 @@ async def evaluate_instance(
 
     # Collect and analyze results with BOTH metrics
     positional_groups = defaultdict(list)  # Group by raw position indices (positional bias)
-    semantic_groups = defaultdict(list)    # Group by original semantic rows (robustness)
+    semantic_groups = defaultdict(list)  # Group by original semantic rows (robustness)
     samples_shown = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
 
-<<<<<<< HEAD
-    for idx, (predicted, response, messages, permutation) in enumerate(results):
-        # Group by parsed row selection
-        key = tuple(sorted(predicted))
-        response_groups[key].append({
-            'permutation': permutation,
-            'response': response,
-            'parsed': predicted,
-        })
-=======
-    for idx, (predicted_permuted, predicted_original, response, messages, permutation) in enumerate(results):
+    for idx, (predicted_permuted, predicted_original, response, messages, permutation, input_tokens, output_tokens) in enumerate(results):
+        # Aggregate token counts
+        total_input_tokens += input_tokens
+        total_output_tokens += output_tokens
+
         # METRIC 1: Positional bias - group by raw selected positions
         positional_key = tuple(sorted(predicted_permuted))
         positional_groups[positional_key].append(
@@ -438,7 +443,6 @@ async def evaluate_instance(
                 "parsed_original": predicted_original,
             }
         )
->>>>>>> eeb2993 (account for the reverse permutation for the permutation sweep)
 
         # Show sample prompt/response if available
         if messages and samples_shown < 3 and SHOW_SAMPLE_EVERY > 0:
@@ -456,14 +460,9 @@ async def evaluate_instance(
                 print()
             print(f"  RESPONSE:")
             print(f"  {response}")
-<<<<<<< HEAD
-            print(f"\n  PARSED ROWS: {predicted}")
-            print(f"  {'='*70}\n")
-=======
             print(f"\n  PARSED ROWS (in permuted table): {predicted_permuted}")
             print(f"  SEMANTIC ROWS (original indices): {predicted_original}")
             print(f"  {'=' * 70}\n")
->>>>>>> eeb2993 (account for the reverse permutation for the permutation sweep)
 
     total = len(results)
 
@@ -481,37 +480,15 @@ async def evaluate_instance(
 
     print(f"  Results:")
     print(f"    Total permutations: {total}")
-<<<<<<< HEAD
-    print(f"    Unique responses: {num_unique_responses}")
-    print(f"    Most common response: {list(most_common_rows)} ({len(most_common_examples)}/{total} = {consistency:.2%})")
-    print(f"    Response distribution:")
-
-    # Show top 5 responses
-    sorted_responses = sorted(response_groups.items(), key=lambda x: len(x[1]), reverse=True)
-    for i, (rows, examples) in enumerate(sorted_responses[:5]):
-        print(f"      {i+1}. Rows {list(rows)}: {len(examples)} times ({len(examples)/total:.1%})")
-
-    return {
-        'instance_idx': instance_idx,
-        'id': instance.get('id', ''),
-        'question': question,
-        'num_rows': num_rows,
-        'num_permutations': total,
-        'num_unique_responses': num_unique_responses,
-        'most_common_response': list(most_common_rows),
-        'consistency': consistency,
-        'response_distribution': {str(list(k)): len(v) for k, v in sorted_responses},
-        'all_responses': [{
-            'rows': list(k),
-            'count': len(v),
-            'percentage': len(v) / total,
-            'example_permutations': [ex['permutation'][:3] for ex in v[:3]]  # First 3 permutations as examples
-        } for k, v in sorted_responses],
-=======
+    print(f"    Total input tokens: {total_input_tokens:,}")
+    print(f"    Total output tokens: {total_output_tokens:,}")
+    print(f"    Total tokens: {total_input_tokens + total_output_tokens:,}")
     print()
     print("  SEMANTIC CONSISTENCY (robustness to row order):")
     print(f"    Unique semantic responses: {num_unique_semantic}")
-    print(f"    Most common semantic rows: {list(most_common_sem_rows)} ({len(most_common_sem_examples)}/{total} = {semantic_consistency:.2%})")
+    print(
+        f"    Most common semantic rows: {list(most_common_sem_rows)} ({len(most_common_sem_examples)}/{total} = {semantic_consistency:.2%})"
+    )
     print("    Top semantic responses:")
     sorted_semantic = sorted(semantic_groups.items(), key=lambda x: len(x[1]), reverse=True)
     for i, (rows, examples) in enumerate(sorted_semantic[:5]):
@@ -520,7 +497,9 @@ async def evaluate_instance(
     print()
     print("  POSITIONAL BIAS (preference for specific positions):")
     print(f"    Unique positional responses: {num_unique_positional}")
-    print(f"    Most common positions: {list(most_common_pos_rows)} ({len(most_common_pos_examples)}/{total} = {positional_consistency:.2%})")
+    print(
+        f"    Most common positions: {list(most_common_pos_rows)} ({len(most_common_pos_examples)}/{total} = {positional_consistency:.2%})"
+    )
     print("    Top positional responses:")
     sorted_positional = sorted(positional_groups.items(), key=lambda x: len(x[1]), reverse=True)
     for i, (rows, examples) in enumerate(sorted_positional[:5]):
@@ -532,7 +511,12 @@ async def evaluate_instance(
         "question": question,
         "num_rows": num_rows,
         "num_permutations": total,
-
+        # Token usage metrics
+        "token_usage": {
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "total_tokens": total_input_tokens + total_output_tokens,
+        },
         # Semantic consistency metrics
         "semantic_consistency": {
             "num_unique_responses": num_unique_semantic,
@@ -549,7 +533,6 @@ async def evaluate_instance(
                 for k, v in sorted_semantic
             ],
         },
-
         # Positional bias metrics
         "positional_bias": {
             "num_unique_responses": num_unique_positional,
@@ -566,7 +549,6 @@ async def evaluate_instance(
                 for k, v in sorted_positional
             ],
         },
->>>>>>> eeb2993 (account for the reverse permutation for the permutation sweep)
     }
 
 
@@ -600,19 +582,25 @@ async def main():
     print("SUMMARY")
     print("=" * 80)
 
-<<<<<<< HEAD
-    total_permutations = sum(r['num_permutations'] for r in all_results)
-    avg_consistency = sum(r['consistency'] for r in all_results) / len(all_results) if all_results else 0
-    total_unique_responses = sum(r['num_unique_responses'] for r in all_results)
-=======
     total_permutations = sum(r["num_permutations"] for r in all_results)
-    avg_semantic_consistency = sum(r["semantic_consistency"]["consistency_percentage"] for r in all_results) / len(all_results) if all_results else 0
-    avg_positional_consistency = sum(r["positional_bias"]["consistency_percentage"] for r in all_results) / len(all_results) if all_results else 0
+    total_input_tokens_all = sum(r["token_usage"]["total_input_tokens"] for r in all_results)
+    total_output_tokens_all = sum(r["token_usage"]["total_output_tokens"] for r in all_results)
+    total_tokens_all = total_input_tokens_all + total_output_tokens_all
+    avg_semantic_consistency = (
+        sum(r["semantic_consistency"]["consistency_percentage"] for r in all_results) / len(all_results) if all_results else 0
+    )
+    avg_positional_consistency = (
+        sum(r["positional_bias"]["consistency_percentage"] for r in all_results) / len(all_results) if all_results else 0
+    )
     total_unique_semantic = sum(r["semantic_consistency"]["num_unique_responses"] for r in all_results)
     total_unique_positional = sum(r["positional_bias"]["num_unique_responses"] for r in all_results)
->>>>>>> eeb2993 (account for the reverse permutation for the permutation sweep)
 
     print(f"\nTotal permutations tested: {total_permutations}")
+    print()
+    print("TOKEN USAGE:")
+    print(f"  Total input tokens: {total_input_tokens_all:,}")
+    print(f"  Total output tokens: {total_output_tokens_all:,}")
+    print(f"  Total tokens: {total_tokens_all:,}")
     print()
     print("SEMANTIC CONSISTENCY (robustness to row order):")
     print(f"  Average semantic consistency: {avg_semantic_consistency:.2%}")
@@ -626,27 +614,28 @@ async def main():
     for r in all_results:
         print(f"\n  Instance {r['instance_idx'] + 1} (ID: {r['id']}, {r['num_rows']} rows):")
         print(f"    Question: {r['question'][:80]}...")
-        print(f"    Semantic consistency: {r['semantic_consistency']['consistency_percentage']:.2%} (most common: {r['semantic_consistency']['most_common_response']})")
-        print(f"    Positional consistency: {r['positional_bias']['consistency_percentage']:.2%} (most common: {r['positional_bias']['most_common_response']})")
+        print(f"    Tokens: {r['token_usage']['total_input_tokens']:,} in / {r['token_usage']['total_output_tokens']:,} out / {r['token_usage']['total_tokens']:,} total")
+        print(
+            f"    Semantic consistency: {r['semantic_consistency']['consistency_percentage']:.2%} (most common: {r['semantic_consistency']['most_common_response']})"
+        )
+        print(
+            f"    Positional consistency: {r['positional_bias']['consistency_percentage']:.2%} (most common: {r['positional_bias']['most_common_response']})"
+        )
         print(f"    Unique semantic responses: {r['semantic_consistency']['num_unique_responses']}")
         print(f"    Unique positional responses: {r['positional_bias']['num_unique_responses']}")
 
     # Save results to JSON
-<<<<<<< HEAD
-    output_file = 'permutation_test_results.json'
-    with open(output_file, 'w') as f:
-        json.dump({
-            'summary': {
-                'total_permutations': total_permutations,
-                'avg_consistency': avg_consistency,
-                'total_unique_responses': total_unique_responses,
-=======
     output_file = "permutation_test_results.json"
     with open(output_file, "w") as f:
         json.dump(
             {
                 "summary": {
                     "total_permutations": total_permutations,
+                    "token_usage": {
+                        "total_input_tokens": total_input_tokens_all,
+                        "total_output_tokens": total_output_tokens_all,
+                        "total_tokens": total_tokens_all,
+                    },
                     "semantic_consistency": {
                         "avg_consistency": avg_semantic_consistency,
                         "total_unique_responses": total_unique_semantic,
@@ -657,10 +646,10 @@ async def main():
                     },
                 },
                 "instances": all_results,
->>>>>>> eeb2993 (account for the reverse permutation for the permutation sweep)
             },
-            'instances': all_results,
-        }, f, indent=2)
+            f,
+            indent=2,
+        )
 
     print(f"\nResults saved to {output_file}")
 
