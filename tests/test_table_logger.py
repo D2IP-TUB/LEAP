@@ -1,10 +1,13 @@
 import json
 from pathlib import Path
+
 import pytest
-from leap.utils.table_logger import TableLogger
-from main import GenerationSettings, write_results_to_jsonl
-from leap.core import ExecutionMetrics, InferenceResult, Table, Action
+
+from leap.config.loader import GenerationConfig as GenerationSettings
+from leap.core import Action, ExecutionMetrics, InferenceResult, Table
 from leap.generation.sampling import SamplingConfig, SamplingResult
+from leap.utils.table_logger import TableLogger
+from main import write_results_to_jsonl
 
 
 def _sample_table(rows=3, cols=3):
@@ -68,9 +71,7 @@ def test_create_summary_report_metrics(tmp_path):
     table_final = _sample_table(rows=7, cols=4)
 
     rid_a = "A"
-    logger.log_table_state(
-        rid_a, 0, "initial", table_initial, success=True, generation_mode="constrained"
-    )
+    logger.log_table_state(rid_a, 0, "initial", table_initial, success=True, generation_mode="constrained")
     logger.log_table_state(
         rid_a,
         1,
@@ -99,14 +100,10 @@ def test_create_summary_report_metrics(tmp_path):
     )
 
     rid_b = "B"
-    logger.log_table_state(
-        rid_b, 0, "initial", table_initial, success=True, generation_mode="none"
-    )
+    logger.log_table_state(rid_b, 0, "initial", table_initial, success=True, generation_mode="none")
 
     rid_c = "C"
-    logger.log_table_state(
-        rid_c, 0, "initial", table_initial, success=True, generation_mode="constrained"
-    )
+    logger.log_table_state(rid_c, 0, "initial", table_initial, success=True, generation_mode="constrained")
     logger.log_table_state(
         rid_c,
         1,
@@ -123,9 +120,7 @@ def test_create_summary_report_metrics(tmp_path):
         success=True,
         generation_mode="constrained",
     )
-    logger.log_table_state(
-        rid_c, 3, "end()", table_final, success=True, generation_mode="constrained"
-    )
+    logger.log_table_state(rid_c, 3, "end()", table_final, success=True, generation_mode="constrained")
 
     summary = logger.create_summary_report(generation_mode="mix")
     assert summary["total_requests"] == 3
@@ -141,9 +136,7 @@ def test_create_summary_report_metrics(tmp_path):
     assert summary["generation_mode_counts"].get("constrained", 0) >= 2
     assert summary["generation_mode_counts"].get("none", 0) >= 1
 
-    assert any(
-        change["request_id"] == rid_a for change in summary["table_size_changes"]
-    )
+    assert any(change["request_id"] == rid_a for change in summary["table_size_changes"])
 
 
 def test_write_summary_report_creates_file_and_prints(tmp_path, capsys):
@@ -175,9 +168,7 @@ def test_disabled_logging_skips_file_writes(tmp_path):
 
 def test_enabled_logging_without_saving_tables_writes_log_only(tmp_path):
     log_dir = tmp_path / "nosave"
-    logger = TableLogger(
-        log_dir=str(log_dir), enable_logging=True, save_readable_tables=False
-    )
+    logger = TableLogger(log_dir=str(log_dir), enable_logging=True, save_readable_tables=False)
 
     table = _sample_table()
     request_id = "NS"
@@ -278,9 +269,7 @@ def test_parallel_results_jsonl_created_with_expected_entries(tmp_path, capsys):
     metadata = obj["metadata"]
     assert metadata["num_steps"] == 3
     assert isinstance(metadata.get("generation_mode"), str)
-    assert (
-        metadata["evaluation_method"] == "wikitablequestions_logic_with_dataset_answers"
-    )
+    assert metadata["evaluation_method"] == "wikitablequestions_logic_with_dataset_answers"
 
     assert "sampling_metadata" in obj
     sm = obj["sampling_metadata"]

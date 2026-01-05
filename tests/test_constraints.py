@@ -1,7 +1,9 @@
 import pytest
 from transformers import AutoTokenizer
 
-from constraints import (
+from leap.config.loader import TokenizerConfig
+from leap.core import Table
+from leap.inference.constraints import (
     ConstraintStateMachine,
 )
 
@@ -14,17 +16,37 @@ def gpt2_tokenizer():
     return tokenizer
 
 
+@pytest.fixture(scope="module")
+def tokenizer_config(gpt2_tokenizer):
+    """Create tokenizer config for gpt2"""
+    return TokenizerConfig(
+        is_llama_tokenizer=False,
+        comma_id=gpt2_tokenizer.encode(",", add_special_tokens=False)[0],
+        list_open_id=gpt2_tokenizer.encode("[", add_special_tokens=False)[0],
+        list_close_id=gpt2_tokenizer.encode("]", add_special_tokens=False)[0],
+        paren_open_id=gpt2_tokenizer.encode("(", add_special_tokens=False)[0],
+        paren_close_id=gpt2_tokenizer.encode(")", add_special_tokens=False)[0],
+        quote_id=gpt2_tokenizer.encode('"', add_special_tokens=False)[0],
+        closing_quotes_tokens=gpt2_tokenizer.encode('"', add_special_tokens=False),
+        action_tokens={
+            "select_row": gpt2_tokenizer.encode("select_row", add_special_tokens=False),
+            "select_column": gpt2_tokenizer.encode("select_column", add_special_tokens=False),
+            "end": gpt2_tokenizer.encode("end", add_special_tokens=False),
+        },
+    )
+
+
 def make_table(num_rows=5, columns=None):
     cols = columns or ["foo", "bar", "baz"]
-    return {"columns": cols, "rows": [{"row": idx} for idx in range(num_rows)]}
+    return Table(columns=cols, rows=[["val" for _ in cols] for _ in range(num_rows)])
 
 
-def test_initial_allowed_tokens_respect_action_history(gpt2_tokenizer):
+def test_initial_allowed_tokens_respect_action_history(gpt2_tokenizer, tokenizer_config):
     table = make_table()
 
     # With no action history and global constraints enabled (default),
     # only select_row and select_column are allowed initially.
-    machine = ConstraintStateMachine(table, gpt2_tokenizer)
+    machine = ConstraintStateMachine(table, gpt2_tokenizer, tokenizer_config)
     allowed = set(machine.allowed_tokens())
     assert allowed == {
         machine.tokenizer_config.action_tokens["select_row"][0],
@@ -32,27 +54,24 @@ def test_initial_allowed_tokens_respect_action_history(gpt2_tokenizer):
     }
 
     # If select_row has been used before, then only select_column is allowed
-    row_history = ConstraintStateMachine(
-        table, gpt2_tokenizer, action_history=["select_row(0)"]
-    )
+    row_history = ConstraintStateMachine(table, gpt2_tokenizer, tokenizer_config, action_history=["select_row(0)"])
     allowed_after_row = set(row_history.allowed_tokens())
-    assert allowed_after_row == {
-        row_history.tokenizer_config.action_tokens["select_column"][0]
-    }
+    assert allowed_after_row == {row_history.tokenizer_config.action_tokens["select_column"][0]}
 
     # If both select_row and select_column were used before, only end is allowed
     end_only = ConstraintStateMachine(
         table,
         gpt2_tokenizer,
+        tokenizer_config,
         action_history=["select_row(0)", 'select_column("foo")'],
     )
     allowed_end_only = set(end_only.allowed_tokens())
     assert allowed_end_only == {end_only.tokenizer_config.action_tokens["end"][0]}
 
 
-def test_select_row_multiple_parameters(gpt2_tokenizer):
+def test_select_row_multiple_parameters(gpt2_tokenizer, tokenizer_config):
     table = make_table(num_rows=3)
-    machine = ConstraintStateMachine(table, gpt2_tokenizer)
+    machine = ConstraintStateMachine(table, gpt2_tokenizer, tokenizer_config)
     row_tokens = machine.tokenizer_config.action_tokens["select_row"]
 
     # Type out the action token-by-token
@@ -117,9 +136,9 @@ def test_select_row_multiple_parameters(gpt2_tokenizer):
     assert machine.selected_params == {"row 0", "row 1", "row 2"}
 
 
-def test_select_column_multiple_parameters(gpt2_tokenizer):
+def test_select_column_multiple_parameters(gpt2_tokenizer, tokenizer_config):
     table = make_table(columns=["foo", "bar", "baz"])
-    machine = ConstraintStateMachine(table, gpt2_tokenizer)
+    machine = ConstraintStateMachine(table, gpt2_tokenizer, tokenizer_config)
     col_tokens = machine.tokenizer_config.action_tokens["select_column"]
 
     # Type out the action token-by-token
@@ -173,11 +192,12 @@ def test_select_column_multiple_parameters(gpt2_tokenizer):
     assert machine.selected_params == {"foo", "bar", "baz"}
 
 
-def test_end_action_finishes_when_only_end_allowed(gpt2_tokenizer):
+def test_end_action_finishes_when_only_end_allowed(gpt2_tokenizer, tokenizer_config):
     table = make_table()
     machine = ConstraintStateMachine(
         table,
         gpt2_tokenizer,
+        tokenizer_config,
         action_history=["select_row(0)", 'select_column("foo")'],
     )
     end_tokens = machine.tokenizer_config.action_tokens["end"]

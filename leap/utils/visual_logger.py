@@ -1,18 +1,18 @@
-import os
 import json
 import math
-import yaml
+import os
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
+import yaml
 from datasets import load_dataset, load_from_disk
+
 from leap.core import Table
 from leap.utils.apply_action import apply_actions
 
 MODEL_ID = ""
-# Get project root (3 levels up from this file: leap/utils/visual_logger.py -> leap/utils -> leap -> project root)
 _project_root = Path(__file__).parent.parent.parent
 
-# Load model ID from default.yaml
 config_path_env = os.environ.get("LEAP_CONFIG_PATH")
 if config_path_env:
     config_path = Path(config_path_env)
@@ -152,9 +152,7 @@ def process_log_file(
 
     first_data = json.loads(entries[0])
     full_request_id = first_data["request_id"]
-    base_request_id = (
-        full_request_id.split("_")[0] + "_" + full_request_id.split("_")[1]
-    )
+    base_request_id = full_request_id.split("_")[0] + "_" + full_request_id.split("_")[1]
 
     replayed_tables: List[Dict[str, Any]] = []
     sampling_metadata_for_request = []
@@ -180,9 +178,7 @@ def process_log_file(
 
         replayed = apply_actions(initial_table, action_strings)
 
-        replayed_tables = [
-            {"columns": t.columns, "rows": t.rows} for (_, t) in replayed
-        ]
+        replayed_tables = [{"columns": t.columns, "rows": t.rows} for (_, t) in replayed]
         sampling_metadata_for_request = rd.get("sampling_metadata", [])
     for e in entries:
         try:
@@ -191,9 +187,7 @@ def process_log_file(
             full_request_id = entry_data["request_id"]
             step = entry_data["step"]
 
-            base_request_id = (
-                full_request_id.split("_")[0] + "_" + full_request_id.split("_")[1]
-            )
+            base_request_id = full_request_id.split("_")[0] + "_" + full_request_id.split("_")[1]
 
             # Merge results_data (question, answers, execution_accuracy, etc.) into entry_data
             if base_request_id in results_data:
@@ -225,9 +219,7 @@ def process_log_file(
                 if sampling_metadata_for_request and step > 0:
                     s_idx = step - 1
                     if 0 <= s_idx < len(sampling_metadata_for_request):
-                        entry_data["sampling_for_step"] = sampling_metadata_for_request[
-                            s_idx
-                        ]
+                        entry_data["sampling_for_step"] = sampling_metadata_for_request[s_idx]
 
             json_entries.append(entry_data)
 

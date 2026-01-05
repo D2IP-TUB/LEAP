@@ -4,7 +4,7 @@ model:
   # possible alternatives:
   # "meta-llama/Llama-2-70b-hf"
   # "meta-llama/Llama-2-70b-chat-hf"
-  # "mistralai/Mixtral-8x7B-Instruct-v0.1"
+  # "gpt2"
   # "mistralai/Mixtral-8x7B-v0.1"
   # "openai/gpt-oss-120b"
   # "openai/gpt-oss-20b"
@@ -20,7 +20,7 @@ dataset:
   path: null
 
 run:
-  max_examples: 10
+  max_examples: 100
 
 generation:
   use_constraints: false
@@ -29,7 +29,7 @@ generation:
 
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:
-    - select_row
+    #- select_row
     - select_column
     - end
     # Note: direct_query is automatically applied after end(), not a separate action
@@ -43,7 +43,7 @@ generation:
       end: 1
       # Note: direct_query doesn't need sampling config (applied automatically)
     debug: true
-    shuffle_invariant: false  # Enable shuffle-invariant sampling for robustness
+    shuffle_invariant: false  # Enable shuffle-invariant sampling for robustness 
 
 logging:
   enable_logging: true
@@ -52,3 +52,4 @@ logging:
   compress_logs: false
   log_format: "readable"
   max_table_chars: 10000
+

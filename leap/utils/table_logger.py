@@ -5,13 +5,14 @@ This module handles all table transformation logging, analysis, and reporting
 functionality that was previously embedded in the main processing logic.
 """
 
-import json
 import csv
-import io
+import json
 import time
-from typing import Dict, Any, List, Optional
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from leap.core import Table
 
 
 @dataclass
@@ -80,35 +81,22 @@ class TableLogger:
             self.log_dir.mkdir(parents=True, exist_ok=True)
             print(f"Created table logging directory: {self.log_dir}")
 
-    def serialize_table_to_csv(
-        self, table: Dict[str, Any], max_chars: int = None
-    ) -> str:
-        """Convert table to CSV string with limited characters"""
+    def serialize_table_to_csv(self, table: Table, max_chars: int = None) -> str:
+        """Convert table to CSV string with limited characters."""
         if max_chars is None:
             max_chars = self.max_table_chars
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(table["columns"])
 
-        char_count = len(",".join(table["columns"]))
-        for i, row in enumerate(table["rows"]):
-            if i >= 10 or char_count > max_chars:
-                break
-            row_str = ",".join(str(cell) for cell in row)
-            if char_count + len(row_str) > max_chars:
-                break
-            writer.writerow(row)
-            char_count += len(row_str)
-        return output.getvalue().strip()
+        return table.to_csv(max_chars=max_chars, max_rows=10, crop=True)
 
-    def get_table_summary(self, table: Dict[str, Any]) -> Dict[str, Any]:
-        """Get a compact summary of table dimensions"""
+    def get_table_summary(self, table: Table) -> Dict[str, Any]:
+        """Get a compact summary of table dimensions."""
+        num_rows, num_cols = table.get_size()
+        columns = list(table.columns)
+
         return {
-            "num_rows": len(table["rows"]),
-            "num_columns": len(table["columns"]),
-            "columns": table["columns"][:5] + ["..."]
-            if len(table["columns"]) > 5
-            else table["columns"],
+            "num_rows": num_rows,
+            "num_columns": num_cols,
+            "columns": columns[:5] + ["..."] if len(columns) > 5 else columns,
         }
 
     def log_table_state(
@@ -116,11 +104,10 @@ class TableLogger:
         request_id: str,
         step: int,
         action: str,
-        table: Dict[str, Any],
+        table: Table,
         success: bool = True,
         failure_type: Optional[str] = None,
         generation_mode: Optional[str] = None,
-        model_type: Optional[str] = None,
     ) -> None:
         """
         Log table state with comprehensive information
@@ -133,7 +120,6 @@ class TableLogger:
             success: Whether the action succeeded
             failure_type: Type of failure if unsuccessful
             generation_mode: Generation mode used
-            model_type: LLM model used
         """
         if not self.enable_logging:
             return
@@ -145,9 +131,7 @@ class TableLogger:
 
             # Create readable table representation
             if self.save_readable_tables:
-                table_csv = self.serialize_table_to_csv(
-                    table, max_chars=self.max_table_chars
-                )
+                table_csv = self.serialize_table_to_csv(table, max_chars=self.max_table_chars)
                 table_preview = table_csv.split("\n")[:6]  # First 5 rows + header
 
                 # Save full table as separate CSV file
@@ -161,7 +145,6 @@ class TableLogger:
                 success=success,
                 failure_type=failure_type,
                 generation_mode=generation_mode,
-                model_type=model_type,
                 table_summary=table_summary,
                 table_preview=table_preview,
             )
@@ -177,9 +160,7 @@ class TableLogger:
         except Exception as e:
             print(f"Warning: Failed to log table state: {e}")
 
-    def _save_table_csv(
-        self, request_id: str, step: int, action: str, table: Dict[str, Any]
-    ) -> None:
+    def _save_table_csv(self, request_id: str, step: int, action: str, table: Table) -> None:
         """Save full table as CSV file"""
         try:
             # Clean action name for filename
@@ -197,9 +178,7 @@ class TableLogger:
 
     def _clean_filename(self, action: str) -> str:
         """Clean action string for use in filename"""
-        clean_action = (
-            action.replace("(", "_").replace(")", "").replace("[", "").replace("]", "")
-        )
+        clean_action = action.replace("(", "_").replace(")", "").replace("[", "").replace("]", "")
         clean_action = clean_action.replace('"', "").replace(",", "_").replace(" ", "_")
         return clean_action[:50]  # Limit length
 
@@ -210,11 +189,48 @@ class TableLogger:
             log_path = self.log_dir / log_filename
 
             with open(log_path, "a", encoding="utf-8") as f:
-                f.write(
-                    json.dumps(log_entry.to_dict(), indent=2) + "\n" + "-" * 80 + "\n"
-                )
+                f.write(json.dumps(log_entry.to_dict(), indent=2) + "\n" + "-" * 80 + "\n")
         except Exception as e:
             print(f"Warning: Failed to write log entry: {e}")
+
+    def set_request_metadata(self, request_id: str, metadata: Dict[str, Any]) -> None:
+        """Set metadata for a request"""
+        self.request_metadata[request_id] = metadata
+
+    def get_request_logs(self, request_id: str) -> List[LogEntry]:
+        """Get all log entries for a specific request"""
+        return self.log_entries.get(request_id, [])
+
+    def analyze_request(self, request_id: str) -> Dict[str, Any]:
+        """Analyze logs for a specific request"""
+        logs = self.get_request_logs(request_id)
+        if not logs:
+            return {"error": "No logs found for request"}
+
+        analysis = {
+            "request_id": request_id,
+            "total_steps": len(logs),
+            "successful_steps": sum(1 for log in logs if log.success),
+            "failed_steps": sum(1 for log in logs if not log.success),
+            "generation_modes": list(set(log.generation_mode for log in logs if log.generation_mode)),
+            "failure_types": [log.failure_type for log in logs if log.failure_type],
+            "actions_taken": [log.action for log in logs],
+            "duration": logs[-1].timestamp - logs[0].timestamp if len(logs) > 1 else 0.0,
+            "completed": any(log.action.startswith("end") for log in logs),
+        }
+
+        # Table size progression
+        table_sizes = []
+        for log in logs:
+            if log.table_summary:
+                size = (
+                    log.table_summary.get("num_rows", 0),
+                    log.table_summary.get("num_columns", 0),
+                )
+                table_sizes.append(size)
+        analysis["table_size_progression"] = table_sizes
+
+        return analysis
 
     def create_summary_report(self, generation_mode: str = None) -> Dict[str, Any]:
         """Create comprehensive summary report of all logged transformations"""
@@ -250,12 +266,8 @@ class TableLogger:
                 for log in logs:
                     # Track generation modes
                     if log.generation_mode:
-                        mode_count = summary_data["generation_mode_counts"].get(
-                            log.generation_mode, 0
-                        )
-                        summary_data["generation_mode_counts"][log.generation_mode] = (
-                            mode_count + 1
-                        )
+                        mode_count = summary_data["generation_mode_counts"].get(log.generation_mode, 0)
+                        summary_data["generation_mode_counts"][log.generation_mode] = mode_count + 1
 
                     if log.action == "initial":
                         if log.table_summary:
@@ -276,14 +288,8 @@ class TableLogger:
                             request_steps += 1
 
                             # Count action types
-                            action_type = (
-                                log.action.split("(")[0]
-                                if "(" in log.action
-                                else log.action
-                            )
-                            summary_data["action_counts"][action_type] = (
-                                summary_data["action_counts"].get(action_type, 0) + 1
-                            )
+                            action_type = log.action.split("(")[0] if "(" in log.action else log.action
+                            summary_data["action_counts"][action_type] = summary_data["action_counts"].get(action_type, 0) + 1
 
                             if log.table_summary:
                                 current_size = (
@@ -294,13 +300,8 @@ class TableLogger:
                         else:
                             total_failures += 1
                             if log.failure_type:
-                                summary_data["failure_type_counts"][
-                                    log.failure_type
-                                ] = (
-                                    summary_data["failure_type_counts"].get(
-                                        log.failure_type, 0
-                                    )
-                                    + 1
+                                summary_data["failure_type_counts"][log.failure_type] = (
+                                    summary_data["failure_type_counts"].get(log.failure_type, 0) + 1
                                 )
                                 if log.failure_type == "validity_failure":
                                     validity_failures += 1
@@ -324,28 +325,16 @@ class TableLogger:
 
             # Calculate derived metrics
             summary_data["total_transformations"] = total_actions
-            summary_data["average_steps_per_request"] = (
-                sum(request_step_counts) / len(request_step_counts)
-                if request_step_counts
-                else 0.0
-            )
+            summary_data["average_steps_per_request"] = sum(request_step_counts) / len(request_step_counts) if request_step_counts else 0.0
             summary_data["completion_rate"] = (
-                1.0
-                - (
-                    len(summary_data["incomplete_requests"])
-                    / summary_data["total_requests"]
-                )
+                1.0 - (len(summary_data["incomplete_requests"]) / summary_data["total_requests"])
                 if summary_data["total_requests"] > 0
                 else 0.0
             )
 
             # Calculate validity rate
             total_attempts = total_actions + total_failures
-            summary_data["validity_rate"] = (
-                ((total_attempts - validity_failures) / total_attempts)
-                if total_attempts > 0
-                else 0.0
-            )
+            summary_data["validity_rate"] = ((total_attempts - validity_failures) / total_attempts) if total_attempts > 0 else 0.0
 
         except Exception as e:
             summary_data["error"] = str(e)
@@ -373,12 +362,8 @@ class TableLogger:
         print(f"Total requests: {summary_data.get('total_requests', 0)}")
         print(f"Total transformations: {summary_data.get('total_transformations', 0)}")
         print(f"Completion rate: {summary_data.get('completion_rate', 0.0):.2%}")
-        print(
-            f"Average steps per request: {summary_data.get('average_steps_per_request', 0.0):.1f}"
-        )
-        print(
-            f"Incomplete requests: {len(summary_data.get('incomplete_requests', []))}"
-        )
+        print(f"Average steps per request: {summary_data.get('average_steps_per_request', 0.0):.1f}")
+        print(f"Incomplete requests: {len(summary_data.get('incomplete_requests', []))}")
 
         # Generation mode breakdown
         mode_counts = summary_data.get("generation_mode_counts", {})
@@ -398,6 +383,103 @@ class TableLogger:
 
             validity_rate = summary_data.get("validity_rate", 0.0)
             print(f"Validity rate (parseable actions): {validity_rate:.1%}")
+
+    def analyze_table_logs(self, request_id: str) -> None:
+        """Analyze and print table logs for a specific request"""
+        if not self.enable_logging:
+            print("Table logging is disabled")
+            return
+
+        logs = self.get_request_logs(request_id)
+        if not logs:
+            # Try to load from file
+            logs = self._load_logs_from_file(request_id)
+
+        if not logs:
+            print(f"No logs found for request: {request_id}")
+            return
+
+        print(f"\nTable transformation log for {request_id}:")
+        print("=" * 80)
+
+        for log in logs:
+            status_str = "SUCCESS" if log.success else f"FAILED ({log.failure_type})"
+            mode_str = f" [{log.generation_mode}]" if log.generation_mode else ""
+            print(f"\nStep {log.step}: {log.action} - {status_str}{mode_str}")
+
+            if log.table_summary:
+                rows = log.table_summary.get("num_rows", 0)
+                cols = log.table_summary.get("num_columns", 0)
+                print(f"Table: {rows} rows × {cols} columns")
+
+            if log.table_preview:
+                print("Preview:")
+                for line in log.table_preview:
+                    print(f"  {line}")
+
+            # Mention CSV file location
+            if log.step > 0 and self.save_readable_tables:
+                csv_files = list(self.log_dir.glob(f"{request_id}_step{log.step:02d}_*.csv"))
+                if csv_files:
+                    print(f"Full table saved as: {csv_files[0].name}")
+
+            print("-" * 40)
+
+    def _load_logs_from_file(self, request_id: str) -> List[LogEntry]:
+        """Load logs from file for a specific request"""
+        try:
+            log_file = self.log_dir / f"{request_id}_log.json"
+            if not log_file.exists():
+                return []
+
+            logs = []
+            with open(log_file, "r", encoding="utf-8") as f:
+                content = f.read()
+                blocks = content.split("-" * 80)
+
+                for block in blocks:
+                    block = block.strip()
+                    if block:
+                        try:
+                            entry_data = json.loads(block)
+                            log_entry = LogEntry(**entry_data)
+                            logs.append(log_entry)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+
+            return sorted(logs, key=lambda x: x.step)
+        except Exception as e:
+            print(f"Error loading logs from file: {e}")
+            return []
+
+    def list_table_files_for_request(self, request_id: str) -> List[str]:
+        """List all table CSV files for a specific request"""
+        if not self.enable_logging or not self.save_readable_tables:
+            return []
+
+        try:
+            files = list(self.log_dir.glob(f"{request_id}_*.csv"))
+            return sorted([f.name for f in files])
+        except Exception:
+            return []
+
+    def cleanup_logs(self, older_than_hours: int = 24) -> int:
+        """Clean up old log files"""
+        if not self.enable_logging:
+            return 0
+
+        cutoff_time = time.time() - (older_than_hours * 3600)
+        removed_count = 0
+
+        try:
+            for file_path in self.log_dir.iterdir():
+                if file_path.is_file() and file_path.stat().st_mtime < cutoff_time:
+                    file_path.unlink()
+                    removed_count += 1
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+
+        return removed_count
 
     def get_logging_stats(self) -> Dict[str, Any]:
         """Get current logging statistics"""

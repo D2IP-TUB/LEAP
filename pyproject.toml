@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "datasets>=4.4.1",
     "vllm==0.10.0",
+    "PyYAML>=6.0",
 ]
 
 [dependency-groups]
@@ -15,3 +16,10 @@ dev = [
     "pytest>=9.0.1",
     "pytest-cov>=7.0.0",
 ]
+
+[tool.ruff]
+line-length = 140
+fix = true   # formatter/linter auto-fixes
+
+[tool.ruff.lint]
+select = ["E", "F", "I"] # E=pycodestyle, F=pyflakes, I=import sorting

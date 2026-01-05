@@ -1,575 +1,119 @@
-from typing import List, Tuple, Optional
-import ast
 import json
+import logging
 import multiprocessing as mp
 import os
 import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
-from datasets import load_dataset
-from vllm_server import (
-    ProcessParallelVLLM,
-    create_generation_config,
-    create_logging_config,
-)
+from datasets import load_dataset, load_from_disk
+from transformers import AutoTokenizer
 
-from eval import to_value_list, check_denotation
-from generate import (
-    generate_action_arguments,
-    generate_action_selection,
-    generate_single_action,
+from leap.config.loader import (
+    AppConfig,
+    DatasetConfig,
+    get_model_id,
+    load_runtime_config,
 )
-from model_config import ModelConfig
-from table import apply_action, extract_table_values_for_eval, serialize_table_to_csv
+from leap.config.loader import (
+    GenerationConfig as GenerationSettings,
+)
+from leap.core import Action, InferenceRequest, InferenceResult
+from leap.generation.prompt_builder import PromptBuilder
+from leap.generation.sampling import SamplingConfig, SamplingLayer
+from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
+from leap.generation.strategies import (
+    ChainOfTableGenerationStrategy,
+    IterativeGenerationStrategy,
+)
+from leap.inference.vllm_server import ProcessParallelVLLM
+from leap.utils.profiler import get_aggregate_profiler
+
+# shut off llm logging in case not important
+logging.getLogger("vllm").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
 
 os.environ["VLLM_USE_V1"] = "0"
 os.environ["VLLM_SERVER_DEV_MODE"] = "1"
-
-# Configuration
-# model_id = "meta-llama/Llama-2-70b-hf"
-# model_id = "meta-llama/Llama-2-70b-chat-hf"
-model_id = "gpt2"
-# model_id = "mistralai/Mixtral-8x7B-Instruct-v0.1"
-# model_id = "mistralai/Mixtral-8x7B-v0.1"
-# model_id = "openai/gpt-oss-120b"
-# model_id = "openai/gpt-oss-20b"
-
-model_config = ModelConfig(model_id)
-
-output_file = "./logs/results.jsonl"
-
-# Configuration flags
-USE_GENERATION_CONSTRAINTS = True
-USE_GLOBAL_CONSTRAINTS = True
-USE_CHAIN_OF_TABLE = False
-COT_ACTION_TEMPERATURE = 0.3
-COT_ARGS_TEMPERATURE = 0.7
-
-# Logging configuration
-LOGGING_CONFIG = {
-    "enable_logging": True,
-    "log_dir": f"./logs/{model_config.log_dir}",
-    "save_readable_tables": False,
-    "compress_logs": False,
-    "log_format": "readable",
-    "max_table_chars": 10000,
-}
-
-# Load dataset
-# dataset = load_dataset('wikitablequestions', split='train[:300]', trust_remote_code=True)
-# dataset = load_from_disk("./datasets/answerable_questions/train")
-dataset = load_dataset(
-    "json", data_files="./datasets/dataset_simple.json", split="train"
-)
+CONFIG_PATH = Path(os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
 
 
-def parse_action_string(action_str: str) -> Optional[Tuple[str, List]]:
-    """Parse action string into (action_name, args) tuple"""
-    try:
-        # Handle 'end' action separately
-        action_str = action_str.strip()
-        if action_str == "end" or action_str.startswith("end("):
-            return "end", []
-
-        # Parse actions with arguments
-        if "(" not in action_str:
-            return None
-
-        action_name, args_str = action_str.split("(", 1)
-        action_name = action_name.strip()
-        args_str = args_str.rstrip(")").replace("row ", "").strip()
-        # Extract list arguments
-        if args_str.startswith("[") and args_str.endswith("]"):
-            args_str = args_str.replace("\\", "\\\\")
-
-            args_list = ast.literal_eval(args_str)
-            return action_name, args_list
-
-        # Handle simple arguments
-        if "," in args_str:
-            args_list = [arg.strip() for arg in args_str.split(",")]
-        else:
-            args_list = [args_str]
-
-        return action_name, args_list
-    except Exception:
-        return None
+@dataclass(frozen=True)
+class RuntimeContext:
+    config: AppConfig
+    prompt_builder: PromptBuilder
+    tokenizer: AutoTokenizer
+    dataset: Any
 
 
-def calculate_execution_accuracy_with_dataset_answers(
-    action_history, final_table, ground_truth_answers, original_table
-):
-    """Calculate execution accuracy using WikiTableQuestions evaluator logic"""
-    result = {
-        "execution_accuracy": 0.0,
-        "terminated_properly": False,
-        "answer_found_in_final": False,
-        "answer_found_in_original": False,
-        "final_table_values": [],
-        "original_table_values": [],
-        "matched_answers_final": [],
-        "matched_answers_original": [],
-        "execution_error": None,
-        "num_actions": len(action_history),
-        "final_table_size": None,
-        "evaluation_method": "wikitablequestions_logic",
-    }
+def load_dataset_from_config(dataset_config: DatasetConfig):
+    loader = dataset_config.loader.lower()
 
-    try:
-        # Check if sequence terminated properly
-        result["terminated_properly"] = (
-            len(action_history) > 1  # Must have more than just one action
-            and action_history[-1].startswith("end")  # Last action must be end
-            and not all(
-                action.startswith("end") for action in action_history[:-1]
-            )  # Not all prior actions are end
-        )
+    if loader == "huggingface":
+        if not dataset_config.name:
+            raise ValueError("HuggingFace dataset loader requires 'name'")
+        name = dataset_config.name
+        split = dataset_config.split
+        kwargs = {}
+        if split:
+            kwargs["split"] = split
+        if dataset_config.trust_remote_code is not None:
+            kwargs["trust_remote_code"] = dataset_config.trust_remote_code
+        return load_dataset(name, **kwargs)
 
-        # Convert ground truth answers to Value objects using evaluator logic
-        target_values = to_value_list(ground_truth_answers)
+    if loader == "json":
+        data_files = dataset_config.data_files
+        if not data_files:
+            raise ValueError("JSON dataset loader requires 'data_files'")
+        split = dataset_config.split
+        return load_dataset("json", data_files=data_files, split=split)
 
-        # Extract and evaluate original table
-        result["original_table_values"] = extract_table_values_for_eval(original_table)
-        original_predicted_values = to_value_list(result["original_table_values"])
+    if loader == "disk":
+        path = dataset_config.path
+        if not path:
+            raise ValueError("Disk dataset loader requires 'path'")
+        return load_from_disk(path)
 
-        # Check if original table contains the answer using evaluator logic
-        result["answer_found_in_original"] = check_denotation(
-            target_values, original_predicted_values
-        )
-        if result["answer_found_in_original"]:
-            # Find which answers matched in original table
-            result["matched_answers_original"] = find_matching_answers(
-                target_values, original_predicted_values
-            )
-
-        # Check final table
-        if final_table:
-            result["final_table_size"] = (
-                len(final_table["rows"]),
-                len(final_table["columns"]),
-            )
-            result["final_table_values"] = extract_table_values_for_eval(final_table)
-            final_predicted_values = to_value_list(result["final_table_values"])
-
-            # Check if final table contains the answer using evaluator logic
-            result["answer_found_in_final"] = check_denotation(
-                target_values, final_predicted_values
-            )
-            if result["answer_found_in_final"]:
-                # Find which answers matched in final table
-                result["matched_answers_final"] = find_matching_answers(
-                    target_values, final_predicted_values
-                )
-
-            # Calculate execution accuracy
-            if result["terminated_properly"] and result["answer_found_in_final"]:
-                result["execution_accuracy"] = 1.0
-            else:
-                result["execution_accuracy"] = 0.0
-        else:
-            result["execution_error"] = "No final table produced"
-
-    except Exception as e:
-        result["execution_error"] = str(e)
-
-    return result
+    raise ValueError(f"Unsupported dataset loader: {loader}")
 
 
-def find_matching_answers(target_values, predicted_values):
-    """Find which target answers have matches in predicted values"""
-    matched = []
-    for target in target_values:
-        for predicted in predicted_values:
-            if target.match(predicted):
-                # Get the normalized string representation
-                matched.append(target.normalized)
-                break
-    return matched
+def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
+    # Load tokenizer first
+    model_id = get_model_id(config_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
 
+    # Now load the full config with tokenizer
+    app_config: AppConfig = load_runtime_config(config_path, tokenizer)
 
-# Generation functions with integrated logging via callback
-async def iterative_generation_function(
-    request, worker, state_machines, logging_callback=None
-):
-    """Generate actions iteratively with comprehensive logging via callback"""
-    question = request["question"]
-    table = request["table"]
-    ground_truth_answers = request["ground_truth_answers"]
-    request_id = request["request_id"]
-
-    current_table = table
-    action_history = []
-    failures = 0
-    validity_failures = 0
-    max_failures = 3
-    max_validity_failures = 3
-    step = 0
-    max_steps = 10
-
-    generation_mode = worker._get_generation_mode_string()
-
-    # Log initial table state
-    if logging_callback:
-        logging_callback(
-            request_id,
-            0,
-            "initial",
-            current_table,
-            generation_mode=generation_mode,
-            model_type=model_id,
-        )
-
-    while (
-        failures < max_failures
-        and validity_failures < max_validity_failures
-        and step < max_steps
-    ):
-        step_id = f"{request_id}_step{step}"
-
-        # Build prompt
-        max_chars = 1500 if step == 0 else 1000
-        # table_str = serialize_table_to_csv(current_table, max_chars, crop=False)
-        table_str = serialize_table_to_csv(current_table, max_chars)
-        step_prompt = f"Table:\n{table_str}\n\n"
-        step_prompt += f"Question: {question}\n"
-
-        if action_history:
-            step_prompt += "Actions taken so far:\n"
-            for i, action in enumerate(action_history):
-                step_prompt += f"{i+1}. {action}\n"
-            step_prompt += "\n"
-
-        if worker.use_constraints:
-            instruction_prompt = "Next action: "
-        else:
-            instruction_prompt = 'What should be the next action to answer this question? Choose from: select_row([row_indices]), select_column(["column_names"]), or end(). Next action: '
-        # Truncate if needed
-        estimated_length = len(step_prompt) // 4
-        if estimated_length > worker.max_model_len - 100:
-            table_str = serialize_table_to_csv(current_table, 500)
-            question_short = question[:100] + "..." if len(question) > 100 else question
-            step_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n"
-            if worker.use_constraints:
-                instruction_prompt = "Next action: "
-            else:
-                instruction_prompt = 'What should be the next action? Choose from: select_row([row_indices]), select_column(["column_names"]), or end(). Next action: '
-
-        step_prompt = model_config.add_instruct_tokens_for_instruct_models(
-            step_prompt, instruction_prompt
-        )
-
-        try:
-            # Generate action
-            action_str = await generate_single_action(
-                worker,
-                step_prompt,
-                current_table,
-                step_id,
-                state_machines,
-                action_history,
-            )
-
-            # Parse action
-            if worker.use_constraints:
-                parsed_action = parse_action_string(action_str)
-            else:
-                parsed_action = parse_action_string(action_str)
-                # Could add extraction fallback here
-            if not parsed_action:
-                validity_failures += 1
-                print(
-                    f"Step {step}: Failed to generate valid action from: {action_str}"
-                )
-                if logging_callback:
-                    logging_callback(
-                        request_id,
-                        step + 1,
-                        f"validity_failed:{action_str}",
-                        current_table,
-                        success=False,
-                        failure_type="validity_failure",
-                        generation_mode=generation_mode,
-                        model_type=model_id,
-                    )
-                continue
-
-            action_name, args = parsed_action
-
-            if action_name == "end":
-                action_history.append("end()")
-                if logging_callback:
-                    logging_callback(
-                        request_id,
-                        step + 1,
-                        "end()",
-                        current_table,
-                        generation_mode=generation_mode,
-                        model_type=model_id,
-                    )
-                break
-
-            # Apply action
-            new_table = apply_action(current_table, action_name, args)
-
-            if not new_table:
-                validity_failures += 1
-                print(f"Step {step}: Failed to apply action: {action_name}({args})")
-                if logging_callback:
-                    logging_callback(
-                        request_id,
-                        step + 1,
-                        f"{action_name}({args})",
-                        current_table,
-                        success=False,
-                        failure_type="validity_failure",
-                        generation_mode=generation_mode,
-                        model_type=model_id,
-                    )
-                continue
-
-            # Action successful
-            current_table = new_table
-            action_history.append(f"{action_name}({args})")
-            failures = 0
-            validity_failures = 0
-            step += 1
-            print(f"Step {step}: Applied {action_name}({args})")
-
-            # Log successful transformation
-            if logging_callback:
-                logging_callback(
-                    request_id,
-                    step,
-                    f"{action_name}({args})",
-                    current_table,
-                    success=True,
-                    generation_mode=generation_mode,
-                    model_type=model_id,
-                )
-
-        except Exception as e:
-            failures += 1
-            print(f"Step {step}: Generation error: {str(e)}")
-            if logging_callback:
-                logging_callback(
-                    request_id,
-                    step + 1,
-                    f"generation_error:{str(e)}",
-                    current_table,
-                    success=False,
-                    failure_type="generation_error",
-                    generation_mode=generation_mode,
-                    model_type=model_id,
-                )
-
-    # Calculate accuracy
-    accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-        action_history, current_table, ground_truth_answers, table
+    prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=app_config.model.instruct)
+    dataset = load_dataset_from_config(app_config.dataset)
+    return RuntimeContext(
+        config=app_config,
+        prompt_builder=prompt_builder,
+        tokenizer=tokenizer,
+        dataset=dataset,
     )
 
-    return {
-        "action_history": action_history,
-        "final_table": current_table,
-        "execution_accuracy_metrics": accuracy_metrics,
-    }
 
-
-async def cot_generation_function(
-    request, worker, state_machines, logging_callback=None
-):
-    """Chain-of-Table generation function with comprehensive logging via callback"""
-    question = request["question"]
-    table = request["table"]
-    ground_truth_answers = request["ground_truth_answers"]
-    request_id = request["request_id"]
-
-    current_table = table
-    action_history = []
-    failures = 0
-    validity_failures = 0
-    max_failures = 3
-    max_validity_failures = 3
-    step = 0
-    max_steps = 10
-
-    generation_mode = "CoT"
-
-    # Log initial table state
-    if logging_callback:
-        logging_callback(
-            request_id,
-            0,
-            "initial",
-            current_table,
-            generation_mode=generation_mode,
-            model_type=model_id,
-        )
-
-    while (
-        failures < max_failures
-        and validity_failures < max_validity_failures
-        and step < max_steps
-    ):
-        try:
-            # Step 1: Dynamic Plan - Select action
-            action_name = await generate_action_selection(
-                model_config,
-                worker,
-                question,
-                current_table,
-                action_history,
-                request_id,
-                state_machines,
-                step,
-                COT_ACTION_TEMPERATURE,
-            )
-
-            if not action_name:
-                validity_failures += 1
-                print(f"Step {step}: Failed to select valid action")
-                if logging_callback:
-                    logging_callback(
-                        request_id,
-                        step + 1,
-                        "action_selection_failed",
-                        current_table,
-                        success=False,
-                        failure_type="validity_failure",
-                        generation_mode=generation_mode,
-                        model_type=model_id,
-                    )
-                continue
-
-            if action_name == "end":
-                action_history.append("end()")
-                if logging_callback:
-                    logging_callback(
-                        request_id,
-                        step + 1,
-                        "end()",
-                        current_table,
-                        generation_mode=generation_mode,
-                        model_type=model_id,
-                    )
-                break
-
-            # Step 2: Generate Args
-            args = await generate_action_arguments(
-                model_config,
-                worker,
-                question,
-                current_table,
-                action_name,
-                action_history,
-                request_id,
-                state_machines,
-                step,
-                COT_ARGS_TEMPERATURE,
-            )
-
-            if args is None:
-                validity_failures += 1
-                print(
-                    f"Step {step}: Failed to generate valid arguments for {action_name}"
-                )
-                if logging_callback:
-                    logging_callback(
-                        request_id,
-                        step + 1,
-                        f"{action_name}_args_failed",
-                        current_table,
-                        success=False,
-                        failure_type="validity_failure",
-                        generation_mode=generation_mode,
-                        model_type=model_id,
-                    )
-                continue
-
-            # Apply action
-            new_table = apply_action(current_table, action_name, args)
-
-            if not new_table:
-                validity_failures += 1
-                print(f"Step {step}: Failed to apply action: {action_name}({args})")
-                if logging_callback:
-                    logging_callback(
-                        request_id,
-                        step + 1,
-                        f"{action_name}({args})",
-                        current_table,
-                        success=False,
-                        failure_type="validity_failure",
-                        generation_mode=generation_mode,
-                        model_type=model_id,
-                    )
-                continue
-
-            # Action successful
-            current_table = new_table
-            action_history.append(f"{action_name}({args})")
-            failures = 0
-            validity_failures = 0
-            step += 1
-            print(f"Step {step}: Applied {action_name}({args}) [CoT]")
-
-            # Log successful transformation
-            if logging_callback:
-                logging_callback(
-                    request_id,
-                    step,
-                    f"{action_name}({args})",
-                    current_table,
-                    success=True,
-                    generation_mode=generation_mode,
-                    model_type=model_id,
-                )
-
-        except Exception as e:
-            failures += 1
-            print(f"Step {step}: Generation error in CoT: {str(e)}")
-            if logging_callback:
-                logging_callback(
-                    request_id,
-                    step + 1,
-                    f"cot_generation_error:{str(e)}",
-                    current_table,
-                    success=False,
-                    failure_type="generation_error",
-                    generation_mode=generation_mode,
-                    model_type=model_id,
-                )
-
-    # Calculate accuracy
-    accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
-        action_history, current_table, ground_truth_answers, table
-    )
-
-    return {
-        "action_history": action_history,
-        "final_table": current_table,
-        "execution_accuracy_metrics": accuracy_metrics,
-    }
-
-
-def write_results_to_jsonl(results, examples, output_file):
+def write_results_to_jsonl(results: list[InferenceResult], output_file, generation_config: GenerationSettings):
     """Write results to JSONL file with execution accuracy metrics"""
     with open(output_file, "w", encoding="utf-8") as f:
-        for i, (result, example) in enumerate(zip(results, examples)):
-            action_history = result.get("action_history", [])
-
+        for i, result in enumerate(results):
             actions = []
-            for action_str in action_history:
-                parsed = parse_action_string(action_str)
-                if parsed:
-                    action_name, args = parsed
-                    actions.append({"action": action_name, "args": args})
+            for action_str in result.action_history:
+                action = Action.parse(action_str)
+                if action:
+                    actions.append(action.to_dict())
                 else:
                     actions.append({"action": "invalid", "args": [action_str]})
 
             # Create entry with WikiTableQuestions logic-based execution accuracy metrics
+            # All data comes from the self-contained result
             entry = {
-                "id": f"nt-{i+1}",
-                "question": example["question"],
-                "ground_truth_answers": example["answers"],
+                "id": f"nt-{i + 1}",
+                "question": result.question,
+                "ground_truth_answers": result.ground_truth_answers,
                 "actions": actions,
                 "execution_accuracy": result.execution_accuracy,
                 "execution_metrics": result.execution_metrics.to_dict(),  # Use to_dict() method
@@ -588,7 +132,7 @@ def write_results_to_jsonl(results, examples, output_file):
                 ],
                 "metadata": {
                     "num_steps": len(actions),
-                    "generation_mode": get_generation_mode_string(),
+                    "generation_mode": get_generation_mode_string(generation_config),
                     "evaluation_method": "wikitablequestions_logic_with_dataset_answers",
                 },
             }
@@ -597,15 +141,13 @@ def write_results_to_jsonl(results, examples, output_file):
     print(f"Results written to {output_file}")
 
 
-def get_generation_mode_string():
+def get_generation_mode_string(generation_config: GenerationSettings):
     """Get a descriptive string for the current generation mode"""
-    if USE_CHAIN_OF_TABLE:
-        constraint_desc = (
-            "with_constraints" if USE_GENERATION_CONSTRAINTS else "without_constraints"
-        )
+    if generation_config.use_chain_of_table:
+        constraint_desc = "with_constraints" if generation_config.use_constraints else "without_constraints"
         return f"chain_of_table_{constraint_desc}"
-    elif USE_GENERATION_CONSTRAINTS:
-        if USE_GLOBAL_CONSTRAINTS:
+    elif generation_config.use_constraints:
+        if generation_config.use_global_constraints:
             return "constrained_with_global"
         else:
             return "constrained_local_only"
@@ -613,40 +155,61 @@ def get_generation_mode_string():
         return "unconstrained_with_postprocessing"
 
 
+def create_sampling_layer(generation_settings: GenerationSettings) -> SamplingLayer:
+    if not generation_settings.sampling or not generation_settings.sampling.enabled:
+        # When sampling is disabled, use n=1 (no voting, single generation)
+        print("Sampling disabled - using single-sample generation (n=1)")
+        return SamplingLayer(
+            config=SamplingConfig(
+                enabled=True,
+                n_samples=1,
+                debug=False,
+            )
+        )
+    elif generation_settings.sampling.shuffle_invariant:
+        print(f"Shuffle-invariant sampling enabled: {generation_settings.sampling.n_samples} samples per step")
+        return ShuffleInvariantSamplingLayer(config=generation_settings.sampling)
+    else:
+        print(f"Sampling enabled: {generation_settings.sampling.n_samples} samples per step")
+        return SamplingLayer(config=generation_settings.sampling)
+
+
 def main():
     """Main function using the modular vLLM server with comprehensive logging"""
     print("Setting up modular vLLM server with integrated logging...")
 
-    # Create logging configuration
-    logging_config = create_logging_config(
-        enable_logging=LOGGING_CONFIG["enable_logging"],
-        log_dir=LOGGING_CONFIG["log_dir"],
-        save_readable_tables=LOGGING_CONFIG["save_readable_tables"],
-        compress_logs=LOGGING_CONFIG["compress_logs"],
-        log_format=LOGGING_CONFIG["log_format"],
-        max_table_chars=LOGGING_CONFIG["max_table_chars"],
+    runtime = build_runtime(CONFIG_PATH)
+    app_config = runtime.config
+    model_settings = app_config.model
+    generation_settings = app_config.generation
+
+    # Create sampling layer (always created, with n=1 when "disabled")
+    sampling_layer = create_sampling_layer(generation_settings)
+
+    iterative_strategy = IterativeGenerationStrategy(
+        prompt_builder=runtime.prompt_builder,
+        sampling_layer=sampling_layer,
+    )
+    cot_strategy = ChainOfTableGenerationStrategy(
+        prompt_builder=runtime.prompt_builder,
+        sampling_layer=sampling_layer,
     )
 
-    # Create generation configuration with logging
-    generation_config = create_generation_config(
-        use_constraints=USE_GENERATION_CONSTRAINTS,
-        use_cot=USE_CHAIN_OF_TABLE,
-        use_global_constraints=USE_GLOBAL_CONSTRAINTS,
-        generation_functions={
-            "iterative_generation": iterative_generation_function,
-            "cot_generation": cot_generation_function,
-        },
-        logging_config=logging_config,
-        tensor_parallel_size=model_config.tensor_parallel_size,
-    )
-
-    # Initialize the server
-    num_workers = 1
+    # Initialize the server with typed configs (no more dicts!)
+    num_workers = model_settings.hardware.num_workers
     server = ProcessParallelVLLM(
-        model_id=model_id,
-        num_workers=model_config.num_workers,
-        gpu_allocation=model_config.gpu_allocation,
-        generation_config=generation_config,
+        model_id=model_settings.id,
+        num_workers=num_workers,
+        gpu_allocation=model_settings.hardware.gpu_allocation,
+        generation_config=generation_settings,
+        tokenizer_config=model_settings.tokenizer_config,
+        logging_config=app_config.logging,
+        generation_functions={
+            "iterative_generation": iterative_strategy.generate_instance,
+            "cot_generation": cot_strategy.generate_instance,
+        },
+        tensor_parallel_size=model_settings.hardware.tensor_parallel_size,
+        max_concurrent_requests=model_settings.hardware.max_concurrent_requests,
     )
 
     try:
@@ -660,29 +223,23 @@ def main():
 
         # Prepare requests
         requests = []
-        examples = []
-        subset_size = min(1000, len(dataset))
+        run_config = app_config.run
+        max_examples = run_config.max_examples
+        dataset = runtime.dataset
+        subset_size = len(dataset) if max_examples is None else min(max_examples, len(dataset))
 
         for i, example in enumerate(dataset):
             if i >= subset_size:
                 break
 
-            table = {
-                "columns": example["table"]["header"],
-                "rows": example["table"]["rows"],
-            }
+            # Use typed request builder
+            inference_request = InferenceRequest.from_example(example, index=i)
 
-            request = {
-                "question": example["question"],
-                "table": table,
-                "ground_truth_answers": example["answers"],
-            }
-
-            requests.append(request)
-            examples.append(example)
+            # Pass the typed object directly (no conversion needed)
+            requests.append(inference_request)
 
         print(f"Processing {len(requests)} questions...")
-        print(f"Generation mode: {get_generation_mode_string()}")
+        print(f"Generation mode: {get_generation_mode_string(generation_settings)}")
 
         # Generate responses with comprehensive logging
         start_time = time.time()
@@ -690,121 +247,107 @@ def main():
         end_time = time.time()
 
         print(f"Total time: {end_time - start_time:.2f} seconds")
-        print(
-            f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds"
-        )
+        print(f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds")
+
+        # Collect profiling data from results
+        profiler = get_aggregate_profiler()
+        for result in results:
+            if result.profiling_data:
+                profiler.add_request_profile(
+                    result.profiling_data["total_time"],
+                    result.profiling_data["operation_timings"],
+                    result.profiling_data["num_steps"],
+                )
 
         # Analyze results
         analyze_execution_accuracy(results)
 
         # Write results
-        write_results_to_jsonl(results, examples, output_file)
+        write_results_to_jsonl(
+            results,
+            model_settings.results_file,
+            generation_settings,
+        )
 
         # Print sample results
-        print_sample_results(results, examples)
+        print_sample_results(results)
 
         # Demonstrate logging analysis
         demonstrate_logging_analysis(server, results)
+
+        # Print performance profiling summary (already collected above)
+        get_aggregate_profiler().print_summary()
 
     finally:
         # Shutdown will automatically generate summary report
         server.shutdown()
 
 
-def analyze_execution_accuracy(results):
+def analyze_execution_accuracy(results: list[InferenceResult]):
     """Analyze and print execution accuracy metrics"""
     execution_accuracies = []
     answer_found_rates = []
     proper_termination_rates = []
     baseline_rates = []
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("EXECUTION ACCURACY ANALYSIS")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     for result in results:
-        metrics = result.get("execution_accuracy_metrics", {})
-        execution_accuracies.append(metrics.get("execution_accuracy", 0.0))
-        answer_found_rates.append(
-            1.0 if metrics.get("answer_found_in_final", False) else 0.0
-        )
-        proper_termination_rates.append(
-            1.0 if metrics.get("terminated_properly", False) else 0.0
-        )
-        baseline_rates.append(
-            1.0 if metrics.get("answer_found_in_original", False) else 0.0
-        )
+        metrics = result.execution_metrics
+        execution_accuracies.append(metrics.execution_accuracy)
+        answer_found_rates.append(1.0 if metrics.answer_found_in_final else 0.0)
+        proper_termination_rates.append(1.0 if metrics.terminated_properly else 0.0)
+        baseline_rates.append(1.0 if metrics.answer_found_in_original else 0.0)
 
     if execution_accuracies:
-        overall_execution_accuracy = sum(execution_accuracies) / len(
-            execution_accuracies
-        )
+        overall_execution_accuracy = sum(execution_accuracies) / len(execution_accuracies)
         overall_answer_found_rate = sum(answer_found_rates) / len(answer_found_rates)
         overall_baseline_rate = sum(baseline_rates) / len(baseline_rates)
-        overall_termination_rate = sum(proper_termination_rates) / len(
-            proper_termination_rates
-        )
+        overall_termination_rate = sum(proper_termination_rates) / len(proper_termination_rates)
 
-        print(
-            f"Overall Execution Accuracy: {overall_execution_accuracy:.3f} ({overall_execution_accuracy*100:.1f}%)"
-        )
-        print(
-            f"Answer Found in Final Table Rate: {overall_answer_found_rate:.3f} ({overall_answer_found_rate*100:.1f}%)"
-        )
-        print(
-            f"Answer Found in Original Table Rate (Baseline): {overall_baseline_rate:.3f} ({overall_baseline_rate*100:.1f}%)"
-        )
-        print(
-            f"Proper Termination Rate: {overall_termination_rate:.3f} ({overall_termination_rate*100:.1f}%)"
-        )
+        print(f"Overall Execution Accuracy: {overall_execution_accuracy:.3f} ({overall_execution_accuracy * 100:.1f}%)")
+        print(f"Answer Found in Final Table Rate: {overall_answer_found_rate:.3f} ({overall_answer_found_rate * 100:.1f}%)")
+        print(f"Answer Found in Original Table Rate (Baseline): {overall_baseline_rate:.3f} ({overall_baseline_rate * 100:.1f}%)")
+        print(f"Proper Termination Rate: {overall_termination_rate:.3f} ({overall_termination_rate * 100:.1f}%)")
 
         if overall_baseline_rate > 0:
             improvement = overall_answer_found_rate - overall_baseline_rate
-            improvement_pct = (
-                (improvement / overall_baseline_rate) * 100
-                if overall_baseline_rate > 0
-                else 0
-            )
-            print(
-                f"Improvement over baseline: {improvement:+.3f} ({improvement_pct:+.1f}%)"
-            )
+            improvement_pct = (improvement / overall_baseline_rate) * 100 if overall_baseline_rate > 0 else 0
+            print(f"Improvement over baseline: {improvement:+.3f} ({improvement_pct:+.1f}%)")
 
         success_cases = sum(1 for acc in execution_accuracies if acc == 1.0)
-        print(
-            f"Successful Cases: {success_cases}/{len(execution_accuracies)} ({success_cases/len(execution_accuracies)*100:.1f}%)"
-        )
+        print(f"Successful Cases: {success_cases}/{len(execution_accuracies)} ({success_cases / len(execution_accuracies) * 100:.1f}%)")
 
 
-def print_sample_results(results, examples):
+def print_sample_results(results: list[InferenceResult]):
     """Print sample results for inspection"""
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("SAMPLE RESULTS")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     for i in range(min(5, len(results))):
         result = results[i]
-        action_history = result.get("action_history", [])
-        metrics = result.get("execution_accuracy_metrics", {})
+        metrics = result.execution_metrics
 
-        print(f"\nExample {i+1}:")
-        print("Question:", examples[i]["question"])
-        print("Ground Truth Answers:", examples[i]["answers"])
+        print(f"\nExample {i + 1}:")
+        print("Question:", result.question)
+        print("Ground Truth Answers:", result.ground_truth_answers)
         print("Actions:")
-        for j, action in enumerate(action_history):
-            print(f"  Step {j+1}: {action}")
+        for j, action in enumerate(result.action_history):
+            print(f"  Step {j + 1}: {action}")
 
-        print(f"Execution Accuracy: {metrics.get('execution_accuracy', 0.0):.1f}")
-        print(f"Answer Found in Final: {metrics.get('answer_found_in_final', False)}")
-        print(
-            f"Answer Found in Original: {metrics.get('answer_found_in_original', False)}"
-        )
-        print(f"Terminated Properly: {metrics.get('terminated_properly', False)}")
+        print(f"Execution Accuracy: {metrics.execution_accuracy:.1f}")
+        print(f"Answer Found in Final: {metrics.answer_found_in_final}")
+        print(f"Answer Found in Original: {metrics.answer_found_in_original}")
+        print(f"Terminated Properly: {metrics.terminated_properly}")
 
-        if metrics.get("matched_answers_final"):
-            print(f"Matched Answers: {metrics['matched_answers_final']}")
+        if metrics.matched_answers_final:
+            print(f"Matched Answers: {metrics.matched_answers_final}")
 
-        if metrics.get("final_table_size"):
-            rows, cols = metrics["final_table_size"]
+        if metrics.final_table_size:
+            rows, cols = metrics.final_table_size
             print(f"Final Table Size: {rows} rows × {cols} columns")
 
         print("-" * 80)
@@ -816,9 +359,9 @@ def demonstrate_logging_analysis(server, results):
         print("Logging not enabled - skipping analysis demonstration")
         return
 
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print("LOGGING ANALYSIS DEMONSTRATION")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
 
     # Show logging statistics
     stats = server.get_logging_stats()

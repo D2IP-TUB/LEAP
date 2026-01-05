@@ -73,9 +73,7 @@ class SamplingLayer:
     def __init__(self, config: SamplingConfig):
         self.config = config
 
-    def transform_context(
-        self, table: Table, action_history: List[str], sample_idx: int
-    ) -> tuple[Table, List[str]]:
+    def transform_context(self, table: Table, action_history: List[str], sample_idx: int) -> tuple[Table, List[str]]:
         """
         Transform context before building prompt for each sample.
 
@@ -116,19 +114,11 @@ class SamplingLayer:
         if action_history:
             used_actions = REGISTRY._extract_action_names_from_history(action_history)
             # Filter out used actions but keep 'end' always available
-            available_actions = [
-                name
-                for name in available_actions
-                if name not in used_actions or name == "end"
-            ]
+            available_actions = [name for name in available_actions if name not in used_actions or name == "end"]
 
         # On first step, exclude terminating actions
         if not action_history or len(action_history) == 0:
-            available_actions = [
-                name
-                for name in available_actions
-                if not REGISTRY.get(name).is_terminating
-            ]
+            available_actions = [name for name in available_actions if not REGISTRY.get(name).is_terminating]
 
         return available_actions
 
@@ -171,27 +161,14 @@ class SamplingLayer:
             # Only one action available - skip LLM call and return it directly
             action_type = available_actions[0]
             if self.config.debug:
-                print(
-                    f"[SAMPLING DEBUG] Only one action available: {action_type}, skipping LLM call"
-                )
+                print(f"[SAMPLING DEBUG] Only one action available: {action_type}, skipping LLM call")
         else:
             # Generate action type via LLM
             action_prompt = prompt_builder.build_cot_action_prompt(
-                question=question,
-                table=table,
-                action_history=action_history,
-                worker=worker,
+                question=question, table=table, action_history=action_history, worker=worker
             )
 
-            action_types = await self.generate_action_types(
-                worker,
-                action_prompt,
-                1,
-                request_id,
-                step,
-                temperature_action,
-                state_machines,
-            )
+            action_types = await self.generate_action_types(worker, action_prompt, 1, request_id, step, temperature_action, state_machines)
 
             # Take the generated action type (fallback to "end" if generation failed)
             action_type = action_types[0] if action_types else "end"
@@ -223,9 +200,7 @@ class SamplingLayer:
             action_def = REGISTRY.get(action_name)
 
             if self.config.debug:
-                print(
-                    f"[SAMPLING DEBUG] Only one action available: {action_name}, skipping LLM call"
-                )
+                print(f"[SAMPLING DEBUG] Only one action available: {action_name}, skipping LLM call")
 
             # Return the action with empty arguments if it doesn't require args, otherwise fail
             if action_def and not action_def.requires_args:
@@ -245,21 +220,11 @@ class SamplingLayer:
         n_samples = self.config.n_samples
 
         if self.config.debug:
-            print(
-                f"\n[SAMPLING DEBUG] Generating {n_samples} candidates for {request_id}"
-            )
+            print(f"\n[SAMPLING DEBUG] Generating {n_samples} candidates for {request_id}")
 
         # Generate N candidates with context transformation
         candidates = await self.generate_candidates(
-            worker,
-            n_samples,
-            table,
-            action_history,
-            request_id,
-            state_machines,
-            prompt_builder,
-            question,
-            step,
+            worker, n_samples, table, action_history, request_id, state_machines, prompt_builder, question, step
         )
 
         if self.config.debug:
@@ -273,9 +238,7 @@ class SamplingLayer:
         if self.config.debug:
             print(f"[SAMPLING DEBUG] {len(valid_candidates)} valid after filtering")
             if len(valid_candidates) < len(candidates):
-                invalid = set(c.to_string() for c in candidates) - set(
-                    c.to_string() for c in valid_candidates
-                )
+                invalid = set(c.to_string() for c in candidates) - set(c.to_string() for c in valid_candidates)
                 for inv in invalid:
                     print(f"  [INVALID] {inv}")
 
@@ -284,9 +247,7 @@ class SamplingLayer:
 
         if self.config.debug:
             if action:
-                print(
-                    f"[SAMPLING DEBUG] Winner: {action.to_string()} ({winner_votes}/{len(valid_candidates)} votes)"
-                )
+                print(f"[SAMPLING DEBUG] Winner: {action.to_string()} ({winner_votes}/{len(valid_candidates)} votes)")
             else:
                 print("[SAMPLING DEBUG] No valid action, using fallback")
 
@@ -326,9 +287,7 @@ class SamplingLayer:
         """
 
         if self.config.debug:
-            print(
-                f"\n[SAMPLING DEBUG] Two-phase generation for {request_id} step {step}"
-            )
+            print(f"\n[SAMPLING DEBUG] Two-phase generation for {request_id} step {step}")
 
         # Phase 1: Generate action type (optimized to skip LLM when only one option)
         action_type = await self._generate_action_type(
@@ -349,9 +308,7 @@ class SamplingLayer:
 
         if action_def and not action_def.requires_args:
             if self.config.debug:
-                print(
-                    f"[SAMPLING DEBUG] Action '{action_type}' requires no arguments, skipping Phase 2"
-                )
+                print(f"[SAMPLING DEBUG] Action '{action_type}' requires no arguments, skipping Phase 2")
             return SamplingResult(
                 action=Action(action_type, []),
                 n_requested=1,
@@ -366,9 +323,7 @@ class SamplingLayer:
         n_samples = self.config.get_n_samples(action_type)
 
         if self.config.debug:
-            print(
-                f"[SAMPLING DEBUG] Phase 2 - Generating {n_samples} argument sets for '{action_type}'"
-            )
+            print(f"[SAMPLING DEBUG] Phase 2 - Generating {n_samples} argument sets for '{action_type}'")
 
         args_candidates = await self.generate_arguments(
             worker,
@@ -385,9 +340,7 @@ class SamplingLayer:
         )
 
         if self.config.debug:
-            print(
-                f"[SAMPLING DEBUG] Generated {len(args_candidates)} argument candidates:"
-            )
+            print(f"[SAMPLING DEBUG] Generated {len(args_candidates)} argument candidates:")
             for i, cand in enumerate(args_candidates):
                 print(f"  [{i + 1}] {cand.to_string()}")
 
@@ -397,9 +350,7 @@ class SamplingLayer:
         if self.config.debug:
             print(f"[SAMPLING DEBUG] {len(valid_candidates)} valid after filtering")
             if len(valid_candidates) < len(args_candidates):
-                invalid = set(c.to_string() for c in args_candidates) - set(
-                    c.to_string() for c in valid_candidates
-                )
+                invalid = set(c.to_string() for c in args_candidates) - set(c.to_string() for c in valid_candidates)
                 for inv in invalid:
                     print(f"  [INVALID] {inv}")
 
@@ -407,9 +358,7 @@ class SamplingLayer:
 
         if self.config.debug:
             if action:
-                print(
-                    f"[SAMPLING DEBUG] Winner: {action.to_string()} ({winner_votes}/{len(valid_candidates)} votes)"
-                )
+                print(f"[SAMPLING DEBUG] Winner: {action.to_string()} ({winner_votes}/{len(valid_candidates)} votes)")
             else:
                 print("[SAMPLING DEBUG] No valid action, using fallback")
 
@@ -457,9 +406,7 @@ class SamplingLayer:
             """Generate a single sample with its own context transformation."""
             try:
                 # Transform context for this sample
-                modified_table, modified_history = self.transform_context(
-                    table, action_history, sample_idx
-                )
+                modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
 
                 # Build fresh prompt with modified context
                 prompt = prompt_builder.build_iterative_prompt(
@@ -475,6 +422,7 @@ class SamplingLayer:
                     constraint_processor = create_constraint_logits_processor(
                         modified_table,
                         worker.tokenizer,
+                        worker.tokenizer_config,
                         f"{request_id}_sample{sample_idx}",
                         state_machines,
                         modified_history,
@@ -497,13 +445,9 @@ class SamplingLayer:
                     )
 
                 # DEBUG: Print prompt
-                print(
-                    f"\n{'=' * 80}\n[PROMPT] Sample {sample_idx}\n{'=' * 80}\n{prompt}\n{'=' * 80}\n"
-                )
+                print(f"\n{'=' * 80}\n[PROMPT] Sample {sample_idx}\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
 
-                result_generator = worker.engine.generate(
-                    prompt, sampling_params, f"{request_id}_sample{sample_idx}"
-                )
+                result_generator = worker.engine.generate(prompt, sampling_params, f"{request_id}_sample{sample_idx}")
                 final_result = None
                 async for result in result_generator:
                     final_result = result
@@ -511,9 +455,7 @@ class SamplingLayer:
                 if final_result and final_result.outputs:
                     response_text = final_result.outputs[0].text.strip()
                     # DEBUG: Print response
-                    print(
-                        f"\n[RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{response_text}\n{'=' * 80}\n"
-                    )
+                    print(f"\n[RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
                     action = Action.parse(response_text)
                     return action
                 return None
@@ -527,29 +469,18 @@ class SamplingLayer:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Filter out None values and exceptions, keeping only valid actions
-        candidates = [
-            r for r in results if r is not None and not isinstance(r, Exception)
-        ]
+        candidates = [r for r in results if r is not None and not isinstance(r, Exception)]
 
         return candidates
 
     async def generate_action_types(
-        self,
-        worker,
-        prompt: str,
-        n: int,
-        request_id: str,
-        step: int,
-        temperature: float,
-        state_machines,
+        self, worker, prompt: str, n: int, request_id: str, step: int, temperature: float, state_machines
     ) -> List[str]:
         """Generate N action types for two-phase sampling."""
         step_id = f"{request_id}_action_step{step}"
 
         if worker.use_constraints:
-            constraint_processor = create_action_only_constraint_processor(
-                worker.tokenizer, step_id, state_machines
-            )
+            constraint_processor = create_action_only_constraint_processor(worker.tokenizer, step_id, state_machines)
             sampling_params = SamplingParams(
                 temperature=temperature,
                 max_tokens=20,
@@ -567,9 +498,7 @@ class SamplingLayer:
             )
 
         # DEBUG: Print Phase 1 prompt
-        print(
-            f"\n{'=' * 80}\n[PHASE 1 PROMPT - ACTION SELECTION]\n{'=' * 80}\n{prompt}\n{'=' * 80}\n"
-        )
+        print(f"\n{'=' * 80}\n[PHASE 1 PROMPT - ACTION SELECTION]\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
 
         result_generator = worker.engine.generate(prompt, sampling_params, step_id)
         final_result = None
@@ -581,9 +510,7 @@ class SamplingLayer:
             for output in final_result.outputs:
                 response_text = output.text.strip()
                 # DEBUG: Print Phase 1 response
-                print(
-                    f"\n[PHASE 1 RESPONSE]\n{'=' * 80}\n{response_text}\n{'=' * 80}\n"
-                )
+                print(f"\n[PHASE 1 RESPONSE]\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
                 action_name = Action.parse_name_only(response_text)
                 if action_name:
                     action_types.append(action_name)
@@ -619,9 +546,7 @@ class SamplingLayer:
             """Generate a single argument set with its own context transformation."""
             try:
                 # Transform context for this sample
-                modified_table, modified_history = self.transform_context(
-                    table, action_history, sample_idx
-                )
+                modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
 
                 # Build fresh args prompt with modified context
                 args_prompt = prompt_builder.build_cot_arguments_prompt(
@@ -663,13 +588,9 @@ class SamplingLayer:
                     )
 
                 # DEBUG: Print Phase 2 prompt
-                print(
-                    f"\n{'=' * 80}\n[PHASE 2 PROMPT - ARGUMENTS] Sample {sample_idx}\n{'=' * 80}\n{args_prompt}\n{'=' * 80}\n"
-                )
+                print(f"\n{'=' * 80}\n[PHASE 2 PROMPT - ARGUMENTS] Sample {sample_idx}\n{'=' * 80}\n{args_prompt}\n{'=' * 80}\n")
 
-                result_generator = worker.engine.generate(
-                    args_prompt, sampling_params, step_id
-                )
+                result_generator = worker.engine.generate(args_prompt, sampling_params, step_id)
                 final_result = None
                 async for result in result_generator:
                     final_result = result
@@ -677,9 +598,7 @@ class SamplingLayer:
                 if final_result and final_result.outputs:
                     args_text = final_result.outputs[0].text.strip()
                     # DEBUG: Print Phase 2 response
-                    print(
-                        f"\n[PHASE 2 RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{args_text}\n{'=' * 80}\n"
-                    )
+                    print(f"\n[PHASE 2 RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{args_text}\n{'=' * 80}\n")
 
                     # Clean up: Remove action name prefix if model incorrectly generated it
                     # e.g., "select_column ([ "Team" ]" -> "[ "Team" ]"
@@ -700,9 +619,7 @@ class SamplingLayer:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Filter out None values and exceptions, keeping only valid actions
-        candidates = [
-            r for r in results if r is not None and not isinstance(r, Exception)
-        ]
+        candidates = [r for r in results if r is not None and not isinstance(r, Exception)]
 
         return candidates
 
@@ -718,9 +635,7 @@ class SamplingLayer:
                 pass
         return valid
 
-    def aggregate_candidates(
-        self, candidates: List[Action]
-    ) -> tuple[Optional[Action], int]:
+    def aggregate_candidates(self, candidates: List[Action]) -> tuple[Optional[Action], int]:
         """Vote on candidates. Override to customize aggregation logic."""
         if not candidates:
             return None, 0

@@ -55,13 +55,13 @@ A target item T matches a predicted item P if one of the following is true:
 
 __version__ = "1.0.2"
 
-import sys
+import argparse
 import os
 import re
-import argparse
+import sys
 import unicodedata
-from math import isnan, isinf
 from abc import ABC, abstractmethod
+from math import isinf, isnan
 
 ################ String Normalization ################
 
@@ -70,9 +70,7 @@ def normalize(x):
     if not isinstance(x, str):
         x = str(x, "utf8", errors="ignore")
     # Remove diacritics
-    x = "".join(
-        c for c in unicodedata.normalize("NFKD", x) if unicodedata.category(c) != "Mn"
-    )
+    x = "".join(c for c in unicodedata.normalize("NFKD", x) if unicodedata.category(c) != "Mn")
     # Normalize quotes and dashes
     x = re.sub(r"[‘’´`]", "'", x)
     x = re.sub(r"[“”]", '"', x)
@@ -225,9 +223,7 @@ class DateValue(Value):
         return self._hash
 
     def __str__(self):
-        return ("D(%d,%d,%d)" % (self._year, self._month, self._day)) + str(
-            [self._normalized]
-        )
+        return ("D(%d,%d,%d)" % (self._year, self._month, self._day)) + str([self._normalized])
 
     __repr__ = __str__
 
@@ -305,9 +301,7 @@ def to_value_list(original_strings, corenlp_values=None):
     if corenlp_values is not None:
         assert isinstance(corenlp_values, (list, tuple, set))
         assert len(original_strings) == len(corenlp_values)
-        return list(
-            set(to_value(x, y) for (x, y) in zip(original_strings, corenlp_values))
-        )
+        return list(set(to_value(x, y) for (x, y) in zip(original_strings, corenlp_values)))
     else:
         return list(set(to_value(x) for x in original_strings))
 
@@ -382,9 +376,7 @@ class Evaluator:
                     ex_id = stuff["utterance"]
                     original_strings = tsv_unescape_list(stuff["targetValue"])
                     canon_strings = tsv_unescape_list(stuff["targetCanon"])
-                    self.target_values_map[ex_id] = to_value_list(
-                        original_strings, canon_strings
-                    )
+                    self.target_values_map[ex_id] = to_value_list(original_strings, canon_strings)
         print("Read", len(self.target_values_map), "examples", file=sys.stderr)
 
     def evaluate(self, ex_id, predicted_values):
