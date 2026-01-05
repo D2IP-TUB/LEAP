@@ -42,6 +42,7 @@ class VLLMWorkerProcess(mp.Process):
         generation_functions: Dict[str, Callable],
         tensor_parallel_size: int = 1,
         max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
+        max_model_len: int = 2048,
     ):
         """
         Initialize vLLM worker process
@@ -58,6 +59,7 @@ class VLLMWorkerProcess(mp.Process):
             generation_functions: Dict mapping strategy names to functions
             tensor_parallel_size: Number of GPUs for tensor parallelism
             max_concurrent_requests: Max concurrent requests for continuous batching
+            max_model_len: Maximum sequence length for the model
         """
         super().__init__()
         self.worker_id = worker_id
@@ -73,16 +75,17 @@ class VLLMWorkerProcess(mp.Process):
         self.generation_functions = generation_functions
         self.tensor_parallel_size = tensor_parallel_size
         self.max_concurrent_requests = max_concurrent_requests
+        self.configured_max_model_len = max_model_len  # Store configured value
 
         # Extract commonly used fields for convenience
         self.use_constraints = generation_config.use_constraints
-        self.use_cot = generation_config.use_chain_of_table
+        self.use_cot = generation_config.strategy == "cot"
         self.use_global_constraints = generation_config.use_global_constraints
 
-        # vLLM components
+        # vLLM components (will be set after engine initialization)
         self.engine = None
         self.tokenizer = None
-        self.max_model_len = None
+        self.max_model_len = None  # Will be set from engine after initialization
         self.model_loaded = mp.Event()
 
     def run(self):
@@ -131,13 +134,16 @@ class VLLMWorkerProcess(mp.Process):
         start_time = time.time()
 
         # Use typed config instead of dict
+        # Ensure max_num_batched_tokens is at least as large as max_model_len
+        max_num_batched_tokens = max(8192, self.configured_max_model_len)
+
         engine_args = AsyncEngineArgs(
             model=self.model_id,
             trust_remote_code=True,
-            max_model_len=1024,
+            max_model_len=self.configured_max_model_len,
             gpu_memory_utilization=0.8,
             tensor_parallel_size=self.tensor_parallel_size,
-            max_num_batched_tokens=8192,
+            max_num_batched_tokens=max_num_batched_tokens,
             max_num_seqs=32,
         )
 
@@ -263,16 +269,13 @@ class VLLMWorkerProcess(mp.Process):
             InferenceResult object
         """
         try:
-            generation_mode = self._get_generation_mode_string()
-
-            # Get the appropriate generation function
-            if self.use_cot:
-                generation_func = self.generation_functions.get("cot_generation")
-            else:
-                generation_func = self.generation_functions.get("iterative_generation")
+            # Get the appropriate generation function based on strategy config
+            strategy = self.generation_config.strategy
+            function_name = strategy + "_generation"
+            generation_func = self.generation_functions.get(function_name)
 
             if not generation_func:
-                raise ValueError(f"No generation function configured for mode: {generation_mode}")
+                raise ValueError(f"No generation function configured for strategy: {strategy}")
 
             # Call the generation function with typed request
             result: InferenceResult = await generation_func(
@@ -413,6 +416,7 @@ class ProcessParallelVLLM:
         generation_functions: Dict[str, Callable] = None,
         tensor_parallel_size: int = 1,
         max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
+        max_model_len: int = 2048,
     ):
         """
         Initialize parallel vLLM engine
@@ -427,10 +431,12 @@ class ProcessParallelVLLM:
             generation_functions: Dict mapping strategy names to functions
             tensor_parallel_size: Number of GPUs for tensor parallelism
             max_concurrent_requests: Max concurrent requests per worker for continuous batching
+            max_model_len: Maximum sequence length for the model
         """
         self.model_id = model_id
         self.num_workers = num_workers
         self.max_concurrent_requests = max_concurrent_requests
+        self.max_model_len = max_model_len
 
         # Auto-detect GPUs if not specified
         if gpu_allocation is None:
@@ -512,6 +518,7 @@ class ProcessParallelVLLM:
                 generation_functions=self.generation_functions,
                 tensor_parallel_size=self.tensor_parallel_size,
                 max_concurrent_requests=self.max_concurrent_requests,
+                max_model_len=self.max_model_len,
             )
             self.workers.append(worker)
 
@@ -563,7 +570,7 @@ class ProcessParallelVLLM:
 
     def _get_generation_mode_description(self) -> str:
         """Get description of current generation mode"""
-        use_cot = self.generation_config.use_chain_of_table
+        use_cot = self.generation_config.strategy == "cot"
         use_constraints = self.generation_config.use_constraints
 
         if use_cot:
@@ -778,10 +785,12 @@ def setup_standard_vllm_server(
     app_config = load_runtime_config(config_path, tokenizer)
 
     # Override specific settings using dataclass replace (since they're frozen)
+    # Convert use_cot to strategy
+    strategy = "cot" if use_cot else app_config.generation.strategy
     generation_config = replace(
         app_config.generation,
         use_constraints=use_constraints,
-        use_chain_of_table=use_cot,
+        strategy=strategy,
     )
 
     logging_config = replace(app_config.logging, enable_logging=enable_logging, log_dir=log_dir)
@@ -795,6 +804,7 @@ def setup_standard_vllm_server(
         logging_config=logging_config,
         generation_functions=generation_functions or {},
         tensor_parallel_size=app_config.model.hardware.tensor_parallel_size,
+        max_model_len=app_config.model.hardware.max_model_len,
     )
 
 

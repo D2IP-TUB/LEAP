@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Optional, Sequence
 
 from leap.core import Table
 from leap.core.actions import REGISTRY
+from leap.generation.action_examples import ActionPromptBuilder
 
 
 @dataclass
@@ -37,11 +38,21 @@ class PromptBuilder:
         is_instruct: bool,
         iterative_settings: IterativePromptSettings | None = None,
         cot_settings: CotPromptSettings | None = None,
+        use_action_examples: bool = True,
     ):
         self.tokenizer = tokenizer
         self.is_instruct = is_instruct
         self.iterative_settings = iterative_settings or IterativePromptSettings()
         self.cot_settings = cot_settings or CotPromptSettings()
+
+        # Initialize action examples system (builds templates once)
+        self.action_examples: Optional[ActionPromptBuilder] = None
+        if use_action_examples:
+            try:
+                self.action_examples = ActionPromptBuilder()
+            except FileNotFoundError:
+                # If examples file doesn't exist, fall back to old behavior
+                self.action_examples = None
 
     def build_iterative_prompt(
         self,
@@ -106,39 +117,66 @@ class PromptBuilder:
         worker,
     ) -> str:
         """Prompt for CoT action selection (dynamic plan)."""
+        # Build current instance prompt
         table_str = table.to_csv(max_chars=self.cot_settings.action_table_chars)
-        prompt = f"Table:\n{table_str}\n\n"
-        prompt += f"Question: {question}\n\n"
+        instruction_prompt = f"Table:\n{table_str}\n\n"
+        instruction_prompt += f"Question: {question}\n\n"
 
         if action_history:
-            prompt += "Actions taken so far:\n"
+            instruction_prompt += "Actions taken so far:\n"
             for idx, action in enumerate(action_history):
-                prompt += f"{idx + 1}. {action}\n"
-            prompt += "\n"
+                instruction_prompt += f"{idx + 1}. {action}\n"
+            instruction_prompt += "\n"
 
         # Get action descriptions and list from registry
         # Pass action_history to filter out already-used actions
         # For CoT mode, we exclude terminating actions on first step (empty history)
         action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=True)
         actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
-        prompt += f"{action_descriptions}\n\n"
-        prompt += f"Available actions: {actions_text}\n"
-        instruction_prompt = "What action should be performed next to answer the question?\n"
+        instruction_prompt += f"{action_descriptions}\n\n"
+        instruction_prompt += f"Available actions: {actions_text}\n"
+        instruction_prompt += "What action should be performed next to answer the question?\n"
         instruction_prompt += "Action: "
 
-        estimated_length = len(prompt) // 4
+        estimated_length = len(instruction_prompt) // 4
         if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
             table_str = table.to_csv(max_chars=self.cot_settings.action_fallback_table_chars)
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
-            prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
+            instruction_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
             # Re-get filtered descriptions and actions for fallback case
             action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=True)
             actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
-            prompt += f"{action_descriptions}\n\n"
-            prompt += f"Available actions: {actions_text}\n"
-            instruction_prompt = "What action should be performed next?\nAction: "
+            instruction_prompt += f"{action_descriptions}\n\n"
+            instruction_prompt += f"The next operation must be one of the following: {actions_text}\n"
+            instruction_prompt += "What action should be performed next?\nAction: "
 
-        return self._append_instruction(prompt, instruction_prompt)
+        # For action_selection, format examples as conversation history (for instruct models)
+        # Use messages/dictionary abstraction with apply_chat_template for model-agnostic formatting
+        if self.action_examples and self.action_examples.has_prompt("action_selection"):
+            examples = self.action_examples.examples_manager.get_examples("action_selection")
+            if examples and self.is_instruct:
+                # Build conversation history with examples using messages format
+                messages = []
+                for example in examples:
+                    # Format each example as a conversation turn (user message + assistant response)
+                    example_table_str = example.table.to_csv(max_chars=2000, crop=False)
+                    example_prompt = (
+                        f"Table:\n{example_table_str}\n\n"
+                        f"Question: {example.question}\n\n"
+                        "What action should be performed next to answer the question?\n"
+                        "Action: "
+                    )
+                    messages.append({"role": "user", "content": example_prompt})
+                    messages.append({"role": "assistant", "content": example.answer})
+
+                # Add current instance as final user message
+                messages.append({"role": "user", "content": instruction_prompt})
+
+                # Use tokenizer to format the entire conversation - model-agnostic!
+                return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+        # No examples or non-instruct mode: use regular formatting
+        return self._append_instruction("", instruction_prompt)
 
     def build_cot_arguments_prompt(
         self,
@@ -150,6 +188,12 @@ class PromptBuilder:
         worker,
     ) -> str:
         """Prompt for CoT argument generation."""
+        # Check if we have examples for this action
+        examples_str = ""
+        if self.action_examples and self.action_examples.has_prompt(action_name):
+            examples_str = self.action_examples.get_examples(action_name)
+
+        # Original prompt structure
         table_str = table.to_csv(max_chars=self.cot_settings.args_table_chars)
         prompt = f"Table:\n{table_str}\n\n"
         prompt += f"Question: {question}\n\n"
@@ -187,6 +231,11 @@ class PromptBuilder:
                 sample_cols = list(table.columns)[:3]
                 instruction_prompt = f"Which columns from {sample_cols}...?\nColumn names: "
 
+        # If we have examples, prepend them to instruction_prompt instead of prompt
+        # This ensures they go INSIDE [INST] tags in instruct mode
+        if examples_str:
+            instruction_prompt = examples_str + instruction_prompt
+
         return self._append_instruction(prompt, instruction_prompt)
 
     def build_query_prompt(
@@ -206,36 +255,49 @@ class PromptBuilder:
         # Use similar max_chars as final query in paper
         table_str = table.to_csv(max_chars=2000)
 
-        instruction_prompt = "<s>[INST] Here is the table to answer this question. Please understand the table and answer the question:\n\n"
+        # Build messages for conversation with 1-shot example
+        messages = []
 
-        instruction_prompt += "Provide your answer(s) as a Python list of strings.\n"
-        instruction_prompt += "Examples:\n"
-        instruction_prompt += '- Single answer: ["Italy"]\n'
-        instruction_prompt += '- Multiple answers: ["Italy", "Spain", "France"]\n'
-        instruction_prompt += '- Yes/no: ["yes"] or ["no"]\n'
+        # Load example from YAML
+        query_examples = self.action_examples.examples_manager.get_examples("query_answer")
+        example = query_examples[0]
+        example_table = example.format_table_for_prompt()
+        example_question = example.question
+        example_answer = example.answer
 
-        # Add 1-shot example to demonstrate format (output ONLY the list)
-        instruction_prompt += "Example:\n"
-        instruction_prompt += "Table:\n"
-        instruction_prompt += " ,Rank,City,Passengers Number,Ranking,Airline\n"
-        instruction_prompt += "row 0,1,United States, Los Angeles,14749,2,Alaska Airlines\n"
-        instruction_prompt += "row 1,2,United States, Houston,5465,8,United Express\n"
-        instruction_prompt += "row 2,3,Canada, Calgary,3761,5,Air Transat, WestJet\n"
-        instruction_prompt += "row 3,4,Canada, Saskatoon,2282,4,\n"
-        instruction_prompt += "row 4,5,Canada, Vancouver,2103,2,Air Transat\n"
-        instruction_prompt += "row 5,6,United States, Phoenix,1829,1,US Airways\n"
-        instruction_prompt += "row 6,7,Canada, Toronto,1202,1,Air Transat, CanJet\n"
-        instruction_prompt += "row 7,8,Canada, Edmonton,110,2,\n"
-        instruction_prompt += "row 8,9,United States, Oakland,107,5,\n\n"
-        instruction_prompt += "Question: how many more passengers flew to los angeles than to saskatoon from manzanillo airport in 2013?\n"
-        instruction_prompt += 'Answer: [/INST] ["12467"] </s>'
+        # Build example instruction with format guidelines
+        example_instruction = "Here is the table to answer this question. Please understand the table and answer the question:\n\n"
+        example_instruction += "Provide your answer(s) as a Python list of strings.\n"
+        example_instruction += "Examples:\n"
+        example_instruction += '- Single answer: ["Italy"]\n'
+        example_instruction += '- Multiple answers: ["Italy", "Spain", "France"]\n'
+        example_instruction += '- Yes/no: ["yes"] or ["no"]\n\n'
+        example_instruction += f"Table:\n{example_table}\n\n"
+        example_instruction += f"Question: {example_question}\n"
 
-        # Now the actual query
-        instruction_prompt += f"<s>[INST] Table:\n{table_str}\n\n"
-        instruction_prompt += f"Question: {question}\n"
-        instruction_prompt += "Answer: [/INST]"
+        messages.append({"role": "user", "content": example_instruction})
+        messages.append({"role": "assistant", "content": f"Answer:{example_answer}"})
 
-        return instruction_prompt
+        # Add current query
+        current_instruction = "Here is the table to answer this question. Please understand the table and answer the question:\n\n"
+        current_instruction += "Provide your answer(s) as a Python list of strings.\n\n"
+        current_instruction += f"Table:\n{table_str}\n\n"
+        current_instruction += f"Question: {question}\n"
+
+        messages.append({"role": "user", "content": current_instruction})
+
+        # Use tokenizer to format the conversation - model-agnostic!
+        if self.is_instruct:
+            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) + "Answer:"
+        else:
+            # For non-instruct models, just concatenate the messages
+            result = ""
+            for msg in messages:
+                if msg["role"] == "user":
+                    result += msg["content"] + "\n"
+                else:
+                    result += msg["content"] + "\n\n"
+            return result
 
     def _append_instruction(self, prompt: str, instruction_prompt: str) -> str:
         if self.is_instruct:

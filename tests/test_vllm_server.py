@@ -17,9 +17,10 @@ def create_test_generation_config(
     use_global_constraints: bool = True,
 ) -> GenerationConfig:
     """Helper to create GenerationConfig for tests"""
+    strategy = "cot" if use_cot else "iterative"
     return GenerationConfig(
         use_constraints=use_constraints,
-        use_chain_of_table=use_cot,
+        strategy=strategy,
         use_global_constraints=use_global_constraints,
     )
 
@@ -80,7 +81,7 @@ class TestGenerationConfigCreation:
         config = create_test_generation_config()
 
         assert config.use_constraints is True
-        assert config.use_chain_of_table is False
+        assert config.strategy == "iterative"
         assert config.use_global_constraints is True
 
     def test_create_test_generation_config_custom(self):
@@ -88,7 +89,7 @@ class TestGenerationConfigCreation:
         config = create_test_generation_config(use_constraints=False, use_cot=True, use_global_constraints=False)
 
         assert config.use_constraints is False
-        assert config.use_chain_of_table is True
+        assert config.strategy == "cot"
         assert config.use_global_constraints is False
 
     def test_create_test_logging_config_defaults(self):
@@ -181,7 +182,7 @@ class TestProcessParallelVLLM:
 
         retrieved_config = server.get_generation_config()
         assert retrieved_config.use_constraints is False
-        assert retrieved_config.use_chain_of_table is True
+        assert retrieved_config.strategy == "cot"
 
     def test_logging_stats_when_disabled(self):
         """Test getting logging stats when logging is disabled"""

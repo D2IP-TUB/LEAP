@@ -2,18 +2,20 @@
 
 All notable changes to the LEAP project are documented in this file.
 
-## [Unreleased] - 15.12.2025
+## [Unreleased] - 19.12.2025
 
 ### Added
 
 #### Features
 - **Action Registry System**: Implemented centralized action management system
   - New registry-based architecture for registering and managing actions
-  - Dedicated action package structure
+  - Dedicated action package structure with modular action classes
+  - Registry-based action instantiation and management
 - **Direct Query Action**: New action type for direct question answering
   - Automatically executed once after END action
   - Cannot be selected directly by the model, triggered programmatically
   - Best-effort parsing of query results and improved prompting
+  - Dedicated prompt template for direct query action
 - **Action History in Prompts**: Added action history context to prompts
 - **Single Action Optimization**: Skip action type generation when only one action is available
 - **Sampling Layer**: Implemented multi-sample generation with voting mechanism for improved action selection

@@ -13,6 +13,7 @@ class HardwareConfig:
     tensor_parallel_size: int
     gpu_allocation: List[int]
     max_concurrent_requests: int = 16  # For continuous batching optimization
+    max_model_len: int = 2048  # Maximum sequence length for the model
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ class LoggingConfig:
 class GenerationConfig:
     use_constraints: bool
     use_global_constraints: bool
-    use_chain_of_table: bool
+    strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
 
 
@@ -151,7 +152,7 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
     generation_config = GenerationConfig(
         use_constraints=generation_section.get("use_constraints", False),
         use_global_constraints=generation_section.get("use_global_constraints", False),
-        use_chain_of_table=generation_section.get("use_chain_of_table", False),
+        strategy=generation_section.get("strategy", "cot"),
         sampling=sampling_config,
     )
 
@@ -254,6 +255,7 @@ def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any], 
         tensor_parallel_size=hardware_defaults["tensor_parallel_size"],
         gpu_allocation=list(hardware_defaults["gpu_allocation"]),
         max_concurrent_requests=hardware_defaults.get("max_concurrent_requests", 16),
+        max_model_len=hardware_defaults.get("max_model_len", 2048),
     )
 
     # Build tokenizer config

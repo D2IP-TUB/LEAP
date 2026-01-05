@@ -1,5 +1,5 @@
 model:
-  id: "gpt2"
+  id: "mistralai/Mixtral-8x7B-Instruct-v0.1"
   presets_path: "configs/models.yaml"
   # possible alternatives:
   # "meta-llama/Llama-2-70b-hf"
@@ -25,11 +25,16 @@ run:
 generation:
   use_constraints: false
   use_global_constraints: false
-  use_chain_of_table: true
+
+  # Generation strategy: "iterative", "cot", or "direct_query"
+  # - "iterative": single-phase iterative generation
+  # - "cot": two-phase Chain-of-Table generation
+  # - "direct_query": skip all table transformations, answer directly (baseline)
+  strategy: "direct_query"
 
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:
-    #- select_row
+    - select_row
     - select_column
     - end
     # Note: direct_query is automatically applied after end(), not a separate action

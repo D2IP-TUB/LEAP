@@ -26,7 +26,6 @@ class LogEntry:
     success: bool
     failure_type: Optional[str] = None
     generation_mode: Optional[str] = None
-    model_type: Optional[str] = None
     table_summary: Optional[Dict[str, Any]] = None
     table_preview: Optional[List[str]] = None
 

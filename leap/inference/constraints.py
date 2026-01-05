@@ -331,7 +331,11 @@ def create_constraint_logits_processor(
         # Get or create state machine for this request with action history
         if request_id not in state_machines_dict:
             state_machines_dict[request_id] = ConstraintStateMachine(
-                table, tokenizer, tokenizer_config, action_history, use_global_constraints
+                table,
+                tokenizer,
+                tokenizer_config,
+                action_history,
+                use_global_constraints,
             )
 
         sm = state_machines_dict[request_id]
