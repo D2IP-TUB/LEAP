@@ -17,6 +17,11 @@ dev = [
     "pytest-cov>=7.0.0",
 ]
 
+analysis = [
+    "ipykernel",
+    "seaborn",
+]
+
 [tool.ruff]
 line-length = 140
 fix = true   # formatter/linter auto-fixes
