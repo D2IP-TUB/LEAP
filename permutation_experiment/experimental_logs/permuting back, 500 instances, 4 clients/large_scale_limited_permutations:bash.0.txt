@@ -1,0 +1,1899 @@
+  Instance 230 (ID: nt-932, 8 rows):
+    Question: total number of models created....
+    Semantic consistency: 83.87% (most common: [])
+    Positional consistency: 83.00% (most common: [])
+    Unique semantic responses: 38
+    Unique positional responses: 31
+
+  Instance 231 (ID: nt-935, 8 rows):
+    Question: how many strokes marked the margin of victory for justin rose in 2011?...
+    Semantic consistency: 94.00% (most common: [3])
+    Positional consistency: 14.53% (most common: [2])
+    Unique semantic responses: 19
+    Unique positional responses: 15
+
+  Instance 232 (ID: nt-936, 10 rows):
+    Question: how many games were not played at araneta coliseum?...
+    Semantic consistency: 14.60% (most common: [3, 4, 5, 6, 7, 8, 9])
+    Positional consistency: 5.93% (most common: [1, 2, 5, 6, 7, 8, 9])
+    Unique semantic responses: 158
+    Unique positional responses: 178
+
+  Instance 233 (ID: nt-938, 7 rows):
+    Question: which project location has the lowest outupt?...
+    Semantic consistency: 49.53% (most common: [1])
+    Positional consistency: 22.97% (most common: [2])
+    Unique semantic responses: 38
+    Unique positional responses: 85
+
+  Instance 234 (ID: nt-940, 8 rows):
+    Question: what is the total number of names on the chart?...
+    Semantic consistency: 96.80% (most common: [])
+    Positional consistency: 96.80% (most common: [])
+    Unique semantic responses: 22
+    Unique positional responses: 23
+
+  Instance 235 (ID: nt-947, 8 rows):
+    Question: how many consecutive years did biff jones work at nebraska?...
+    Semantic consistency: 83.73% (most common: [])
+    Positional consistency: 83.73% (most common: [])
+    Unique semantic responses: 13
+    Unique positional responses: 13
+
+  Instance 236 (ID: nt-948, 7 rows):
+    Question: what is the exit beofre virginia avenue?...
+    Semantic consistency: 50.63% (most common: [])
+    Positional consistency: 50.63% (most common: [])
+    Unique semantic responses: 17
+    Unique positional responses: 17
+
+  Instance 237 (ID: nt-952, 7 rows):
+    Question: is the best time for the 100 m more or less than the time for the 110 m hurdles?...
+    Semantic consistency: 98.33% (most common: [])
+    Positional consistency: 98.33% (most common: [])
+    Unique semantic responses: 11
+    Unique positional responses: 23
+
+  Instance 238 (ID: nt-955, 10 rows):
+    Question: what was the difference in position between 2011 and 2012 for daegu fc in the k ...
+    Semantic consistency: 99.47% (most common: [])
+    Positional consistency: 99.43% (most common: [])
+    Unique semantic responses: 5
+    Unique positional responses: 13
+
+  Instance 239 (ID: nt-959, 10 rows):
+    Question: what title is listed in the top of the table?...
+    Semantic consistency: 53.77% (most common: [])
+    Positional consistency: 53.77% (most common: [])
+    Unique semantic responses: 2
+    Unique positional responses: 2
+
+  Instance 240 (ID: nt-968, 8 rows):
+    Question: which format was used the most according to this chart?...
+    Semantic consistency: 74.73% (most common: [])
+    Positional consistency: 74.73% (most common: [])
+    Unique semantic responses: 26
+    Unique positional responses: 61
+
+  Instance 241 (ID: nt-972, 10 rows):
+    Question: what is the total number of films shoko goto appeared in 2005?...
+    Semantic consistency: 39.30% (most common: [3, 4, 5, 6, 7, 8, 9])
+    Positional consistency: 3.40% (most common: [1, 2, 3, 5, 6, 8, 9])
+    Unique semantic responses: 63
+    Unique positional responses: 151
+
+  Instance 242 (ID: nt-973, 7 rows):
+    Question: what religious group is the only one with at least 90% literacy %?...
+    Semantic consistency: 84.27% (most common: [])
+    Positional consistency: 84.27% (most common: [])
+    Unique semantic responses: 6
+    Unique positional responses: 7
+
+  Instance 243 (ID: nt-974, 7 rows):
+    Question: how long was stanislas le tourneur d'ison in office?...
+    Semantic consistency: 61.80% (most common: [])
+    Positional consistency: 61.80% (most common: [])
+    Unique semantic responses: 12
+    Unique positional responses: 14
+
+  Instance 244 (ID: nt-976, 6 rows):
+    Question: which year has the most per capita income (as % of usa)?...
+    Semantic consistency: 42.50% (most common: [0])
+    Positional consistency: 35.69% (most common: [4])
+    Unique semantic responses: 19
+    Unique positional responses: 18
+
+  Instance 245 (ID: nt-977, 9 rows):
+    Question: how many regions had a release date after march 10, 2011?...
+    Semantic consistency: 99.87% (most common: [])
+    Positional consistency: 99.87% (most common: [])
+    Unique semantic responses: 3
+    Unique positional responses: 5
+
+  Instance 246 (ID: nt-978, 10 rows):
+    Question: which cantonese yale is listed before sek6 lam4?...
+    Semantic consistency: 10.07% (most common: [6])
+    Positional consistency: 40.37% (most common: [2])
+    Unique semantic responses: 420
+    Unique positional responses: 155
+
+  Instance 247 (ID: nt-983, 7 rows):
+    Question: what was the top speed in miles per hour?...
+    Semantic consistency: 17.73% (most common: [0, 1])
+    Positional consistency: 17.60% (most common: [1])
+    Unique semantic responses: 72
+    Unique positional responses: 111
+
+  Instance 248 (ID: nt-990, 7 rows):
+    Question: what is the difference in percentage between whites in the 2000 population and w...
+    Semantic consistency: 82.40% (most common: [0, 2])
+    Positional consistency: 7.33% (most common: [1, 2])
+    Unique semantic responses: 22
+    Unique positional responses: 23
+
+  Instance 249 (ID: nt-991, 8 rows):
+    Question: what team got 0 assists?...
+    Semantic consistency: 93.97% (most common: [7])
+    Positional consistency: 13.60% (most common: [4])
+    Unique semantic responses: 39
+    Unique positional responses: 36
+
+  Instance 250 (ID: nt-995, 7 rows):
+    Question: other than bjorgvinsson, name someone who id not finish a race....
+    Semantic consistency: 8.43% (most common: [1, 3, 5, 6])
+    Positional consistency: 4.07% (most common: [0, 2, 5, 6])
+    Unique semantic responses: 83
+    Unique positional responses: 117
+
+  Instance 251 (ID: nt-1001, 10 rows):
+    Question: how many events did idaho win?...
+    Semantic consistency: 87.63% (most common: [])
+    Positional consistency: 87.63% (most common: [])
+    Unique semantic responses: 47
+    Unique positional responses: 11
+
+  Instance 252 (ID: nt-1002, 10 rows):
+    Question: how many 'choice tv sidekick' award categories was scrubs nominated for?...
+    Semantic consistency: 76.97% (most common: [2, 3, 4, 5])
+    Positional consistency: 1.50% (most common: [1, 4, 5, 7])
+    Unique semantic responses: 73
+    Unique positional responses: 268
+
+  Instance 253 (ID: nt-1005, 10 rows):
+    Question: which are the only players under six feet tall?...
+    Semantic consistency: 41.43% (most common: [2, 4])
+    Positional consistency: 7.90% (most common: [5])
+    Unique semantic responses: 53
+    Unique positional responses: 98
+
+  Instance 254 (ID: nt-1006, 7 rows):
+    Question: which electoral district in the dutch language group has the most seats allotted...
+    Semantic consistency: 74.57% (most common: [0])
+    Positional consistency: 23.00% (most common: [2])
+    Unique semantic responses: 35
+    Unique positional responses: 40
+
+  Instance 255 (ID: nt-1011, 8 rows):
+    Question: name one song that did not earn 60 points....
+    Semantic consistency: 9.43% (most common: [1, 3, 4, 5, 7])
+    Positional consistency: 4.27% (most common: [0, 1, 2, 4, 5, 6, 7])
+    Unique semantic responses: 165
+    Unique positional responses: 215
+
+  Instance 256 (ID: nt-1025, 8 rows):
+    Question: first player to win with a score over 70 for one round?...
+    Semantic consistency: 39.63% (most common: [4])
+    Positional consistency: 16.63% (most common: [6])
+    Unique semantic responses: 88
+    Unique positional responses: 93
+
+  Instance 257 (ID: nt-1031, 10 rows):
+    Question: what is the total number of teams that played 1919 brazilian football?...
+    Semantic consistency: 98.97% (most common: [])
+    Positional consistency: 98.97% (most common: [])
+    Unique semantic responses: 4
+    Unique positional responses: 4
+
+  Instance 258 (ID: nt-1032, 10 rows):
+    Question: what was the song choice after week 5?...
+    Semantic consistency: 6.23% (most common: [5])
+    Positional consistency: 31.67% (most common: [6])
+    Unique semantic responses: 258
+    Unique positional responses: 41
+
+  Instance 259 (ID: nt-1033, 9 rows):
+    Question: which was the only title where he was a narrator?...
+    Semantic consistency: 96.63% (most common: [3])
+    Positional consistency: 12.97% (most common: [7])
+    Unique semantic responses: 12
+    Unique positional responses: 14
+
+  Instance 260 (ID: nt-1034, 10 rows):
+    Question: which department has the least number of total deputies?...
+    Semantic consistency: 57.90% (most common: [8])
+    Positional consistency: 20.47% (most common: [2])
+    Unique semantic responses: 92
+    Unique positional responses: 158
+
+  Instance 261 (ID: nt-1039, 10 rows):
+    Question: which player competed in women's singles and won a silver medal?...
+    Semantic consistency: 95.93% (most common: [1])
+    Positional consistency: 11.23% (most common: [2])
+    Unique semantic responses: 3
+    Unique positional responses: 11
+
+  Instance 262 (ID: nt-1044, 7 rows):
+    Question: how many total different people have born the glad for samoa at the olympics?...
+    Semantic consistency: 22.07% (most common: [0, 1, 2, 3, 4, 5, 6])
+    Positional consistency: 45.67% (most common: [0, 2, 3, 4, 5, 6])
+    Unique semantic responses: 62
+    Unique positional responses: 28
+
+  Instance 263 (ID: nt-1054, 7 rows):
+    Question: bedford scored ______ more points than plymouth albion on the 2 april 2005 game....
+    Semantic consistency: 88.50% (most common: [5])
+    Positional consistency: 16.17% (most common: [5])
+    Unique semantic responses: 13
+    Unique positional responses: 13
+
+  Instance 264 (ID: nt-1062, 7 rows):
+    Question: who, of the years on this list, was the first team to win?...
+    Semantic consistency: 45.57% (most common: [2])
+    Positional consistency: 41.30% (most common: [])
+    Unique semantic responses: 18
+    Unique positional responses: 34
+
+  Instance 265 (ID: nt-1063, 8 rows):
+    Question: the verb "liekta" comes after the verb ______ in the list....
+    Semantic consistency: 18.27% (most common: [4])
+    Positional consistency: 25.17% (most common: [2])
+    Unique semantic responses: 128
+    Unique positional responses: 105
+
+  Instance 266 (ID: nt-1065, 8 rows):
+    Question: how many events were at the 1980 winter olympics?...
+    Semantic consistency: 88.37% (most common: [4])
+    Positional consistency: 22.17% (most common: [3])
+    Unique semantic responses: 9
+    Unique positional responses: 9
+
+  Instance 267 (ID: nt-1069, 10 rows):
+    Question: how many competitions were held in 2002?...
+    Semantic consistency: 40.00% (most common: [])
+    Positional consistency: 40.00% (most common: [])
+    Unique semantic responses: 137
+    Unique positional responses: 145
+
+  Instance 268 (ID: nt-1070, 10 rows):
+    Question: what is the location after tainan?...
+    Semantic consistency: 44.77% (most common: [])
+    Positional consistency: 35.80% (most common: [])
+    Unique semantic responses: 148
+    Unique positional responses: 82
+
+  Instance 269 (ID: nt-1073, 8 rows):
+    Question: what are the number of times jive records is listed as the label?...
+    Semantic consistency: 32.23% (most common: [1, 2, 3, 4, 5, 6])
+    Positional consistency: 3.93% (most common: [0, 2, 3, 4, 6, 7])
+    Unique semantic responses: 51
+    Unique positional responses: 114
+
+  Instance 270 (ID: nt-1079, 8 rows):
+    Question: what chip has the lowest flash size?...
+    Semantic consistency: 45.77% (most common: [0])
+    Positional consistency: 24.77% (most common: [1])
+    Unique semantic responses: 62
+    Unique positional responses: 121
+
+  Instance 271 (ID: nt-1081, 8 rows):
+    Question: how long is manjeet kaur's time?...
+    Semantic consistency: 90.77% (most common: [1])
+    Positional consistency: 13.03% (most common: [6])
+    Unique semantic responses: 13
+    Unique positional responses: 16
+
+  Instance 272 (ID: nt-1093, 10 rows):
+    Question: which one has the most elevation (mountain station) on the chart...
+    Semantic consistency: 87.73% (most common: [2])
+    Positional consistency: 14.23% (most common: [5])
+    Unique semantic responses: 25
+    Unique positional responses: 66
+
+  Instance 273 (ID: nt-1096, 10 rows):
+    Question: in what sport did india win the most silver medals?...
+    Semantic consistency: 13.63% (most common: [5, 6, 7, 8, 9])
+    Positional consistency: 1.47% (most common: [2, 4, 5, 6, 8, 9])
+    Unique semantic responses: 208
+    Unique positional responses: 378
+
+  Instance 274 (ID: nt-1098, 8 rows):
+    Question: after george halas, which two players are tied for lowest number of points?...
+    Semantic consistency: 37.40% (most common: [5, 6, 7])
+    Positional consistency: 3.70% (most common: [2, 3])
+    Unique semantic responses: 60
+    Unique positional responses: 118
+
+  Instance 275 (ID: nt-1099, 8 rows):
+    Question: what was the last year that had an achievement listed?...
+    Semantic consistency: 24.23% (most common: [6])
+    Positional consistency: 54.40% (most common: [7])
+    Unique semantic responses: 135
+    Unique positional responses: 92
+
+  Instance 276 (ID: nt-1103, 10 rows):
+    Question: how many people that are not diego dominguez have scored at least 24 points in a...
+    Semantic consistency: 14.20% (most common: [6])
+    Positional consistency: 8.60% (most common: [8])
+    Unique semantic responses: 276
+    Unique positional responses: 411
+
+  Instance 277 (ID: nt-1106, 8 rows):
+    Question: how many total world performance cars are there for 2007?...
+    Semantic consistency: 93.83% (most common: [])
+    Positional consistency: 93.80% (most common: [])
+    Unique semantic responses: 15
+    Unique positional responses: 17
+
+  Instance 278 (ID: nt-1117, 10 rows):
+    Question: which county has the most amount of winners?...
+    Semantic consistency: 17.87% (most common: [1, 3, 4, 5, 8, 9])
+    Positional consistency: 1.20% (most common: [1, 2, 4, 6, 8, 9])
+    Unique semantic responses: 230
+    Unique positional responses: 624
+
+  Instance 279 (ID: nt-1119, 7 rows):
+    Question: who was the last noted ruler?...
+    Semantic consistency: 59.40% (most common: [6])
+    Positional consistency: 22.90% (most common: [6])
+    Unique semantic responses: 83
+    Unique positional responses: 54
+
+  Instance 280 (ID: nt-1123, 7 rows):
+    Question: how many people were sent home?...
+    Semantic consistency: 95.57% (most common: [])
+    Positional consistency: 95.53% (most common: [])
+    Unique semantic responses: 60
+    Unique positional responses: 42
+
+  Instance 281 (ID: nt-1125, 9 rows):
+    Question: who was the first pick by the golden seals?...
+    Semantic consistency: 99.87% (most common: [])
+    Positional consistency: 99.87% (most common: [])
+    Unique semantic responses: 2
+    Unique positional responses: 4
+
+  Instance 282 (ID: nt-1130, 10 rows):
+    Question: what is the last date listed?...
+    Semantic consistency: 28.63% (most common: [9])
+    Positional consistency: 76.20% (most common: [9])
+    Unique semantic responses: 19
+    Unique positional responses: 11
+
+  Instance 283 (ID: nt-1132, 9 rows):
+    Question: how many games did the irish win by at least 30 points?...
+    Semantic consistency: 6.20% (most common: [1, 2, 3, 7])
+    Positional consistency: 4.53% (most common: [0, 2, 5, 6])
+    Unique semantic responses: 246
+    Unique positional responses: 295
+
+  Instance 284 (ID: nt-1136, 8 rows):
+    Question: who were the chumps in the kitchen?...
+    Semantic consistency: 89.43% (most common: [4])
+    Positional consistency: 13.90% (most common: [5])
+    Unique semantic responses: 38
+    Unique positional responses: 39
+
+  Instance 285 (ID: nt-1142, 7 rows):
+    Question: which congressman preceded alexander mckim?...
+    Semantic consistency: 30.90% (most common: [])
+    Positional consistency: 25.97% (most common: [])
+    Unique semantic responses: 28
+    Unique positional responses: 32
+
+  Instance 286 (ID: nt-1143, 10 rows):
+    Question: how many states are on the chart?...
+    Semantic consistency: 90.27% (most common: [])
+    Positional consistency: 90.23% (most common: [])
+    Unique semantic responses: 29
+    Unique positional responses: 27
+
+  Instance 287 (ID: nt-1149, 10 rows):
+    Question: which 2 super middleweight champions both had the same about of successful defen...
+    Semantic consistency: 32.90% (most common: [0, 1])
+    Positional consistency: 8.97% (most common: [0, 6])
+    Unique semantic responses: 57
+    Unique positional responses: 64
+
+  Instance 288 (ID: nt-1150, 8 rows):
+    Question: in the irish national final for the eurovision song contest in 1990, how many ar...
+    Semantic consistency: 26.93% (most common: [0, 1, 2, 3, 6])
+    Positional consistency: 2.93% (most common: [0, 1, 2, 3, 4, 5])
+    Unique semantic responses: 74
+    Unique positional responses: 220
+
+  Instance 289 (ID: nt-1151, 10 rows):
+    Question: what year was the frst .36 calliber revolver manufactured?...
+    Semantic consistency: 6.17% (most common: [1, 3, 5])
+    Positional consistency: 1.93% (most common: [1])
+    Unique semantic responses: 313
+    Unique positional responses: 603
+
+  Instance 290 (ID: nt-1153, 10 rows):
+    Question: which location has the most km?...
+    Semantic consistency: 39.90% (most common: [8])
+    Positional consistency: 21.47% (most common: [])
+    Unique semantic responses: 27
+    Unique positional responses: 40
+
+  Instance 291 (ID: nt-1155, 9 rows):
+    Question: what was the total amount of competitions participated in?...
+    Semantic consistency: 92.33% (most common: [])
+    Positional consistency: 91.43% (most common: [])
+    Unique semantic responses: 27
+    Unique positional responses: 24
+
+  Instance 292 (ID: nt-1157, 10 rows):
+    Question: is brandon pettigrew above 250 pounds...
+    Semantic consistency: 81.13% (most common: [])
+    Positional consistency: 81.13% (most common: [])
+    Unique semantic responses: 28
+    Unique positional responses: 25
+
+  Instance 293 (ID: nt-1165, 8 rows):
+    Question: besides tiger woods what other player won between 2007 and 2009?...
+    Semantic consistency: 4.50% (most common: [1, 2, 3, 4])
+    Positional consistency: 5.53% (most common: [2, 4])
+    Unique semantic responses: 118
+    Unique positional responses: 197
+
+  Instance 294 (ID: nt-1168, 10 rows):
+    Question: what is the only year that did not qualify appears under the playoffs column?...
+    Semantic consistency: 18.37% (most common: [0])
+    Positional consistency: 18.37% (most common: [0])
+    Unique semantic responses: 204
+    Unique positional responses: 326
+
+  Instance 295 (ID: nt-1181, 7 rows):
+    Question: what is the total amount of members in the socialist group not including caucusi...
+    Semantic consistency: 95.27% (most common: [0])
+    Positional consistency: 16.30% (most common: [5])
+    Unique semantic responses: 12
+    Unique positional responses: 14
+
+  Instance 296 (ID: nt-1186, 7 rows):
+    Question: what is the average usda recommended temperature?...
+    Semantic consistency: 98.43% (most common: [])
+    Positional consistency: 98.43% (most common: [])
+    Unique semantic responses: 25
+    Unique positional responses: 23
+
+  Instance 297 (ID: nt-1187, 8 rows):
+    Question: during the second leg, what number of matches ended in a draw?...
+    Semantic consistency: 94.60% (most common: [])
+    Positional consistency: 94.60% (most common: [])
+    Unique semantic responses: 27
+    Unique positional responses: 64
+
+  Instance 298 (ID: nt-1191, 10 rows):
+    Question: in what year previous to 2003 was the "symposium on computational gemoetry" held...
+    Semantic consistency: 12.67% (most common: [8])
+    Positional consistency: 26.60% (most common: [2])
+    Unique semantic responses: 154
+    Unique positional responses: 57
+
+  Instance 299 (ID: nt-1196, 10 rows):
+    Question: simona armstrong is how much older than leanne dobinson?...
+    Semantic consistency: 93.03% (most common: [])
+    Positional consistency: 93.03% (most common: [])
+    Unique semantic responses: 15
+    Unique positional responses: 40
+
+  Instance 300 (ID: nt-1199, 9 rows):
+    Question: what are the total number of nato naval blockades?...
+    Semantic consistency: 36.67% (most common: [0, 2, 4])
+    Positional consistency: 19.37% (most common: [])
+    Unique semantic responses: 78
+    Unique positional responses: 161
+
+  Instance 301 (ID: nt-1201, 10 rows):
+    Question: what are the number of times astm d 638 is listed as the test method?...
+    Semantic consistency: 46.03% (most common: [0, 1, 2])
+    Positional consistency: 3.43% (most common: [0, 4, 5])
+    Unique semantic responses: 88
+    Unique positional responses: 198
+
+  Instance 302 (ID: nt-1205, 8 rows):
+    Question: was only nominated for best actor in a supporting role at satellite awards in 20...
+    Semantic consistency: 78.37% (most common: [4])
+    Positional consistency: 16.30% (most common: [])
+    Unique semantic responses: 20
+    Unique positional responses: 25
+
+  Instance 303 (ID: nt-1211, 10 rows):
+    Question: which state placed first in the 1989 miss teen usa competition?...
+    Semantic consistency: 91.07% (most common: [])
+    Positional consistency: 91.07% (most common: [])
+    Unique semantic responses: 13
+    Unique positional responses: 12
+
+  Instance 304 (ID: nt-1215, 7 rows):
+    Question: how many titles include "jeff daniels" as their episode title?...
+    Semantic consistency: 81.63% (most common: [2, 4])
+    Positional consistency: 6.43% (most common: [1, 2])
+    Unique semantic responses: 47
+    Unique positional responses: 46
+
+  Instance 305 (ID: nt-1218, 8 rows):
+    Question: who finished earlier, hindoocraft or spokane?...
+    Semantic consistency: 70.33% (most common: [0, 3])
+    Positional consistency: 7.20% (most common: [2])
+    Unique semantic responses: 9
+    Unique positional responses: 37
+
+  Instance 306 (ID: nt-1220, 8 rows):
+    Question: after justin rose won in 2011 who won next?...
+    Semantic consistency: 23.90% (most common: [0])
+    Positional consistency: 15.57% (most common: [2])
+    Unique semantic responses: 106
+    Unique positional responses: 50
+
+  Instance 307 (ID: nt-1222, 10 rows):
+    Question: which was a higher scoring game, game #1 or #7?...
+    Semantic consistency: 16.93% (most common: [0, 6])
+    Positional consistency: 85.80% (most common: [0, 7])
+    Unique semantic responses: 12
+    Unique positional responses: 9
+
+  Instance 308 (ID: nt-1225, 7 rows):
+    Question: which year was the last time broxburn athletic topped the east region south divi...
+    Semantic consistency: 42.43% (most common: [3])
+    Positional consistency: 22.77% (most common: [2])
+    Unique semantic responses: 42
+    Unique positional responses: 27
+
+  Instance 309 (ID: nt-1227, 8 rows):
+    Question: which plates used the serial format of 12345 in consecutive years?...
+    Semantic consistency: 59.63% (most common: [0, 1])
+    Positional consistency: 8.80% (most common: [2])
+    Unique semantic responses: 29
+    Unique positional responses: 71
+
+  Instance 310 (ID: nt-1234, 7 rows):
+    Question: what school did the last spouse attend?...
+    Semantic consistency: 37.83% (most common: [6])
+    Positional consistency: 65.37% (most common: [6])
+    Unique semantic responses: 15
+    Unique positional responses: 15
+
+  Instance 311 (ID: nt-1235, 8 rows):
+    Question: before 2011, how many internationals has the sahrawi national football team won?...
+    Semantic consistency: 32.50% (most common: [6, 7])
+    Positional consistency: 22.13% (most common: [])
+    Unique semantic responses: 80
+    Unique positional responses: 107
+
+  Instance 312 (ID: nt-1236, 7 rows):
+    Question: which party got the least number of votes?...
+    Semantic consistency: 93.60% (most common: [3])
+    Positional consistency: 16.87% (most common: [0])
+    Unique semantic responses: 10
+    Unique positional responses: 18
+
+  Instance 313 (ID: nt-1249, 8 rows):
+    Question: which team is previous to cska moscow on team 1...
+    Semantic consistency: 16.43% (most common: [])
+    Positional consistency: 30.43% (most common: [2])
+    Unique semantic responses: 19
+    Unique positional responses: 20
+
+  Instance 314 (ID: nt-1250, 10 rows):
+    Question: what's the number of songs that e-swift produced?...
+    Semantic consistency: 18.17% (most common: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    Positional consistency: 18.13% (most common: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    Unique semantic responses: 253
+    Unique positional responses: 106
+
+  Instance 315 (ID: nt-1252, 5 rows):
+    Question: as of october 25, 2005, how many active voters does the republican party have?...
+    Semantic consistency: 90.83% (most common: [1])
+    Positional consistency: 23.33% (most common: [2])
+    Unique semantic responses: 6
+    Unique positional responses: 7
+
+  Instance 316 (ID: nt-1254, 9 rows):
+    Question: which paralymics year had the largest number of medals overall?...
+    Semantic consistency: 38.97% (most common: [0])
+    Positional consistency: 19.90% (most common: [5])
+    Unique semantic responses: 23
+    Unique positional responses: 42
+
+  Instance 317 (ID: nt-1265, 9 rows):
+    Question: what was the result of the game before the game of march 9, 1968?...
+    Semantic consistency: 14.27% (most common: [2])
+    Positional consistency: 57.23% (most common: [6])
+    Unique semantic responses: 74
+    Unique positional responses: 27
+
+  Instance 318 (ID: nt-1267, 7 rows):
+    Question: which communities have at least 100 people?...
+    Semantic consistency: 43.83% (most common: [2])
+    Positional consistency: 14.20% (most common: [2])
+    Unique semantic responses: 34
+    Unique positional responses: 50
+
+  Instance 319 (ID: nt-1275, 10 rows):
+    Question: what was the difference in r&b ranking between "come go with me" and "dance 4 me...
+    Semantic consistency: 73.33% (most common: [])
+    Positional consistency: 73.30% (most common: [])
+    Unique semantic responses: 26
+    Unique positional responses: 49
+
+  Instance 320 (ID: nt-1284, 8 rows):
+    Question: how many songs were remixed by garraund?...
+    Semantic consistency: 72.30% (most common: [4, 5])
+    Positional consistency: 5.87% (most common: [0, 6])
+    Unique semantic responses: 50
+    Unique positional responses: 77
+
+  Instance 321 (ID: nt-1286, 10 rows):
+    Question: tell me the number of artists who ended up in 6th place....
+    Semantic consistency: 40.07% (most common: [2, 3])
+    Positional consistency: 17.30% (most common: [])
+    Unique semantic responses: 115
+    Unique positional responses: 192
+
+  Instance 322 (ID: nt-1288, 8 rows):
+    Question: what is the difference between the number of employees at mundelein elementary s...
+    Semantic consistency: 78.77% (most common: [3, 5])
+    Positional consistency: 20.40% (most common: [])
+    Unique semantic responses: 8
+    Unique positional responses: 29
+
+  Instance 323 (ID: nt-1289, 8 rows):
+    Question: who was the fastest swimmer?...
+    Semantic consistency: 67.47% (most common: [0])
+    Positional consistency: 16.13% (most common: [6])
+    Unique semantic responses: 25
+    Unique positional responses: 67
+
+  Instance 324 (ID: nt-1297, 9 rows):
+    Question: how many points did the dolphins score against the buffalo bills total?...
+    Semantic consistency: 99.97% (most common: [])
+    Positional consistency: 99.97% (most common: [])
+    Unique semantic responses: 2
+    Unique positional responses: 2
+
+  Instance 325 (ID: nt-1298, 9 rows):
+    Question: how many games did the winning team score above 3 points?...
+    Semantic consistency: 45.90% (most common: [])
+    Positional consistency: 45.87% (most common: [])
+    Unique semantic responses: 116
+    Unique positional responses: 129
+
+  Instance 326 (ID: nt-1301, 7 rows):
+    Question: if a man has a phone on qb's network, how many different mobile prefixes could h...
+    Semantic consistency: 84.47% (most common: [5])
+    Positional consistency: 17.73% (most common: [2])
+    Unique semantic responses: 32
+    Unique positional responses: 26
+
+  Instance 327 (ID: nt-1304, 7 rows):
+    Question: other than the 2007 election, which election had approximately 39% of the popula...
+    Semantic consistency: 43.10% (most common: [5, 6])
+    Positional consistency: 6.97% (most common: [1, 5])
+    Unique semantic responses: 60
+    Unique positional responses: 83
+
+  Instance 328 (ID: nt-1306, 8 rows):
+    Question: _____ and _______ both played 16 games....
+    Semantic consistency: 73.13% (most common: [0, 3])
+    Positional consistency: 4.80% (most common: [2, 6])
+    Unique semantic responses: 44
+    Unique positional responses: 116
+
+  Instance 329 (ID: nt-1307, 10 rows):
+    Question: what is the last type of dance listed?...
+    Semantic consistency: 27.47% (most common: [9])
+    Positional consistency: 55.03% (most common: [9])
+    Unique semantic responses: 43
+    Unique positional responses: 8
+
+  Instance 330 (ID: nt-1309, 10 rows):
+    Question: how many chevrolets finished in the top ten?...
+    Semantic consistency: 43.50% (most common: [4, 5, 6, 9])
+    Positional consistency: 1.47% (most common: [2, 6, 7, 9])
+    Unique semantic responses: 124
+    Unique positional responses: 384
+
+  Instance 331 (ID: nt-1311, 8 rows):
+    Question: how many awards has he been nominated for and not won?...
+    Semantic consistency: 88.70% (most common: [4, 5, 6])
+    Positional consistency: 2.30% (most common: [0, 4, 7])
+    Unique semantic responses: 24
+    Unique positional responses: 150
+
+  Instance 332 (ID: nt-1313, 9 rows):
+    Question: who is the only canadian in the tournaments?...
+    Semantic consistency: 74.57% (most common: [])
+    Positional consistency: 74.57% (most common: [])
+    Unique semantic responses: 74
+    Unique positional responses: 125
+
+  Instance 333 (ID: nt-1315, 8 rows):
+    Question: how many total medals did switzerland and france win?...
+    Semantic consistency: 70.70% (most common: [4, 5])
+    Positional consistency: 7.00% (most common: [2, 5])
+    Unique semantic responses: 47
+    Unique positional responses: 74
+
+  Instance 334 (ID: nt-1323, 6 rows):
+    Question: only one championship in which he participated was held outside europe. where wa...
+    Semantic consistency: 47.64% (most common: [3])
+    Positional consistency: 17.50% (most common: [2])
+    Unique semantic responses: 25
+    Unique positional responses: 45
+
+  Instance 335 (ID: nt-1324, 7 rows):
+    Question: how many consecutive titles did bridgestone win?...
+    Semantic consistency: 68.90% (most common: [])
+    Positional consistency: 68.90% (most common: [])
+    Unique semantic responses: 110
+    Unique positional responses: 75
+
+  Instance 336 (ID: nt-1326, 8 rows):
+    Question: what is the most amount of people to attend a single game this season?...
+    Semantic consistency: 51.03% (most common: [4])
+    Positional consistency: 24.57% (most common: [0])
+    Unique semantic responses: 9
+    Unique positional responses: 9
+
+  Instance 337 (ID: nt-1328, 7 rows):
+    Question: what race is listed after white?...
+    Semantic consistency: 74.47% (most common: [])
+    Positional consistency: 74.47% (most common: [])
+    Unique semantic responses: 87
+    Unique positional responses: 77
+
+  Instance 338 (ID: nt-1329, 10 rows):
+    Question: yes or no: dundee is ranked in the top third of this for population....
+    Semantic consistency: 82.03% (most common: [3])
+    Positional consistency: 18.83% (most common: [4])
+    Unique semantic responses: 84
+    Unique positional responses: 54
+
+  Instance 339 (ID: nt-1332, 9 rows):
+    Question: which submarine had the most tonnage?...
+    Semantic consistency: 55.97% (most common: [])
+    Positional consistency: 55.97% (most common: [])
+    Unique semantic responses: 60
+    Unique positional responses: 121
+
+  Instance 340 (ID: nt-1333, 7 rows):
+    Question: how many days did ultimo gladiador and ultimo vampiro hold the title?...
+    Semantic consistency: 75.23% (most common: [4])
+    Positional consistency: 22.93% (most common: [2])
+    Unique semantic responses: 18
+    Unique positional responses: 20
+
+  Instance 341 (ID: nt-1334, 8 rows):
+    Question: what is the number of varsity sports at maryland...
+    Semantic consistency: 90.87% (most common: [1])
+    Positional consistency: 19.17% (most common: [4])
+    Unique semantic responses: 9
+    Unique positional responses: 9
+
+  Instance 342 (ID: nt-1335, 7 rows):
+    Question: what is the score in the top row?...
+    Semantic consistency: 13.70% (most common: [])
+    Positional consistency: 78.37% (most common: [0])
+    Unique semantic responses: 33
+    Unique positional responses: 11
+
+  Instance 343 (ID: nt-1337, 10 rows):
+    Question: how many times is fiji listed as the opposition?...
+    Semantic consistency: 27.27% (most common: [2, 8])
+    Positional consistency: 2.87% (most common: [2, 5])
+    Unique semantic responses: 117
+    Unique positional responses: 197
+
+  Instance 344 (ID: nt-1342, 9 rows):
+    Question: what is the next film of ahsan's that will be released?...
+    Semantic consistency: 99.97% (most common: [])
+    Positional consistency: 99.97% (most common: [])
+    Unique semantic responses: 2
+    Unique positional responses: 2
+
+  Instance 345 (ID: nt-1346, 7 rows):
+    Question: which event was the longest amount of days held?...
+    Semantic consistency: 78.40% (most common: [2])
+    Positional consistency: 18.53% (most common: [2])
+    Unique semantic responses: 11
+    Unique positional responses: 12
+
+  Instance 346 (ID: nt-1351, 7 rows):
+    Question: how many teams won less than the pune strykers?...
+    Semantic consistency: 49.90% (most common: [0, 1, 3, 6])
+    Positional consistency: 4.13% (most common: [0, 2, 3, 4])
+    Unique semantic responses: 60
+    Unique positional responses: 106
+
+  Instance 347 (ID: nt-1353, 9 rows):
+    Question: which party had the greatest number of new seats in this election?...
+    Semantic consistency: 58.20% (most common: [])
+    Positional consistency: 58.20% (most common: [])
+    Unique semantic responses: 31
+    Unique positional responses: 132
+
+  Instance 348 (ID: nt-1366, 7 rows):
+    Question: what country won the most medals?...
+    Semantic consistency: 83.93% (most common: [])
+    Positional consistency: 83.93% (most common: [])
+    Unique semantic responses: 21
+    Unique positional responses: 31
+
+  Instance 349 (ID: nt-1367, 10 rows):
+    Question: what is the total number of rows in the first column with something in it?...
+    Semantic consistency: 57.10% (most common: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    Positional consistency: 57.10% (most common: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    Unique semantic responses: 13
+    Unique positional responses: 7
+
+  Instance 350 (ID: nt-1370, 8 rows):
+    Question: what is the game after 81?...
+    Semantic consistency: 34.30% (most common: [])
+    Positional consistency: 27.13% (most common: [8])
+    Unique semantic responses: 42
+    Unique positional responses: 31
+
+  Instance 351 (ID: nt-1374, 10 rows):
+    Question: which country had a release with the same label as germany?...
+    Semantic consistency: 12.93% (most common: [0, 1, 7, 8])
+    Positional consistency: 2.20% (most common: [0, 6, 9])
+    Unique semantic responses: 292
+    Unique positional responses: 416
+
+  Instance 352 (ID: nt-1376, 10 rows):
+    Question: how many people were killed in total in the attacks in 1973 and 1974?...
+    Semantic consistency: 67.37% (most common: [])
+    Positional consistency: 67.37% (most common: [])
+    Unique semantic responses: 44
+    Unique positional responses: 79
+
+  Instance 353 (ID: nt-1383, 8 rows):
+    Question: how long did it take the fifth place finisher to run the race?...
+    Semantic consistency: 40.00% (most common: [4])
+    Positional consistency: 26.53% (most common: [4])
+    Unique semantic responses: 65
+    Unique positional responses: 79
+
+  Instance 354 (ID: nt-1390, 10 rows):
+    Question: how long is the entire race (how many months)?...
+    Semantic consistency: 98.73% (most common: [])
+    Positional consistency: 98.73% (most common: [])
+    Unique semantic responses: 17
+    Unique positional responses: 10
+
+  Instance 355 (ID: nt-1392, 10 rows):
+    Question: which urban area has the least people per square kilometer?...
+    Semantic consistency: 30.67% (most common: [8])
+    Positional consistency: 47.00% (most common: [2])
+    Unique semantic responses: 143
+    Unique positional responses: 187
+
+  Instance 356 (ID: nt-1393, 10 rows):
+    Question: which division has this team played the most games in?...
+    Semantic consistency: 40.07% (most common: [])
+    Positional consistency: 40.07% (most common: [])
+    Unique semantic responses: 316
+    Unique positional responses: 289
+
+  Instance 357 (ID: nt-1395, 8 rows):
+    Question: on what date did the first episode of the whole 19 yards air?...
+    Semantic consistency: 66.53% (most common: [])
+    Positional consistency: 66.53% (most common: [])
+    Unique semantic responses: 23
+    Unique positional responses: 29
+
+  Instance 358 (ID: nt-1404, 7 rows):
+    Question: which group has the most derivation?...
+    Semantic consistency: 45.27% (most common: [6])
+    Positional consistency: 32.00% (most common: [4])
+    Unique semantic responses: 50
+    Unique positional responses: 38
+
+  Instance 359 (ID: nt-1408, 7 rows):
+    Question: which building in canada was the first to be taller than 200m?...
+    Semantic consistency: 51.30% (most common: [])
+    Positional consistency: 51.30% (most common: [])
+    Unique semantic responses: 71
+    Unique positional responses: 84
+
+  Instance 360 (ID: nt-1417, 7 rows):
+    Question: which record is faster, 50km race walk or marathon...
+    Semantic consistency: 89.03% (most common: [])
+    Positional consistency: 89.03% (most common: [])
+    Unique semantic responses: 24
+    Unique positional responses: 34
+
+  Instance 361 (ID: nt-1422, 9 rows):
+    Question: how many had voter turnouts more than 50%?...
+    Semantic consistency: 6.07% (most common: [0, 1, 2, 3, 5, 6, 7, 8])
+    Positional consistency: 13.43% (most common: [1, 2, 3, 4, 5, 6, 7, 8])
+    Unique semantic responses: 204
+    Unique positional responses: 85
+
+  Instance 362 (ID: nt-1428, 10 rows):
+    Question: who is from outside of great britain?...
+    Semantic consistency: 55.93% (most common: [3])
+    Positional consistency: 17.27% (most common: [2])
+    Unique semantic responses: 62
+    Unique positional responses: 127
+
+  Instance 363 (ID: nt-1430, 8 rows):
+    Question: what is the first destination in the chart?...
+    Semantic consistency: 21.10% (most common: [7])
+    Positional consistency: 56.83% (most common: [1])
+    Unique semantic responses: 32
+    Unique positional responses: 24
+
+  Instance 364 (ID: nt-1435, 7 rows):
+    Question: in which party did the minister belong that held the longest term in office?...
+    Semantic consistency: 17.10% (most common: [4])
+    Positional consistency: 13.67% (most common: [2, 5])
+    Unique semantic responses: 105
+    Unique positional responses: 106
+
+  Instance 365 (ID: nt-1437, 10 rows):
+    Question: are there more or less than 8 properties?...
+    Semantic consistency: 98.97% (most common: [])
+    Positional consistency: 98.97% (most common: [])
+    Unique semantic responses: 14
+    Unique positional responses: 9
+
+  Instance 366 (ID: nt-1438, 8 rows):
+    Question: where did camerin win singles after cagnes-sur-mer?...
+    Semantic consistency: 91.13% (most common: [])
+    Positional consistency: 90.87% (most common: [])
+    Unique semantic responses: 74
+    Unique positional responses: 62
+
+  Instance 367 (ID: nt-1441, 7 rows):
+    Question: which single(s) had the highest uk singles chart position?...
+    Semantic consistency: 13.53% (most common: [1, 3, 4])
+    Positional consistency: 9.07% (most common: [0, 3, 4])
+    Unique semantic responses: 104
+    Unique positional responses: 185
+
+  Instance 368 (ID: nt-1445, 8 rows):
+    Question: who has more silver medals: karine ruby or shaun white?...
+    Semantic consistency: 79.93% (most common: [1, 3])
+    Positional consistency: 8.00% (most common: [])
+    Unique semantic responses: 17
+    Unique positional responses: 33
+
+  Instance 369 (ID: nt-1448, 8 rows):
+    Question: which date is listed first on the table?...
+    Semantic consistency: 22.33% (most common: [0])
+    Positional consistency: 74.10% (most common: [0])
+    Unique semantic responses: 11
+    Unique positional responses: 11
+
+  Instance 370 (ID: nt-1452, 10 rows):
+    Question: which other player scored the same as the player from japan?...
+    Semantic consistency: 15.70% (most common: [7, 8, 9])
+    Positional consistency: 5.23% (most common: [4, 5])
+    Unique semantic responses: 319
+    Unique positional responses: 412
+
+  Instance 371 (ID: nt-1459, 8 rows):
+    Question: besides julia stowers who is the other american listed?...
+    Semantic consistency: 39.27% (most common: [2, 3])
+    Positional consistency: 8.90% (most common: [2])
+    Unique semantic responses: 92
+    Unique positional responses: 99
+
+  Instance 372 (ID: nt-1460, 8 rows):
+    Question: which coach was the first to coach before all others?...
+    Semantic consistency: 27.17% (most common: [2])
+    Positional consistency: 18.50% (most common: [2])
+    Unique semantic responses: 17
+    Unique positional responses: 17
+
+  Instance 373 (ID: nt-1461, 8 rows):
+    Question: how many consecutive 10mhz frequency chips are there?...
+    Semantic consistency: 51.43% (most common: [1, 2, 3])
+    Positional consistency: 28.97% (most common: [])
+    Unique semantic responses: 28
+    Unique positional responses: 113
+
+  Instance 374 (ID: nt-1462, 8 rows):
+    Question: how many different kit manufacturers are involved?...
+    Semantic consistency: 97.83% (most common: [])
+    Positional consistency: 97.83% (most common: [])
+    Unique semantic responses: 31
+    Unique positional responses: 22
+
+  Instance 375 (ID: nt-1465, 6 rows):
+    Question: how many championships did he compete in?...
+    Semantic consistency: 65.42% (most common: [])
+    Positional consistency: 65.42% (most common: [])
+    Unique semantic responses: 31
+    Unique positional responses: 24
+
+  Instance 376 (ID: nt-1467, 10 rows):
+    Question: who received more total medals, ecuador or chile?...
+    Semantic consistency: 85.20% (most common: [3, 5])
+    Positional consistency: 4.63% (most common: [2, 4])
+    Unique semantic responses: 44
+    Unique positional responses: 56
+
+  Instance 377 (ID: nt-1476, 8 rows):
+    Question: what is the next date after april 8?...
+    Semantic consistency: 88.93% (most common: [])
+    Positional consistency: 88.87% (most common: [])
+    Unique semantic responses: 11
+    Unique positional responses: 14
+
+  Instance 378 (ID: nt-1481, 7 rows):
+    Question: when did bedford score more, 15 february 2005 or 19 february 2005?...
+    Semantic consistency: 77.27% (most common: [1, 2])
+    Positional consistency: 7.97% (most common: [1, 2])
+    Unique semantic responses: 32
+    Unique positional responses: 30
+
+  Instance 379 (ID: nt-1487, 10 rows):
+    Question: how many films are there in total?...
+    Semantic consistency: 66.07% (most common: [])
+    Positional consistency: 65.97% (most common: [])
+    Unique semantic responses: 131
+    Unique positional responses: 167
+
+  Instance 380 (ID: nt-1496, 8 rows):
+    Question: who is the singer of the only song over 5 minutes in length?...
+    Semantic consistency: 85.27% (most common: [6])
+    Positional consistency: 12.83% (most common: [1])
+    Unique semantic responses: 40
+    Unique positional responses: 78
+
+  Instance 381 (ID: nt-1499, 10 rows):
+    Question: how many russian-lipovan's were there in 1966?...
+    Semantic consistency: 11.43% (most common: [5, 9])
+    Positional consistency: 21.40% (most common: [5, 6])
+    Unique semantic responses: 43
+    Unique positional responses: 26
+
+  Instance 382 (ID: nt-1500, 10 rows):
+    Question: when were the madison mallards established?...
+    Semantic consistency: 91.63% (most common: [1])
+    Positional consistency: 15.17% (most common: [8])
+    Unique semantic responses: 10
+    Unique positional responses: 10
+
+  Instance 383 (ID: nt-1505, 8 rows):
+    Question: how many employees does mundelein high school have?...
+    Semantic consistency: 99.60% (most common: [6])
+    Positional consistency: 13.57% (most common: [0])
+    Unique semantic responses: 8
+    Unique positional responses: 13
+
+  Instance 384 (ID: nt-1519, 10 rows):
+    Question: which country took first place?...
+    Semantic consistency: 48.20% (most common: [5])
+    Positional consistency: 20.63% (most common: [6])
+    Unique semantic responses: 13
+    Unique positional responses: 13
+
+  Instance 385 (ID: nt-1525, 10 rows):
+    Question: what was the last year for ppopp?...
+    Semantic consistency: 30.53% (most common: [6])
+    Positional consistency: 16.97% (most common: [2])
+    Unique semantic responses: 41
+    Unique positional responses: 38
+
+  Instance 386 (ID: nt-1532, 9 rows):
+    Question: the choke with at least 0.005 inches of constriction...
+    Semantic consistency: 3.57% (most common: [1, 2, 3, 4, 5, 6, 7, 8])
+    Positional consistency: 3.20% (most common: [0, 1, 2, 4, 5, 6, 8])
+    Unique semantic responses: 294
+    Unique positional responses: 330
+
+  Instance 387 (ID: nt-1533, 8 rows):
+    Question: how many works had terence cuneo completed before the year 1950?...
+    Semantic consistency: 99.63% (most common: [])
+    Positional consistency: 99.63% (most common: [])
+    Unique semantic responses: 9
+    Unique positional responses: 10
+
+  Instance 388 (ID: nt-1535, 8 rows):
+    Question: what is the total number of deputy judges that were post abolished?...
+    Semantic consistency: 65.47% (most common: [])
+    Positional consistency: 65.47% (most common: [])
+    Unique semantic responses: 33
+    Unique positional responses: 121
+
+  Instance 389 (ID: nt-1546, 9 rows):
+    Question: the independent conference and the colonial athletic association both received h...
+    Semantic consistency: 86.57% (most common: [2, 3])
+    Positional consistency: 4.50% (most common: [2, 5])
+    Unique semantic responses: 24
+    Unique positional responses: 38
+
+  Instance 390 (ID: nt-1552, 7 rows):
+    Question: did they play austria wein before or after jeunesse esch?...
+    Semantic consistency: 81.07% (most common: [3, 4])
+    Positional consistency: 6.87% (most common: [1, 2])
+    Unique semantic responses: 27
+    Unique positional responses: 36
+
+  Instance 391 (ID: nt-1559, 10 rows):
+    Question: which title has no b-sides?...
+    Semantic consistency: 54.63% (most common: [])
+    Positional consistency: 54.63% (most common: [])
+    Unique semantic responses: 312
+    Unique positional responses: 279
+
+  Instance 392 (ID: nt-1560, 10 rows):
+    Question: what was the first year they qualified after 2004?...
+    Semantic consistency: 16.90% (most common: [8])
+    Positional consistency: 40.17% (most common: [5])
+    Unique semantic responses: 231
+    Unique positional responses: 213
+
+  Instance 393 (ID: nt-1565, 8 rows):
+    Question: what year did firehouse release their last single?...
+    Semantic consistency: 45.23% (most common: [0, 1, 2])
+    Positional consistency: 12.10% (most common: [])
+    Unique semantic responses: 86
+    Unique positional responses: 203
+
+  Instance 394 (ID: nt-1566, 7 rows):
+    Question: what was the world's most populous continent in 1965?...
+    Semantic consistency: 86.87% (most common: [0])
+    Positional consistency: 22.83% (most common: [2])
+    Unique semantic responses: 21
+    Unique positional responses: 21
+
+  Instance 395 (ID: nt-1570, 10 rows):
+    Question: which plant builds the ford triton engine and the ford essex v6 engine?...
+    Semantic consistency: 84.17% (most common: [7])
+    Positional consistency: 13.80% (most common: [1])
+    Unique semantic responses: 19
+    Unique positional responses: 35
+
+  Instance 396 (ID: nt-1571, 8 rows):
+    Question: which chip has the least sram?...
+    Semantic consistency: 69.23% (most common: [0])
+    Positional consistency: 12.13% (most common: [3])
+    Unique semantic responses: 40
+    Unique positional responses: 161
+
+  Instance 397 (ID: nt-1584, 10 rows):
+    Question: in 1931, which two ethnic groups were represented by at least 100,000 people wit...
+    Semantic consistency: 78.40% (most common: [2])
+    Positional consistency: 11.50% (most common: [2])
+    Unique semantic responses: 28
+    Unique positional responses: 24
+
+  Instance 398 (ID: nt-1596, 8 rows):
+    Question: the top 3 runners were from what country?...
+    Semantic consistency: 34.57% (most common: [0, 1, 2])
+    Positional consistency: 7.47% (most common: [])
+    Unique semantic responses: 57
+    Unique positional responses: 100
+
+  Instance 399 (ID: nt-1603, 7 rows):
+    Question: who was the pilot for the north american x-15?...
+    Semantic consistency: 97.07% (most common: [0])
+    Positional consistency: 14.50% (most common: [4])
+    Unique semantic responses: 7
+    Unique positional responses: 9
+
+  Instance 400 (ID: nt-1609, 8 rows):
+    Question: who served the most years as mayor?...
+    Semantic consistency: 99.90% (most common: [])
+    Positional consistency: 99.90% (most common: [])
+    Unique semantic responses: 4
+    Unique positional responses: 4
+
+  Instance 401 (ID: nt-1610, 8 rows):
+    Question: did the team finish the same as they did in 1956?...
+    Semantic consistency: 96.83% (most common: [])
+    Positional consistency: 96.83% (most common: [])
+    Unique semantic responses: 16
+    Unique positional responses: 18
+
+  Instance 402 (ID: nt-1613, 8 rows):
+    Question: what movie was he nominated the most times for?...
+    Semantic consistency: 77.93% (most common: [4, 5, 6])
+    Positional consistency: 12.10% (most common: [])
+    Unique semantic responses: 26
+    Unique positional responses: 116
+
+  Instance 403 (ID: nt-1616, 6 rows):
+    Question: album released after emotion...
+    Semantic consistency: 33.33% (most common: [])
+    Positional consistency: 32.36% (most common: [])
+    Unique semantic responses: 45
+    Unique positional responses: 44
+
+  Instance 404 (ID: nt-1621, 9 rows):
+    Question: what is the total amount of 5 tier season after 2005/06?...
+    Semantic consistency: 20.90% (most common: [2, 4, 5, 6, 7])
+    Positional consistency: 15.30% (most common: [])
+    Unique semantic responses: 113
+    Unique positional responses: 388
+
+  Instance 405 (ID: nt-1629, 8 rows):
+    Question: which team has the same score as rah ahan?...
+    Semantic consistency: 9.50% (most common: [1, 4])
+    Positional consistency: 6.33% (most common: [2, 6])
+    Unique semantic responses: 199
+    Unique positional responses: 198
+
+  Instance 406 (ID: nt-1630, 8 rows):
+    Question: in which years did he release more than 2 albums?...
+    Semantic consistency: 95.80% (most common: [])
+    Positional consistency: 95.53% (most common: [])
+    Unique semantic responses: 61
+    Unique positional responses: 62
+
+  Instance 407 (ID: nt-1635, 10 rows):
+    Question: how many nations won more than ten silver medals?...
+    Semantic consistency: 99.30% (most common: [])
+    Positional consistency: 99.30% (most common: [])
+    Unique semantic responses: 7
+    Unique positional responses: 13
+
+  Instance 408 (ID: nt-1645, 8 rows):
+    Question: is petrie airfield or breddan aerodome farther south in the hemisphere?...
+    Semantic consistency: 84.67% (most common: [2, 3])
+    Positional consistency: 4.70% (most common: [3, 6])
+    Unique semantic responses: 29
+    Unique positional responses: 34
+
+  Instance 409 (ID: nt-1650, 8 rows):
+    Question: what single release came before "junkies"?...
+    Semantic consistency: 18.97% (most common: [0])
+    Positional consistency: 26.17% (most common: [6])
+    Unique semantic responses: 31
+    Unique positional responses: 35
+
+  Instance 410 (ID: nt-1652, 8 rows):
+    Question: which party got the most votes?...
+    Semantic consistency: 35.97% (most common: [])
+    Positional consistency: 35.97% (most common: [])
+    Unique semantic responses: 98
+    Unique positional responses: 159
+
+  Instance 411 (ID: nt-1654, 6 rows):
+    Question: what year did the kuwaiti dinar have the highest us dollar exchange?...
+    Semantic consistency: 24.17% (most common: [0])
+    Positional consistency: 49.17% (most common: [0])
+    Unique semantic responses: 46
+    Unique positional responses: 28
+
+  Instance 412 (ID: nt-1655, 8 rows):
+    Question: who is ranked at the top...
+    Semantic consistency: 59.43% (most common: [])
+    Positional consistency: 59.43% (most common: [])
+    Unique semantic responses: 33
+    Unique positional responses: 67
+
+  Instance 413 (ID: nt-1658, 9 rows):
+    Question: what is thierry tulasne number of clay court titles?...
+    Semantic consistency: 100.00% (most common: [])
+    Positional consistency: 100.00% (most common: [])
+    Unique semantic responses: 1
+    Unique positional responses: 1
+
+  Instance 414 (ID: nt-1662, 10 rows):
+    Question: what was the date of the first game won by the smu mustangs?...
+    Semantic consistency: 87.70% (most common: [])
+    Positional consistency: 87.70% (most common: [])
+    Unique semantic responses: 39
+    Unique positional responses: 51
+
+  Instance 415 (ID: nt-1672, 9 rows):
+    Question: what two nationalities have a tonnage of around 1900 and both sunk?...
+    Semantic consistency: 71.63% (most common: [5, 6])
+    Positional consistency: 5.17% (most common: [5, 6])
+    Unique semantic responses: 47
+    Unique positional responses: 142
+
+  Instance 416 (ID: nt-1673, 6 rows):
+    Question: first album released...
+    Semantic consistency: 82.64% (most common: [])
+    Positional consistency: 82.64% (most common: [])
+    Unique semantic responses: 7
+    Unique positional responses: 7
+
+  Instance 417 (ID: nt-1675, 9 rows):
+    Question: what's the difference in age between luis estrella martinez and edgardo rivera g...
+    Semantic consistency: 88.80% (most common: [1, 5])
+    Positional consistency: 3.80% (most common: [5, 6])
+    Unique semantic responses: 32
+    Unique positional responses: 37
+
+  Instance 418 (ID: nt-1680, 7 rows):
+    Question: what is the least amount of points scored throughout the 2004/05 season?...
+    Semantic consistency: 89.03% (most common: [])
+    Positional consistency: 89.03% (most common: [])
+    Unique semantic responses: 22
+    Unique positional responses: 28
+
+  Instance 419 (ID: nt-1685, 8 rows):
+    Question: what is the total of matches on the chart...
+    Semantic consistency: 63.20% (most common: [])
+    Positional consistency: 54.30% (most common: [])
+    Unique semantic responses: 17
+    Unique positional responses: 7
+
+  Instance 420 (ID: nt-1688, 7 rows):
+    Question: total population of millbrook first nation...
+    Semantic consistency: 66.07% (most common: [])
+    Positional consistency: 66.07% (most common: [])
+    Unique semantic responses: 10
+    Unique positional responses: 11
+
+  Instance 421 (ID: nt-1689, 7 rows):
+    Question: who was the first minister to take office in 2000?...
+    Semantic consistency: 61.23% (most common: [2])
+    Positional consistency: 19.03% (most common: [2])
+    Unique semantic responses: 40
+    Unique positional responses: 48
+
+  Instance 422 (ID: nt-1693, 8 rows):
+    Question: at most, how many of these teams have never scored a goal?...
+    Semantic consistency: 81.77% (most common: [])
+    Positional consistency: 81.77% (most common: [])
+    Unique semantic responses: 39
+    Unique positional responses: 35
+
+  Instance 423 (ID: nt-1699, 8 rows):
+    Question: who timed in after shelley cramer?...
+    Semantic consistency: 16.50% (most common: [0, 1])
+    Positional consistency: 9.73% (most common: [6, 7])
+    Unique semantic responses: 199
+    Unique positional responses: 208
+
+  Instance 424 (ID: nt-1706, 7 rows):
+    Question: what country won the same number of bronze as great britain, yet did not win a g...
+    Semantic consistency: 30.20% (most common: [5])
+    Positional consistency: 13.80% (most common: [5])
+    Unique semantic responses: 41
+    Unique positional responses: 84
+
+  Instance 425 (ID: nt-1717, 10 rows):
+    Question: which ruler came first, si jun or min?...
+    Semantic consistency: 82.03% (most common: [3, 7])
+    Positional consistency: 5.30% (most common: [1, 2])
+    Unique semantic responses: 22
+    Unique positional responses: 36
+
+  Instance 426 (ID: nt-1723, 8 rows):
+    Question: during the second leg, in how many matches was the winning score above 4?...
+    Semantic consistency: 30.00% (most common: [0, 4, 5])
+    Positional consistency: 27.80% (most common: [])
+    Unique semantic responses: 113
+    Unique positional responses: 213
+
+  Instance 427 (ID: nt-1727, 8 rows):
+    Question: which university has the most in undergraduate enrollment after cornell universi...
+    Semantic consistency: 15.93% (most common: [6])
+    Positional consistency: 7.93% (most common: [4])
+    Unique semantic responses: 134
+    Unique positional responses: 230
+
+  Instance 428 (ID: nt-1730, 6 rows):
+    Question: 51st position and 31st position were both obtained by this runner at which compe...
+    Semantic consistency: 93.47% (most common: [2, 5])
+    Positional consistency: 7.08% (most common: [1, 4])
+    Unique semantic responses: 13
+    Unique positional responses: 19
+
+  Instance 429 (ID: nt-1737, 10 rows):
+    Question: the top ranked nation for total medals won...
+    Semantic consistency: 99.87% (most common: [0])
+    Positional consistency: 99.87% (most common: [0])
+    Unique semantic responses: 3
+    Unique positional responses: 4
+
+  Instance 430 (ID: nt-1739, 9 rows):
+    Question: how many publications have the same score as 1up.com?...
+    Semantic consistency: 79.60% (most common: [])
+    Positional consistency: 79.60% (most common: [])
+    Unique semantic responses: 76
+    Unique positional responses: 108
+
+  Instance 431 (ID: nt-1742, 7 rows):
+    Question: who took office in 2000?...
+    Semantic consistency: 42.83% (most common: [1, 2])
+    Positional consistency: 8.27% (most common: [2])
+    Unique semantic responses: 46
+    Unique positional responses: 67
+
+  Instance 432 (ID: nt-1743, 9 rows):
+    Question: how many quarterfinals were won by the atlantic coast conference?...
+    Semantic consistency: 85.77% (most common: [0])
+    Positional consistency: 12.03% (most common: [7])
+    Unique semantic responses: 36
+    Unique positional responses: 19
+
+  Instance 433 (ID: nt-1749, 7 rows):
+    Question: which series was held for 3 consecutive years?...
+    Semantic consistency: 92.57% (most common: [])
+    Positional consistency: 92.57% (most common: [])
+    Unique semantic responses: 29
+    Unique positional responses: 54
+
+  Instance 434 (ID: nt-1751, 10 rows):
+    Question: how many v8 engines competed in the 1982 british formula one season?...
+    Semantic consistency: 26.40% (most common: [0, 1, 2, 3, 4, 5, 7, 8, 9])
+    Positional consistency: 4.27% (most common: [0, 1, 2, 3, 4, 5, 6, 7, 8])
+    Unique semantic responses: 98
+    Unique positional responses: 157
+
+  Instance 435 (ID: nt-1754, 10 rows):
+    Question: marek le&#347;niak's first international goal was scored against what country?...
+    Semantic consistency: 93.83% (most common: [])
+    Positional consistency: 93.83% (most common: [])
+    Unique semantic responses: 81
+    Unique positional responses: 132
+
+  Instance 436 (ID: nt-1759, 10 rows):
+    Question: which had a longer barrel, the remington-beals army or navy model revolver in 18...
+    Semantic consistency: 99.87% (most common: [0, 1])
+    Positional consistency: 13.50% (most common: [0, 1])
+    Unique semantic responses: 4
+    Unique positional responses: 10
+
+  Instance 437 (ID: nt-1761, 6 rows):
+    Question: how long was her was her champoinship and olympice career?...
+    Semantic consistency: 92.64% (most common: [])
+    Positional consistency: 92.64% (most common: [])
+    Unique semantic responses: 17
+    Unique positional responses: 16
+
+  Instance 438 (ID: nt-1771, 10 rows):
+    Question: what is the only department witj 5 total deputies...
+    Semantic consistency: 46.40% (most common: [8])
+    Positional consistency: 23.23% (most common: [2])
+    Unique semantic responses: 27
+    Unique positional responses: 43
+
+  Instance 439 (ID: nt-1773, 9 rows):
+    Question: which year did switzerland not win 10 gold metals in the winter paralympics? 197...
+    Semantic consistency: 70.93% (most common: [])
+    Positional consistency: 70.90% (most common: [])
+    Unique semantic responses: 210
+    Unique positional responses: 262
+
+  Instance 440 (ID: nt-1774, 9 rows):
+    Question: which airlines have not commenced operations as of 2013?...
+    Semantic consistency: 8.43% (most common: [3, 8])
+    Positional consistency: 2.10% (most common: [0, 2, 4, 5, 6, 8])
+    Unique semantic responses: 254
+    Unique positional responses: 391
+
+  Instance 441 (ID: nt-1776, 8 rows):
+    Question: what is the total count of stars for european countries?...
+    Semantic consistency: 13.57% (most common: [1, 2, 5, 6, 7])
+    Positional consistency: 2.83% (most common: [])
+    Unique semantic responses: 114
+    Unique positional responses: 207
+
+  Instance 442 (ID: nt-1781, 8 rows):
+    Question: who comes before marco loughran?...
+    Semantic consistency: 5.63% (most common: [0, 1, 2, 3, 4, 6, 7])
+    Positional consistency: 12.30% (most common: [0, 1, 2, 3, 5, 6])
+    Unique semantic responses: 218
+    Unique positional responses: 181
+
+  Instance 443 (ID: nt-1784, 7 rows):
+    Question: how many new points did nikolay davydenko have?...
+    Semantic consistency: 87.87% (most common: [1])
+    Positional consistency: 17.20% (most common: [2])
+    Unique semantic responses: 13
+    Unique positional responses: 12
+
+  Instance 444 (ID: nt-1785, 10 rows):
+    Question: in the 2009 asian championships, china took 3rd. what place did china take in th...
+    Semantic consistency: 48.90% (most common: [3])
+    Positional consistency: 20.50% (most common: [2])
+    Unique semantic responses: 16
+    Unique positional responses: 16
+
+  Instance 445 (ID: nt-1786, 8 rows):
+    Question: what is the number of universities with more than 1,000 in academic staff?...
+    Semantic consistency: 24.73% (most common: [1, 4, 5, 6, 7])
+    Positional consistency: 1.93% (most common: [2, 3, 6, 7])
+    Unique semantic responses: 54
+    Unique positional responses: 186
+
+  Instance 446 (ID: nt-1794, 8 rows):
+    Question: what was the largest prize awarded to soviet song in 2004?...
+    Semantic consistency: 86.40% (most common: [])
+    Positional consistency: 86.40% (most common: [])
+    Unique semantic responses: 15
+    Unique positional responses: 35
+
+  Instance 447 (ID: nt-1803, 7 rows):
+    Question: what community has the largest area in acres?...
+    Semantic consistency: 69.00% (most common: [2])
+    Positional consistency: 32.07% (most common: [2])
+    Unique semantic responses: 10
+    Unique positional responses: 10
+
+  Instance 448 (ID: nt-1814, 9 rows):
+    Question: in what competition did this competitor place the same as he did at the 1984 oly...
+    Semantic consistency: 8.53% (most common: [2, 6])
+    Positional consistency: 7.37% (most common: [1, 6])
+    Unique semantic responses: 341
+    Unique positional responses: 172
+
+  Instance 449 (ID: nt-1819, 9 rows):
+    Question: was it azeta racing or target racing that won the misano world circuit?...
+    Semantic consistency: 94.33% (most common: [1])
+    Positional consistency: 11.87% (most common: [2])
+    Unique semantic responses: 40
+    Unique positional responses: 44
+
+  Instance 450 (ID: nt-1825, 10 rows):
+    Question: what was the number of people in the t* category of the 1986 masters tournament?...
+    Semantic consistency: 45.87% (most common: [])
+    Positional consistency: 45.87% (most common: [])
+    Unique semantic responses: 197
+    Unique positional responses: 322
+
+  Instance 451 (ID: nt-1836, 9 rows):
+    Question: how many movies has morrison acted in after 2010?...
+    Semantic consistency: 77.40% (most common: [])
+    Positional consistency: 77.40% (most common: [])
+    Unique semantic responses: 112
+    Unique positional responses: 93
+
+  Instance 452 (ID: nt-1839, 8 rows):
+    Question: who was the last pick in round four?...
+    Semantic consistency: 19.67% (most common: [7])
+    Positional consistency: 83.57% (most common: [7])
+    Unique semantic responses: 10
+    Unique positional responses: 7
+
+  Instance 453 (ID: nt-1840, 7 rows):
+    Question: what is the first intersecting highway town heading east on pr 243?...
+    Semantic consistency: 70.23% (most common: [1])
+    Positional consistency: 16.63% (most common: [2])
+    Unique semantic responses: 19
+    Unique positional responses: 30
+
+  Instance 454 (ID: nt-1842, 10 rows):
+    Question: what is the last date on the chart?...
+    Semantic consistency: 13.53% (most common: [9])
+    Positional consistency: 99.23% (most common: [9])
+    Unique semantic responses: 14
+    Unique positional responses: 4
+
+  Instance 455 (ID: nt-1844, 10 rows):
+    Question: which player won more money that skee riegel?...
+    Semantic consistency: 25.77% (most common: [0, 2, 3])
+    Positional consistency: 2.50% (most common: [0, 8, 9])
+    Unique semantic responses: 191
+    Unique positional responses: 356
+
+  Instance 456 (ID: nt-1848, 9 rows):
+    Question: how many different names (variants not included) are there?...
+    Semantic consistency: 36.10% (most common: [8])
+    Positional consistency: 9.37% (most common: [8])
+    Unique semantic responses: 258
+    Unique positional responses: 272
+
+  Instance 457 (ID: nt-1852, 7 rows):
+    Question: how many teams won at least 85 games?...
+    Semantic consistency: 19.53% (most common: [1, 2, 3, 4])
+    Positional consistency: 7.00% (most common: [0, 4, 5])
+    Unique semantic responses: 45
+    Unique positional responses: 103
+
+  Instance 458 (ID: nt-1857, 10 rows):
+    Question: in which year was the least amount of earnings won?...
+    Semantic consistency: 65.63% (most common: [8])
+    Positional consistency: 15.03% (most common: [0])
+    Unique semantic responses: 60
+    Unique positional responses: 153
+
+  Instance 459 (ID: nt-1863, 10 rows):
+    Question: who scored more goals: mccoist or hateley?...
+    Semantic consistency: 15.70% (most common: [0, 2, 3, 4])
+    Positional consistency: 5.33% (most common: [])
+    Unique semantic responses: 166
+    Unique positional responses: 541
+
+  Instance 460 (ID: nt-1865, 10 rows):
+    Question: when was the first ship laid down?...
+    Semantic consistency: 52.40% (most common: [0])
+    Positional consistency: 52.40% (most common: [0])
+    Unique semantic responses: 10
+    Unique positional responses: 9
+
+  Instance 461 (ID: nt-1871, 7 rows):
+    Question: what is the total numbers of medals won by ecuador?...
+    Semantic consistency: 84.40% (most common: [4])
+    Positional consistency: 14.73% (most common: [6])
+    Unique semantic responses: 23
+    Unique positional responses: 18
+
+  Instance 462 (ID: nt-1873, 10 rows):
+    Question: how many athletes represented canada?...
+    Semantic consistency: 100.00% (most common: [])
+    Positional consistency: 100.00% (most common: [])
+    Unique semantic responses: 1
+    Unique positional responses: 1
+
+  Instance 463 (ID: nt-1875, 9 rows):
+    Question: how many languages has he been in that are in the telugu language?...
+    Semantic consistency: 41.50% (most common: [4, 6])
+    Positional consistency: 3.27% (most common: [])
+    Unique semantic responses: 89
+    Unique positional responses: 226
+
+  Instance 464 (ID: nt-1876, 9 rows):
+    Question: what home team is listed before manchester city?...
+    Semantic consistency: 15.63% (most common: [0])
+    Positional consistency: 15.67% (most common: [2])
+    Unique semantic responses: 65
+    Unique positional responses: 50
+
+  Instance 465 (ID: nt-1877, 8 rows):
+    Question: which tie number has the same score as tie number 5?...
+    Semantic consistency: 61.87% (most common: [])
+    Positional consistency: 61.83% (most common: [])
+    Unique semantic responses: 132
+    Unique positional responses: 94
+
+  Instance 466 (ID: nt-1878, 8 rows):
+    Question: how many of the singles are under the chart of pop singles?...
+    Semantic consistency: 35.40% (most common: [2, 4, 7])
+    Positional consistency: 2.67% (most common: [1, 5, 6])
+    Unique semantic responses: 101
+    Unique positional responses: 229
+
+  Instance 467 (ID: nt-1882, 8 rows):
+    Question: how many consecutive times was the opponent team shakhtar donetsk?...
+    Semantic consistency: 54.93% (most common: [2, 3])
+    Positional consistency: 8.27% (most common: [])
+    Unique semantic responses: 62
+    Unique positional responses: 95
+
+  Instance 468 (ID: nt-1886, 7 rows):
+    Question: which player was not a free agent?...
+    Semantic consistency: 64.63% (most common: [])
+    Positional consistency: 64.63% (most common: [])
+    Unique semantic responses: 68
+    Unique positional responses: 77
+
+  Instance 469 (ID: nt-1887, 10 rows):
+    Question: what were the total amount of successful defenses andre ward had?...
+    Semantic consistency: 62.67% (most common: [5])
+    Positional consistency: 16.90% (most common: [5])
+    Unique semantic responses: 27
+    Unique positional responses: 20
+
+  Instance 470 (ID: nt-1894, 7 rows):
+    Question: what is the number of channels she has appeared on?...
+    Semantic consistency: 24.27% (most common: [0, 1, 2, 3, 4, 5, 6])
+    Positional consistency: 24.27% (most common: [0, 1, 2, 3, 4, 5, 6])
+    Unique semantic responses: 69
+    Unique positional responses: 48
+
+  Instance 471 (ID: nt-1907, 9 rows):
+    Question: what is the total amount on medals awarded?...
+    Semantic consistency: 61.53% (most common: [])
+    Positional consistency: 61.47% (most common: [])
+    Unique semantic responses: 25
+    Unique positional responses: 41
+
+  Instance 472 (ID: nt-1914, 8 rows):
+    Question: what is the name of the horse after outbound?...
+    Semantic consistency: 9.57% (most common: [])
+    Positional consistency: 13.07% (most common: [2])
+    Unique semantic responses: 51
+    Unique positional responses: 38
+
+  Instance 473 (ID: nt-1915, 8 rows):
+    Question: who is the only swimmer with a time under 2:30?...
+    Semantic consistency: 54.33% (most common: [])
+    Positional consistency: 54.33% (most common: [])
+    Unique semantic responses: 13
+    Unique positional responses: 34
+
+  Instance 474 (ID: nt-1921, 7 rows):
+    Question: which bainbridge class destroyer was launched before december 1900?...
+    Semantic consistency: 52.87% (most common: [])
+    Positional consistency: 52.87% (most common: [])
+    Unique semantic responses: 29
+    Unique positional responses: 28
+
+  Instance 475 (ID: nt-1924, 9 rows):
+    Question: only year in which switzerland earned 9 silver medals...
+    Semantic consistency: 98.70% (most common: [])
+    Positional consistency: 98.70% (most common: [])
+    Unique semantic responses: 9
+    Unique positional responses: 10
+
+  Instance 476 (ID: nt-1926, 10 rows):
+    Question: who was the co-driver of the first place driver?...
+    Semantic consistency: 99.93% (most common: [0])
+    Positional consistency: 99.93% (most common: [0])
+    Unique semantic responses: 2
+    Unique positional responses: 2
+
+  Instance 477 (ID: nt-1927, 8 rows):
+    Question: does cadiz or granada have a laerger population?...
+    Semantic consistency: 89.10% (most common: [1, 3])
+    Positional consistency: 5.00% (most common: [3, 4])
+    Unique semantic responses: 27
+    Unique positional responses: 30
+
+  Instance 478 (ID: nt-1928, 8 rows):
+    Question: during the 2010 pre-season, who did the la clippers play after utah?...
+    Semantic consistency: 18.67% (most common: [5, 6])
+    Positional consistency: 16.57% (most common: [6])
+    Unique semantic responses: 37
+    Unique positional responses: 43
+
+  Instance 479 (ID: nt-1930, 9 rows):
+    Question: other than 1984, what year did he place first?...
+    Semantic consistency: 42.07% (most common: [0, 2])
+    Positional consistency: 4.47% (most common: [2, 7])
+    Unique semantic responses: 97
+    Unique positional responses: 175
+
+  Instance 480 (ID: nt-1932, 7 rows):
+    Question: which country has the most third place winnings?...
+    Semantic consistency: 72.37% (most common: [])
+    Positional consistency: 72.37% (most common: [])
+    Unique semantic responses: 132
+    Unique positional responses: 132
+
+  Instance 481 (ID: nt-1942, 8 rows):
+    Question: what was the score previous to the benin opponent?...
+    Semantic consistency: 17.07% (most common: [0])
+    Positional consistency: 32.60% (most common: [2])
+    Unique semantic responses: 21
+    Unique positional responses: 24
+
+  Instance 482 (ID: nt-1945, 10 rows):
+    Question: what was china's average position in the asian championships between 2002 and 20...
+    Semantic consistency: 44.30% (most common: [3, 9])
+    Positional consistency: 7.57% (most common: [2, 6])
+    Unique semantic responses: 66
+    Unique positional responses: 131
+
+  Instance 483 (ID: nt-1950, 10 rows):
+    Question: are there more silver or bronze medals in total?...
+    Semantic consistency: 49.90% (most common: [])
+    Positional consistency: 49.90% (most common: [])
+    Unique semantic responses: 16
+    Unique positional responses: 24
+
+  Instance 484 (ID: nt-1951, 8 rows):
+    Question: what is the higher number of meters listed in the notes section of the table?...
+    Semantic consistency: 45.87% (most common: [5])
+    Positional consistency: 14.83% (most common: [5])
+    Unique semantic responses: 120
+    Unique positional responses: 211
+
+  Instance 485 (ID: nt-1953, 10 rows):
+    Question: how many players scored at least 25 or more points?...
+    Semantic consistency: 23.27% (most common: [0, 1, 2, 3, 4, 5])
+    Positional consistency: 4.73% (most common: [])
+    Unique semantic responses: 129
+    Unique positional responses: 582
+
+  Instance 486 (ID: nt-1955, 7 rows):
+    Question: how many seats were in the parliament for the february 27, 1994 election?...
+    Semantic consistency: 86.10% (most common: [6])
+    Positional consistency: 15.23% (most common: [2])
+    Unique semantic responses: 13
+    Unique positional responses: 13
+
+  Instance 487 (ID: nt-1960, 10 rows):
+    Question: how many more locks does caledonian canal have compared to aberdeenshire canal?...
+    Semantic consistency: 87.97% (most common: [0, 2])
+    Positional consistency: 11.57% (most common: [0, 1])
+    Unique semantic responses: 11
+    Unique positional responses: 21
+
+  Instance 488 (ID: nt-1964, 7 rows):
+    Question: how many ministers were in office less than a year?...
+    Semantic consistency: 93.07% (most common: [])
+    Positional consistency: 93.07% (most common: [])
+    Unique semantic responses: 36
+    Unique positional responses: 52
+
+  Instance 489 (ID: nt-1968, 7 rows):
+    Question: which team was the only one to have triple digit wins?...
+    Semantic consistency: 88.93% (most common: [0])
+    Positional consistency: 14.83% (most common: [5])
+    Unique semantic responses: 10
+    Unique positional responses: 22
+
+  Instance 490 (ID: nt-1969, 10 rows):
+    Question: which year was rosi mittermaier's last season?...
+    Semantic consistency: 98.27% (most common: [])
+    Positional consistency: 98.27% (most common: [])
+    Unique semantic responses: 7
+    Unique positional responses: 9
+
+  Instance 491 (ID: nt-1971, 8 rows):
+    Question: is the total number of venues above or below 6?...
+    Semantic consistency: 99.73% (most common: [])
+    Positional consistency: 99.73% (most common: [])
+    Unique semantic responses: 6
+    Unique positional responses: 5
+
+  Instance 492 (ID: nt-1972, 7 rows):
+    Question: how many cities are represented in the intersecting highway category?...
+    Semantic consistency: 80.83% (most common: [])
+    Positional consistency: 80.83% (most common: [])
+    Unique semantic responses: 60
+    Unique positional responses: 58
+
+  Instance 493 (ID: nt-1980, 8 rows):
+    Question: which pollutant had the same emission standard as pm10?...
+    Semantic consistency: 72.93% (most common: [3])
+    Positional consistency: 12.33% (most common: [2])
+    Unique semantic responses: 34
+    Unique positional responses: 73
+
+  Instance 494 (ID: nt-1981, 8 rows):
+    Question: how many swimmers swam faster than 1:03.59?...
+    Semantic consistency: 13.33% (most common: [0, 1])
+    Positional consistency: 2.23% (most common: [6, 7])
+    Unique semantic responses: 123
+    Unique positional responses: 210
+
+  Instance 495 (ID: nt-1983, 9 rows):
+    Question: what is the number of people in attendance on january 30, 1968?...
+    Semantic consistency: 67.60% (most common: [1])
+    Positional consistency: 21.57% (most common: [2])
+    Unique semantic responses: 21
+    Unique positional responses: 29
+
+  Instance 496 (ID: nt-1986, 6 rows):
+    Question: how many albums were released in the 1970's?...
+    Semantic consistency: 37.36% (most common: [0, 1, 2, 3])
+    Positional consistency: 13.06% (most common: [1, 2, 3, 5])
+    Unique semantic responses: 31
+    Unique positional responses: 49
+
+  Instance 497 (ID: nt-1998, 9 rows):
+    Question: who was the first head of medici?...
+    Semantic consistency: 58.07% (most common: [])
+    Positional consistency: 58.07% (most common: [])
+    Unique semantic responses: 16
+    Unique positional responses: 16
+
+  Instance 498 (ID: nt-2001, 10 rows):
+    Question: who scored more points, hrabak or singson?...
+    Semantic consistency: 95.13% (most common: [8, 9])
+    Positional consistency: 4.23% (most common: [3, 4])
+    Unique semantic responses: 14
+    Unique positional responses: 39
+
+  Instance 499 (ID: nt-2003, 7 rows):
+    Question: did the australian labor part get more votes than the independent party?...
+    Semantic consistency: 40.07% (most common: [])
+    Positional consistency: 40.07% (most common: [])
+    Unique semantic responses: 55
+    Unique positional responses: 90
+
+  Instance 500 (ID: nt-2004, 9 rows):
+    Question: did the snp or the conservative party get a greater percentage of the vote in th...
+    Semantic consistency: 70.57% (most common: [1, 2])
+    Positional consistency: 5.73% (most common: [0, 2])
+    Unique semantic responses: 63
+    Unique positional responses: 101
+
+Results saved to permutation_test_results.json
+(leap) muaid@vega:~/git/LEAP$
