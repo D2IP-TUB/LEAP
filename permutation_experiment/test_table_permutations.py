@@ -39,11 +39,11 @@ from openai import AsyncOpenAI
 
 
 # Configuration
-VLLM_API_BASE = "http://localhost:8000/v1"
+VLLM_API_BASE = "http://localhost:8001/v1"
 VLLM_MODEL_NAME = None  # Model name (None = use vLLM default, or set to specific model name)
 MAX_ROWS = 10  # Maximum rows per table to keep permutations manageable
 NUM_INSTANCES = 10  # Number of instances to test
-MAX_CONCURRENT_REQUESTS = 64 * 4  # Limit concurrent requests
+MAX_CONCURRENT_REQUESTS = 32 * 4  # Limit concurrent requests
 RANDOM_SEED = 42  # For reproducibility
 MOCK_MODE = False  # Set to True to test without vLLM server
 SHOW_SAMPLE_EVERY = 100  # Show sample prompt/response every N permutations (0 to disable)
