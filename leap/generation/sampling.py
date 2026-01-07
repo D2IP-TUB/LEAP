@@ -55,6 +55,8 @@ class SamplingResult:
     n_valid: int
     winner_votes: int
     total_votes: int
+    candidate_actions: list[str] | None = None
+    valid_actions: list[str] | None = None
 
 
 class SamplingLayer:
@@ -261,6 +263,8 @@ class SamplingLayer:
             n_valid=len(valid_candidates),
             winner_votes=winner_votes,
             total_votes=len(valid_candidates),
+            candidate_actions=[c.to_string() for c in candidates],
+            valid_actions=[c.to_string() for c in valid_candidates],
         )
 
     async def sample_action_two_phase(
@@ -369,6 +373,8 @@ class SamplingLayer:
             n_valid=len(valid_candidates),
             winner_votes=winner_votes,
             total_votes=len(valid_candidates),
+            candidate_actions=[c.to_string() for c in args_candidates],
+            valid_actions=[c.to_string() for c in valid_candidates],
         )
 
     async def generate_candidates(
