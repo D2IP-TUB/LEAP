@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from datasets import load_dataset
+from scipy.optimize import linear_sum_assignment
 
 # --- CONFIGURATION ---
 USE_MOCK = False
@@ -68,7 +69,7 @@ def stable_sinkhorn(log_alpha, n_iters=20, temp=0.1):
 def gumbel_sinkhorn(log_alpha, n_iters=20, temp=0.1, hard=False):
     """
     Gumbel-Sinkhorn: Adds Gumbel noise for exploration, then applies Sinkhorn.
-    If hard=True, uses straight-through estimator for discrete sampling.
+    If hard=True, uses straight-through estimator for discrete sampling with Hungarian matching.
     """
     # Add Gumbel noise
     gumbel_noise = -torch.log(-torch.log(torch.rand_like(log_alpha) + 1e-20) + 1e-20)
@@ -78,10 +79,19 @@ def gumbel_sinkhorn(log_alpha, n_iters=20, temp=0.1, hard=False):
     P_soft = stable_sinkhorn(log_alpha_noisy, n_iters=n_iters, temp=temp)
 
     if hard:
-        # Straight-through estimator: hard selection in forward, soft in backward
-        indices = torch.argmax(P_soft, dim=-1)
+        # Use Hungarian algorithm to find optimal matching (no duplicates!)
+        # Convert to numpy and solve assignment problem (maximize, so negate)
+        cost_matrix = -P_soft.detach().cpu().numpy()
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+        # Convert back to tensor
+        indices = torch.from_numpy(col_ind).to(log_alpha.device)
+
+        # Create hard permutation matrix
         P_hard = torch.zeros_like(P_soft)
-        P_hard.scatter_(1, indices.unsqueeze(1), 1.0)
+        P_hard[row_ind, col_ind] = 1.0
+
+        # Straight-through estimator: hard selection in forward, soft in backward
         P = P_hard - P_soft.detach() + P_soft  # Gradient flows through P_soft
         return P, indices
     else:
@@ -232,4 +242,4 @@ def run_experiment(dataset_index=0):
 
 
 if __name__ == "__main__":
-    run_experiment(0)
+    run_experiment(2)
