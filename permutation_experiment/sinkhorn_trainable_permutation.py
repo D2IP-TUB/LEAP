@@ -572,10 +572,14 @@ def run_experiment(dataset_index=0):
     return best_reward
 
 
-def train_on_multiple_tables(dataset_indices, epochs_per_table=51):
+def train_on_multiple_tables(dataset_indices, epochs_per_table=51, use_interleaved=True):
     """
     Train the generalizable model on multiple tables.
-    This allows the model to learn patterns across different tables.
+
+    Args:
+        dataset_indices: List of table indices to train on
+        epochs_per_table: Total epochs per table
+        use_interleaved: If True, cycle through tables (better). If False, sequential (old approach)
     """
     if not USE_GENERALIZABLE_MODEL:
         print("Error: train_on_multiple_tables requires USE_GENERALIZABLE_MODEL=True")
@@ -583,6 +587,7 @@ def train_on_multiple_tables(dataset_indices, epochs_per_table=51):
 
     print("=" * 80)
     print(f"TRAINING GENERALIZABLE MODEL ON {len(dataset_indices)} TABLES")
+    print(f"Training mode: {'INTERLEAVED (cycling through tables)' if use_interleaved else 'SEQUENTIAL (one table at a time)'}")
     print("=" * 80)
 
     model = PermutationModel(embedding_dim=384, hidden_dim=256)
@@ -590,6 +595,16 @@ def train_on_multiple_tables(dataset_indices, epochs_per_table=51):
 
     ds = load_dataset("wikitablequestions", split="train")
 
+    if use_interleaved:
+        # BETTER: Interleaved training - cycle through all tables
+        return train_interleaved(model, optimizer, ds, dataset_indices, epochs_per_table)
+    else:
+        # OLD: Sequential training - complete each table before moving to next
+        return train_sequential(model, optimizer, ds, dataset_indices, epochs_per_table)
+
+
+def train_sequential(model, optimizer, ds, dataset_indices, epochs_per_table):
+    """Sequential training: Complete all epochs for one table before moving to next."""
     best_overall_reward = -float("inf")
     best_model_state = None
 
@@ -607,12 +622,13 @@ def train_on_multiple_tables(dataset_indices, epochs_per_table=51):
         print(f"Table shape: {df.shape}")
 
         # Train on this table
-        reward = run_single_table_training(model, optimizer, df, question, answers, epochs=epochs_per_table, table_idx=table_idx)
+        reward = run_single_table_training(
+            model, optimizer, df, question, answers, epochs=epochs_per_table, table_idx=table_idx
+        )
 
         if reward > best_overall_reward:
             best_overall_reward = reward
             import copy
-
             best_model_state = copy.deepcopy(model.state_dict())
 
     # Save the final model
@@ -623,6 +639,187 @@ def train_on_multiple_tables(dataset_indices, epochs_per_table=51):
         print(f"💾 Saved best multi-table model to {model_save_path}")
         print(f"Best overall reward: {best_overall_reward:.4f}")
         print(f"{'=' * 80}")
+
+    return best_overall_reward
+
+
+def train_interleaved(model, optimizer, ds, dataset_indices, total_epochs_per_table):
+    """
+    Interleaved training: Cycle through tables, doing a few epochs on each.
+
+    Benefits:
+    - Model sees diverse patterns during training
+    - Reduces catastrophic forgetting
+    - Better generalization
+    - More stable learning
+    """
+    import copy
+
+    # Pre-load all tables and cache embeddings
+    print("\nPre-loading tables and caching embeddings...")
+    tables_data = []
+    for table_idx in dataset_indices:
+        item = ds[table_idx]
+        df = pd.DataFrame(item["table"]["rows"], columns=item["table"]["header"])
+        question = item["question"]
+        answers = item["answers"]
+
+        # Cache embeddings (they don't change during training)
+        with torch.no_grad():
+            cached_embeddings = model.embed_table_and_question(df, question)
+
+        tables_data.append({
+            "idx": table_idx,
+            "df": df,
+            "question": question,
+            "answers": answers,
+            "cached_embeddings": cached_embeddings,
+            "n": len(df),
+        })
+        print(f"  Table {table_idx}: {df.shape}, question: {question[:50]}...")
+
+    print(f"\n✓ Loaded {len(tables_data)} tables")
+
+    # Temperature and entropy schedules (global across all epochs)
+    def temp_schedule(epoch):
+        return max(1.0 * (0.95 ** (epoch / 10)), 0.1)
+
+    def entropy_weight_schedule(epoch):
+        return max(0.01 * (0.99**epoch), 0.001)
+
+    # Tracking
+    best_rewards_per_table = {t["idx"]: -float("inf") for t in tables_data}
+    best_overall_reward = -float("inf")
+    best_model_state = None
+
+    # EMA baseline per table
+    baselines_ema = {t["idx"]: 0.0 for t in tables_data}
+    baseline_ema_alpha = 0.1
+
+    # Training loop: cycle through tables
+    print(f"\n{'=' * 80}")
+    print("STARTING INTERLEAVED TRAINING")
+    print(f"{'=' * 80}")
+
+    epochs_completed_per_table = {t["idx"]: 0 for t in tables_data}
+    global_epoch = 0
+
+    while any(epochs_completed_per_table[t["idx"]] < total_epochs_per_table for t in tables_data):
+        # Cycle through tables
+        for table_data in tables_data:
+            table_idx = table_data["idx"]
+
+            # Skip if this table has completed its epochs
+            if epochs_completed_per_table[table_idx] >= total_epochs_per_table:
+                continue
+
+            # Current epoch for this table
+            table_epoch = epochs_completed_per_table[table_idx]
+
+            df = table_data["df"]
+            question = table_data["question"]
+            answers = table_data["answers"]
+            cached_embeddings = table_data["cached_embeddings"]
+            n = table_data["n"]
+
+            # Get schedules
+            temp = temp_schedule(global_epoch)
+            entropy_weight = entropy_weight_schedule(global_epoch)
+
+            # Sample and evaluate batch
+            optimizer.zero_grad()
+
+            batch_P_soft = []
+            batch_indices = []
+            batch_permuted_dfs = []
+
+            for _ in range(BATCH_SIZE):
+                log_alpha = model(df, question, cached_embeddings=cached_embeddings)
+                P_soft, indices = gumbel_sinkhorn(log_alpha, n_iters=20, temp=temp, hard=True)
+                batch_P_soft.append(P_soft)
+                batch_indices.append(indices)
+                batch_permuted_dfs.append(df.iloc[indices.tolist()])
+
+            # Evaluate all permutations in parallel
+            rewards = asyncio.run(get_rewards_batch(batch_permuted_dfs, question, answers))
+
+            # Update baseline for this table
+            current_batch_avg = sum(rewards) / len(rewards)
+            if table_epoch == 0:
+                baselines_ema[table_idx] = current_batch_avg
+            else:
+                baselines_ema[table_idx] = (1 - baseline_ema_alpha) * baselines_ema[table_idx] + baseline_ema_alpha * current_batch_avg
+
+            # Track best for this table
+            for reward in rewards:
+                if reward > best_rewards_per_table[table_idx]:
+                    best_rewards_per_table[table_idx] = reward
+
+                # Track global best
+                if reward > best_overall_reward:
+                    best_overall_reward = reward
+                    best_model_state = copy.deepcopy(model.state_dict())
+
+            # Compute loss
+            total_policy_loss = 0.0
+            total_entropy = 0.0
+
+            for i in range(BATCH_SIZE):
+                P_soft = batch_P_soft[i]
+                indices = batch_indices[i]
+                reward = rewards[i]
+
+                log_probs = torch.log(P_soft + 1e-9)
+                picked_log_probs = log_probs[torch.arange(n), indices]
+
+                advantage = reward - baselines_ema[table_idx]
+                total_policy_loss += -advantage * picked_log_probs.sum()
+
+                entropy = -(P_soft * torch.log(P_soft + 1e-9)).sum()
+                total_entropy += entropy
+
+            # Average and add entropy bonus
+            policy_loss = total_policy_loss / BATCH_SIZE
+            avg_entropy = total_entropy / BATCH_SIZE
+            entropy_bonus = -entropy_weight * avg_entropy
+            loss = policy_loss + entropy_bonus
+
+            # Update
+            if not torch.isnan(loss) and not torch.isinf(loss):
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+                optimizer.step()
+
+            # Logging every 10 epochs per table
+            if table_epoch % 10 == 0:
+                avg_reward = sum(rewards) / len(rewards)
+                print(
+                    f"Global {global_epoch:03d} | Table {table_idx} Epoch {table_epoch:02d}/{total_epochs_per_table} | "
+                    f"Avg: {avg_reward:+.4f} | Best: {best_rewards_per_table[table_idx]:+.4f} | "
+                    f"Temp: {temp:.3f}"
+                )
+
+            epochs_completed_per_table[table_idx] += 1
+            global_epoch += 1
+
+    # Final summary
+    print(f"\n{'=' * 80}")
+    print("TRAINING COMPLETE")
+    print(f"{'=' * 80}")
+    print(f"Total global epochs: {global_epoch}")
+    print(f"Best rewards per table:")
+    for table_idx, reward in best_rewards_per_table.items():
+        print(f"  Table {table_idx}: {reward:+.4f}")
+    print(f"Best overall reward: {best_overall_reward:+.4f}")
+
+    # Save the final model
+    if best_model_state is not None:
+        model_save_path = "permutation_model_multi_table.pt"
+        torch.save(best_model_state, model_save_path)
+        print(f"\n💾 Saved best multi-table model to {model_save_path}")
+        print(f"{'=' * 80}")
+
+    return best_overall_reward
 
 
 def run_single_table_training(model, optimizer, df, question, answers, epochs=51, table_idx=0):
@@ -899,7 +1096,7 @@ if __name__ == "__main__":
 
     # Evaluation on test set
     # Test on tables that were NOT in training (5-14)
-    test_set_indices = [5, 6, 7, 8, 9, 10, 12, 13, 14]
+    test_set_indices = [5, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     results = evaluate_on_test_set(
         model_path="permutation_model_multi_table.pt",
         test_indices=test_set_indices,
