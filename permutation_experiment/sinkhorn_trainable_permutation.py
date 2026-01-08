@@ -755,51 +755,153 @@ def load_and_infer(model_path, df, question):
     return permuted_df, indices.tolist()
 
 
+def evaluate_on_test_set(model_path, test_indices, dataset_split="train"):
+    """
+    Evaluate trained model on a test set, comparing learned permutations vs canonical ordering.
+
+    Args:
+        model_path: Path to saved model (.pt file)
+        test_indices: List of dataset indices to evaluate on
+        dataset_split: Dataset split to use ("train", "validation", "test")
+
+    Returns:
+        results: Dictionary with detailed results
+    """
+    print("\n" + "=" * 80)
+    print(f"EVALUATING MODEL ON TEST SET ({len(test_indices)} tables)")
+    print("=" * 80)
+    print(f"Model: {model_path}")
+    print(f"Dataset split: {dataset_split}")
+    print(f"Test indices: {test_indices}")
+
+    ds = load_dataset("wikitablequestions", split=dataset_split)
+
+    results = {
+        "test_indices": test_indices,
+        "canonical_rewards": [],
+        "learned_rewards": [],
+        "improvements": [],
+        "learned_permutations": [],
+        "questions": [],
+        "table_shapes": [],
+    }
+
+    for idx in test_indices:
+        print(f"\n{'=' * 80}")
+        print(f"Evaluating Table {idx}")
+        print(f"{'=' * 80}")
+
+        # Load data
+        item = ds[idx]
+        df = pd.DataFrame(item["table"]["rows"], columns=item["table"]["header"])
+        question = item["question"]
+        answers = item["answers"]
+
+        print(f"Question: {question}")
+        print(f"Table shape: {df.shape}")
+        print(f"Ground truth: {answers}")
+
+        # Evaluate CANONICAL ordering (original table order)
+        print("\n--- Canonical Ordering (Original) ---")
+        canonical_reward = get_llm_reward(df, question, answers)
+        print(f"Canonical Reward: {canonical_reward:.4f}")
+
+        # Evaluate LEARNED permutation
+        print("\n--- Learned Permutation ---")
+        permuted_df, indices = load_and_infer(model_path, df, question)
+        print(f"Permutation: {indices}")
+        learned_reward = get_llm_reward(permuted_df, question, answers)
+        print(f"Learned Reward: {learned_reward:.4f}")
+
+        # Compare
+        improvement = learned_reward - canonical_reward
+        print(f"\n--- Comparison ---")
+        print(f"Canonical: {canonical_reward:.4f}")
+        print(f"Learned:   {learned_reward:.4f}")
+        print(f"Improvement: {improvement:+.4f}")
+
+        if improvement > 0.01:
+            print("✓ IMPROVED - Learned permutation is better!")
+        elif improvement < -0.01:
+            print("✗ WORSE - Learned permutation is worse")
+        else:
+            print("≈ SAME - No significant difference")
+
+        # Store results
+        results["canonical_rewards"].append(canonical_reward)
+        results["learned_rewards"].append(learned_reward)
+        results["improvements"].append(improvement)
+        results["learned_permutations"].append(indices)
+        results["questions"].append(question)
+        results["table_shapes"].append(df.shape)
+
+    # Summary statistics
+    print("\n" + "=" * 80)
+    print("TEST SET SUMMARY")
+    print("=" * 80)
+
+    avg_canonical = sum(results["canonical_rewards"]) / len(results["canonical_rewards"])
+    avg_learned = sum(results["learned_rewards"]) / len(results["learned_rewards"])
+    avg_improvement = sum(results["improvements"]) / len(results["improvements"])
+
+    num_improved = sum(1 for imp in results["improvements"] if imp > 0.01)
+    num_worse = sum(1 for imp in results["improvements"] if imp < -0.01)
+    num_same = len(results["improvements"]) - num_improved - num_worse
+
+    print(f"\nAverage Canonical Reward:  {avg_canonical:.4f}")
+    print(f"Average Learned Reward:    {avg_learned:.4f}")
+    print(f"Average Improvement:       {avg_improvement:+.4f}")
+
+    print(f"\nOutcomes:")
+    print(f"  Improved:  {num_improved}/{len(test_indices)} ({100 * num_improved / len(test_indices):.1f}%)")
+    print(f"  Worse:     {num_worse}/{len(test_indices)} ({100 * num_worse / len(test_indices):.1f}%)")
+    print(f"  Same:      {num_same}/{len(test_indices)} ({100 * num_same / len(test_indices):.1f}%)")
+
+    # Detailed table
+    print(f"\n{'Table':<8} {'Canonical':<12} {'Learned':<12} {'Improvement':<12} {'Outcome':<10}")
+    print("-" * 60)
+    for i, idx in enumerate(test_indices):
+        can_r = results["canonical_rewards"][i]
+        lea_r = results["learned_rewards"][i]
+        imp = results["improvements"][i]
+
+        if imp > 0.01:
+            outcome = "✓ Better"
+        elif imp < -0.01:
+            outcome = "✗ Worse"
+        else:
+            outcome = "≈ Same"
+
+        print(f"{idx:<8} {can_r:<+12.4f} {lea_r:<+12.4f} {imp:<+12.4f} {outcome:<10}")
+
+    print("\n" + "=" * 80)
+
+    # Store summary stats
+    results["summary"] = {
+        "avg_canonical": avg_canonical,
+        "avg_learned": avg_learned,
+        "avg_improvement": avg_improvement,
+        "num_improved": num_improved,
+        "num_worse": num_worse,
+        "num_same": num_same,
+        "total": len(test_indices),
+    }
+
+    return results
+
+
 if __name__ == "__main__":
     # Single table training example
     # run_experiment(0)
 
-    # Multi-table training example (uncomment to use)
-    train_on_multiple_tables(dataset_indices=[0, 1, 2, 3, 4], epochs_per_table=51)
+    # Multi-table training example
+    # train_on_multiple_tables(dataset_indices=[0, 1, 2, 3, 4], epochs_per_table=EPOCHS_PER_TABLE)
 
-    # Inference example (uncomment to use)
-    ds = load_dataset("wikitablequestions", split="train")
-    item = ds[15]
-    df = pd.DataFrame(item["table"]["rows"], columns=item["table"]["header"])
-    question = item["question"]
-    answers = item["answers"]
-
-    print("\n" + "=" * 80)
-    print("INFERENCE EXAMPLE - Testing Trained Model on Table 5")
-    print("=" * 80)
-    print(f"\nQuestion: {question}")
-    print(f"Ground Truth Answers: {answers}")
-    print(f"\nOriginal table shape: {df.shape}")
-
-    # Get permutation from trained model
-    permuted_df, indices = load_and_infer("permutation_model_multi_table.pt", df, question)
-    print(f"\nLearned Permutation: {indices}")
-    print("\nPermuted Table:")
-    print(permuted_df)
-
-    # Call LLM to get prediction and reward
-    print("\n" + "-" * 80)
-    print("Calling LLM with permuted table...")
-    print("-" * 80)
-
-    reward = get_llm_reward(permuted_df, question, answers)
-
-    print(f"\nReward Score: {reward:.4f}")
-
-    if reward >= 0.95:
-        print("✓ PERFECT - Model generated correct answer with no false positives!")
-    elif reward >= 0.5:
-        print("✓ GOOD - Model generated partially correct answer")
-    elif reward >= 0.0:
-        print("⚠ PARTIAL - Model had some correct selections but also errors")
-    elif reward >= -0.5:
-        print("✗ POOR - Model selected wrong rows")
-    else:
-        print("✗ FAILED - Model did not follow format or gave empty response")
-
-    print("\n" + "=" * 80)
+    # Evaluation on test set
+    # Test on tables that were NOT in training (5-14)
+    test_set_indices = [5, 6, 7, 8, 9, 10, 12, 13, 14]
+    results = evaluate_on_test_set(
+        model_path="permutation_model_multi_table.pt",
+        test_indices=test_set_indices,
+        dataset_split="train"  # Using train split for now, can change to "validation"
+    )
