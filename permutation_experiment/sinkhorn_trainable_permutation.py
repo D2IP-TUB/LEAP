@@ -1,7 +1,8 @@
+import asyncio
 import re
 
+import aiohttp
 import pandas as pd
-import requests
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -11,6 +12,7 @@ from scipy.optimize import linear_sum_assignment
 # --- CONFIGURATION ---
 USE_MOCK = False
 VLLM_URL = "http://localhost:8000/v1/chat/completions"
+BATCH_SIZE = 4  # Number of permutations to sample and evaluate in parallel per epoch
 
 
 # --- 1. YOUR PROMPT FUNCTION (PRESERVED) ---
@@ -106,7 +108,73 @@ def df_to_indexed_csv(df):
 
 
 # --- 3. THE LLM SCORER WITH PARTIAL REWARDS ---
-def get_llm_reward(df, question, ground_truth):
+def parse_and_score_response(generated_text, df, ground_truth):
+    """
+    Helper function to parse LLM response and compute reward.
+
+    Reward structure:
+    - Not parsable / Error: -1.0 (worst - LLM didn't follow format)
+    - Empty selection: -0.8 (very bad - LLM gave up)
+    - No correct rows (all false positives): -0.5 (bad - wrong selection)
+    - Mixed (some correct, some wrong): 0.0 to 0.8 based on F1 score
+    - Perfect (only correct rows, no false positives): 1.0 (best)
+    """
+    match = re.search(r"select\\?_row\(\[(.*?)\]\)", generated_text)
+    if not match:
+        print("Failed to parse LLM response - format error")
+        return -1.0  # Larger penalty for not following format
+
+    try:
+        selected_indices = [int(x.strip()) for x in match.group(1).split(",") if x.strip()]
+        print(f"resulted selection ids after processing {selected_indices}")
+
+        if not selected_indices:
+            print("Empty selection")
+            return -0.8  # Large penalty for empty selection
+
+        # Count true positives and false positives
+        num_correct_rows = 0  # true positives
+        num_wrong_rows = 0  # false positives
+
+        for idx in selected_indices:
+            row_text = " ".join(df.iloc[[idx]].astype(str).values.flatten()).lower()
+            print(f"context selected: {row_text}")
+            row_hit = any(str(ans).lower() in row_text for ans in ground_truth)
+            if row_hit:
+                num_correct_rows += 1
+            else:
+                num_wrong_rows += 1
+
+        # If no correct rows at all (all false positives)
+        if num_correct_rows == 0:
+            print("No correct rows selected")
+            return -0.5  # Moderate penalty for selecting wrong rows
+
+        # Calculate precision and recall-like metrics
+        precision = num_correct_rows / len(selected_indices)
+
+        # Perfect score only if no false positives
+        if num_wrong_rows == 0:
+            print(f"Perfect selection! {num_correct_rows} correct rows, 0 false positives")
+            return 1.0
+
+        # For mixed results, use F1-like score scaled to [0, 0.8]
+        # This penalizes both false positives and gives partial credit
+        # F1 = 2 * precision (we don't have true recall measure)
+        # Scale to [0, 0.8] so perfect (1.0) is reserved for no false positives
+        f1_score = 2 * precision - 1  # Maps precision [0.5, 1.0] to [0, 1.0]
+        reward = max(0.0, min(0.8, f1_score * 0.8))
+
+        print(f"Mixed result: {num_correct_rows} correct, {num_wrong_rows} wrong, precision={precision:.2f}, reward={reward:.2f}")
+        return reward
+
+    except Exception as e:
+        print(f"Scoring Error: {e}")
+        return -1.0  # Larger penalty for errors
+
+
+async def get_llm_reward_async(session, df, question, ground_truth, sample_idx):
+    """Async function to get reward for a single permuted table."""
     table_csv = df_to_indexed_csv(df)
     messages = build_select_row_prompt(table_csv, question)
 
@@ -115,43 +183,27 @@ def get_llm_reward(df, question, ground_truth):
     else:
         payload = {"messages": messages, "temperature": 0}
         try:
-            r = requests.post(VLLM_URL, json=payload, timeout=10)
-            generated_text = r.json()["choices"][0]["message"]["content"]
-            print(f"LLM Response: {generated_text}")
+            async with session.post(VLLM_URL, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                result = await response.json()
+                generated_text = result["choices"][0]["message"]["content"]
+                print(f"Sample {sample_idx} LLM Response: {generated_text}")
         except Exception as e:
-            print(f"vLLM Error: {e}")
+            print(f"Sample {sample_idx} vLLM Error: {e}")
             return 0.0
 
-    match = re.search(r"select\\?_row\(\[(.*?)\]\)", generated_text)
-    if not match:
-        return 0.0
+    return parse_and_score_response(generated_text, df, ground_truth)
 
-    try:
-        selected_indices = [int(x.strip()) for x in match.group(1).split(",") if x.strip()]
-        print(f"resulted selection ids after processing {selected_indices}")
-        if not selected_indices:
-            return 0.0
 
-        has_answer = False
-        num_correct_rows = 0
+async def get_rewards_batch(dfs, question, ground_truth):
+    """Get rewards for multiple permuted tables concurrently."""
+    async with aiohttp.ClientSession() as session:
+        tasks = [get_llm_reward_async(session, df, question, ground_truth, idx) for idx, df in enumerate(dfs)]
+        return await asyncio.gather(*tasks)
 
-        for idx in selected_indices:
-            row_text = " ".join(df.iloc[[idx]].astype(str).values.flatten()).lower()
-            print(f"context selected: {row_text}")
-            row_hit = any(str(ans).lower() in row_text for ans in ground_truth)
-            if row_hit:
-                has_answer = True
-                num_correct_rows += 1
 
-        if not has_answer:
-            return -0.1
-
-        precision = num_correct_rows / len(selected_indices)
-        return 0.5 + (0.5 * precision)
-
-    except Exception as e:
-        print(f"Scoring Error: {e}")
-        return 0.0
+def get_llm_reward(df, question, ground_truth):
+    """Synchronous wrapper for backward compatibility."""
+    return asyncio.run(get_rewards_batch([df], question, ground_truth))[0]
 
 
 # --- 4. MAIN OPTIMIZATION LOOP WITH EXPLORATION ---
@@ -181,7 +233,15 @@ def run_experiment(dataset_index=0):
         return max(0.01 * (0.99**epoch), 0.001)
 
     best_reward = -float("inf")
-    best_indices = None
+
+    # Track training progress
+    training_history = {
+        "epoch": [],
+        "avg_reward": [],
+        "best_reward": [],
+        "min_reward": [],
+        "max_reward": [],
+    }
 
     for epoch in range(51):
         optimizer.zero_grad()
@@ -190,56 +250,144 @@ def run_experiment(dataset_index=0):
         temp = temp_schedule(epoch)
         entropy_weight = entropy_weight_schedule(epoch)
 
-        # Sample permutation with Gumbel-Sinkhorn (exploration!)
-        P_soft, indices = gumbel_sinkhorn(log_alpha, n_iters=20, temp=temp, hard=True)
+        # Sample multiple permutations with Gumbel-Sinkhorn (exploration!)
+        batch_P_soft = []
+        batch_indices = []
+        batch_permuted_dfs = []
 
-        # Evaluate this permutation
-        permuted_df = df.iloc[indices.tolist()]
-        reward = get_llm_reward(permuted_df, question, answers)
+        for _ in range(BATCH_SIZE):
+            P_soft, indices = gumbel_sinkhorn(log_alpha, n_iters=20, temp=temp, hard=True)
+            batch_P_soft.append(P_soft)
+            batch_indices.append(indices)
+            batch_permuted_dfs.append(df.iloc[indices.tolist()])
 
-        # Track best permutation
-        if reward > best_reward:
-            best_reward = reward
-            best_indices = indices.clone()
+        # Evaluate all permutations in parallel
+        rewards = asyncio.run(get_rewards_batch(batch_permuted_dfs, question, answers))
 
-        # Compute log probabilities from the soft distribution
-        log_probs = torch.log(P_soft + 1e-9)
-        picked_log_probs = log_probs[torch.arange(n), indices]
+        # Track best permutation across batch
+        for i, reward in enumerate(rewards):
+            if reward > best_reward:
+                best_reward = reward
 
-        # Policy gradient loss with baseline (use best reward as baseline)
-        baseline = best_reward if epoch > 0 else 0.0
-        advantage = reward - baseline
-        policy_loss = -advantage * picked_log_probs.sum()
+        # Compute policy gradient loss for all samples in batch
+        total_policy_loss = 0.0
+        total_entropy = 0.0
 
-        # Entropy bonus for exploration (encourage diversity)
-        entropy = -(P_soft * torch.log(P_soft + 1e-9)).sum()
-        entropy_bonus = -entropy_weight * entropy
+        for i in range(BATCH_SIZE):
+            P_soft = batch_P_soft[i]
+            indices = batch_indices[i]
+            reward = rewards[i]
+
+            # Compute log probabilities from the soft distribution
+            log_probs = torch.log(P_soft + 1e-9)
+            picked_log_probs = log_probs[torch.arange(n), indices]
+
+            # Policy gradient loss with baseline (use best reward as baseline)
+            baseline = best_reward if epoch > 0 else 0.0
+            advantage = reward - baseline
+            total_policy_loss += -advantage * picked_log_probs.sum()
+
+            # Entropy bonus for exploration (encourage diversity)
+            entropy = -(P_soft * torch.log(P_soft + 1e-9)).sum()
+            total_entropy += entropy
+
+        # Average across batch
+        policy_loss = total_policy_loss / BATCH_SIZE
+        avg_entropy = total_entropy / BATCH_SIZE
+        entropy_bonus = -entropy_weight * avg_entropy
 
         # Total loss
         loss = policy_loss + entropy_bonus
 
-        # Always compute gradients
+        # Compute gradients and update
         loss.backward()
         torch.nn.utils.clip_grad_norm_([log_alpha], max_norm=1.0)
         optimizer.step()
 
+        # Record training metrics
+        avg_reward = sum(rewards) / len(rewards)
+        training_history["epoch"].append(epoch)
+        training_history["avg_reward"].append(avg_reward)
+        training_history["best_reward"].append(best_reward)
+        training_history["min_reward"].append(min(rewards))
+        training_history["max_reward"].append(max(rewards))
+
         if epoch % 10 == 0:
             print(
-                f"Epoch {epoch:03d} | Reward: {reward:+.4f} | Best: {best_reward:+.4f} | "
-                f"Temp: {temp:.3f} | Entropy: {entropy.item():.3f} | Loss: {loss.item():.4f}"
+                f"Epoch {epoch:03d} | Avg Reward: {avg_reward:+.4f} | Best: {best_reward:+.4f} | "
+                f"Temp: {temp:.3f} | Entropy: {avg_entropy.item():.3f} | Loss: {loss.item():.4f}"
             )
 
-    # Use best permutation for final result
+    # Print training improvement summary
+    print("\n" + "=" * 80)
+    print("TRAINING IMPROVEMENT SUMMARY")
+    print("=" * 80)
+
+    initial_avg = training_history["avg_reward"][0]
+    final_avg = training_history["avg_reward"][-1]
+    initial_best = training_history["best_reward"][0]
+    final_best = training_history["best_reward"][-1]
+
+    print("\nInitial Performance (Epoch 0):")
+    print(f"  Average Reward: {initial_avg:+.4f}")
+    print(f"  Best Reward:    {initial_best:+.4f}")
+
+    print(f"\nFinal Performance (Epoch {len(training_history['epoch']) - 1}):")
+    print(f"  Average Reward: {final_avg:+.4f}")
+    print(f"  Best Reward:    {final_best:+.4f}")
+
+    print("\nImprovement:")
+    print(f"  Average Reward: {final_avg - initial_avg:+.4f} ({100 * (final_avg - initial_avg) / (abs(initial_avg) + 1e-6):+.1f}%)")
+    print(f"  Best Reward:    {final_best - initial_best:+.4f} ({100 * (final_best - initial_best) / (abs(initial_best) + 1e-6):+.1f}%)")
+
+    # Show reward progression every 10 epochs
+    print("\nReward Progression:")
+    print(f"{'Epoch':<8} {'Avg Reward':<12} {'Best Reward':<12} {'Min Reward':<12} {'Max Reward':<12}")
+    print("-" * 60)
+    for i in range(0, len(training_history["epoch"]), 10):
+        epoch = training_history["epoch"][i]
+        avg_r = training_history["avg_reward"][i]
+        best_r = training_history["best_reward"][i]
+        min_r = training_history["min_reward"][i]
+        max_r = training_history["max_reward"][i]
+        print(f"{epoch:<8} {avg_r:<+12.4f} {best_r:<+12.4f} {min_r:<+12.4f} {max_r:<+12.4f}")
+
+    # Show final epoch if not already shown
+    if (len(training_history["epoch"]) - 1) % 10 != 0:
+        epoch = training_history["epoch"][-1]
+        avg_r = training_history["avg_reward"][-1]
+        best_r = training_history["best_reward"][-1]
+        min_r = training_history["min_reward"][-1]
+        max_r = training_history["max_reward"][-1]
+        print(f"{epoch:<8} {avg_r:<+12.4f} {best_r:<+12.4f} {min_r:<+12.4f} {max_r:<+12.4f}")
+
+    print("\n" + "=" * 80)
+
+    # Evaluate final results
     with torch.no_grad():
-        final_df = df.iloc[best_indices.tolist()] if best_indices is not None else df
+        # Deterministic model output (what the model actually learned)
+        # Use very low temperature for deterministic behavior
+        P_deterministic, indices_deterministic = gumbel_sinkhorn(log_alpha, n_iters=20, temp=0.01, hard=True)
+        model_df = df.iloc[indices_deterministic.tolist()]
 
-        print("\n--- Final Permuted Table (Best) ---")
-        print(final_df.to_string(index=False))
+        print("\n" + "=" * 80)
+        print("FINAL EVALUATION - LEARNED POLICY")
+        print("=" * 80)
 
-        print(f"generated answer is: {get_llm_reward(final_df, question, answers)}")
-        print(f"correct answers are: {answers}")
-        print(f"Best reward achieved: {best_reward:.4f}")
+        print("\n--- Deterministic Model Output ---")
+        print(model_df.to_string(index=False))
+        print(f"\nPermutation indices: {indices_deterministic.tolist()}")
+
+        model_reward = get_llm_reward(model_df, question, answers)
+        print(f"\nModel Reward: {model_reward:.4f}")
+        print(f"Correct Answers: {answers}")
+        print(f"Best Reward During Training: {best_reward:.4f}")
+
+        if model_reward >= best_reward:
+            print("\n✓ Model achieved best reward!")
+        else:
+            print(f"\n→ Model reward is {best_reward - model_reward:.4f} below best training reward")
 
 
 if __name__ == "__main__":
-    run_experiment(2)
+    run_experiment(0)
