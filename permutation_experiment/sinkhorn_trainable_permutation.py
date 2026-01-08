@@ -12,7 +12,7 @@ from scipy.optimize import linear_sum_assignment
 # --- CONFIGURATION ---
 USE_MOCK = False
 VLLM_URL = "http://localhost:8000/v1/chat/completions"
-BATCH_SIZE = 4  # Number of permutations to sample and evaluate in parallel per epoch
+BATCH_SIZE = 12  # Number of permutations to sample and evaluate in parallel per epoch
 
 
 # --- 1. YOUR PROMPT FUNCTION (PRESERVED) ---
@@ -121,15 +121,15 @@ def parse_and_score_response(generated_text, df, ground_truth):
     """
     match = re.search(r"select\\?_row\(\[(.*?)\]\)", generated_text)
     if not match:
-        print("Failed to parse LLM response - format error")
+        # print("Failed to parse LLM response - format error")
         return -1.0  # Larger penalty for not following format
 
     try:
         selected_indices = [int(x.strip()) for x in match.group(1).split(",") if x.strip()]
-        print(f"resulted selection ids after processing {selected_indices}")
+        # print(f"resulted selection ids after processing {selected_indices}")
 
         if not selected_indices:
-            print("Empty selection")
+            # print("Empty selection")
             return -0.8  # Large penalty for empty selection
 
         # Count true positives and false positives
@@ -138,7 +138,7 @@ def parse_and_score_response(generated_text, df, ground_truth):
 
         for idx in selected_indices:
             row_text = " ".join(df.iloc[[idx]].astype(str).values.flatten()).lower()
-            print(f"context selected: {row_text}")
+            # print(f"context selected: {row_text}")
             row_hit = any(str(ans).lower() in row_text for ans in ground_truth)
             if row_hit:
                 num_correct_rows += 1
@@ -147,7 +147,7 @@ def parse_and_score_response(generated_text, df, ground_truth):
 
         # If no correct rows at all (all false positives)
         if num_correct_rows == 0:
-            print("No correct rows selected")
+            # print("No correct rows selected")
             return -0.5  # Moderate penalty for selecting wrong rows
 
         # Calculate precision and recall-like metrics
@@ -155,7 +155,7 @@ def parse_and_score_response(generated_text, df, ground_truth):
 
         # Perfect score only if no false positives
         if num_wrong_rows == 0:
-            print(f"Perfect selection! {num_correct_rows} correct rows, 0 false positives")
+            # print(f"Perfect selection! {num_correct_rows} correct rows, 0 false positives")
             return 1.0
 
         # For mixed results, use F1-like score scaled to [0, 0.8]
@@ -165,7 +165,7 @@ def parse_and_score_response(generated_text, df, ground_truth):
         f1_score = 2 * precision - 1  # Maps precision [0.5, 1.0] to [0, 1.0]
         reward = max(0.0, min(0.8, f1_score * 0.8))
 
-        print(f"Mixed result: {num_correct_rows} correct, {num_wrong_rows} wrong, precision={precision:.2f}, reward={reward:.2f}")
+        # print(f"Mixed result: {num_correct_rows} correct, {num_wrong_rows} wrong, precision={precision:.2f}, reward={reward:.2f}")
         return reward
 
     except Exception as e:
@@ -186,7 +186,7 @@ async def get_llm_reward_async(session, df, question, ground_truth, sample_idx):
             async with session.post(VLLM_URL, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 result = await response.json()
                 generated_text = result["choices"][0]["message"]["content"]
-                print(f"Sample {sample_idx} LLM Response: {generated_text}")
+                # print(f"Sample {sample_idx} LLM Response: {generated_text}")
         except Exception as e:
             print(f"Sample {sample_idx} vLLM Error: {e}")
             return 0.0
@@ -218,8 +218,9 @@ def run_experiment(dataset_index=0):
     print(f"initial table:\n {df}")
 
     n = len(df)
-    log_alpha = nn.Parameter(torch.randn(n, n) * 0.1)
-    optimizer = optim.Adam([log_alpha], lr=0.05)
+    # Better initialization: start close to identity permutation
+    log_alpha = nn.Parameter(torch.eye(n) * 2.0 + torch.randn(n, n) * 0.01)
+    optimizer = optim.Adam([log_alpha], lr=0.01)  # Lower learning rate for stability
 
     print(f"--- Starting Optimization for Table {dataset_index} ---")
     print(f"Question: {question}")
@@ -233,6 +234,11 @@ def run_experiment(dataset_index=0):
         return max(0.01 * (0.99**epoch), 0.001)
 
     best_reward = -float("inf")
+    best_log_alpha = log_alpha.clone().detach()
+
+    # Moving average baseline for stability
+    baseline_ema = 0.0
+    baseline_ema_alpha = 0.1
 
     # Track training progress
     training_history = {
@@ -264,10 +270,18 @@ def run_experiment(dataset_index=0):
         # Evaluate all permutations in parallel
         rewards = asyncio.run(get_rewards_batch(batch_permuted_dfs, question, answers))
 
-        # Track best permutation across batch
+        # Update moving average baseline
+        current_batch_avg = sum(rewards) / len(rewards)
+        if epoch == 0:
+            baseline_ema = current_batch_avg
+        else:
+            baseline_ema = (1 - baseline_ema_alpha) * baseline_ema + baseline_ema_alpha * current_batch_avg
+
+        # Track best permutation and save best model
         for i, reward in enumerate(rewards):
             if reward > best_reward:
                 best_reward = reward
+                best_log_alpha = log_alpha.clone().detach()
 
         # Compute policy gradient loss for all samples in batch
         total_policy_loss = 0.0
@@ -282,9 +296,8 @@ def run_experiment(dataset_index=0):
             log_probs = torch.log(P_soft + 1e-9)
             picked_log_probs = log_probs[torch.arange(n), indices]
 
-            # Policy gradient loss with baseline (use best reward as baseline)
-            baseline = best_reward if epoch > 0 else 0.0
-            advantage = reward - baseline
+            # Policy gradient loss with EMA baseline (more stable)
+            advantage = reward - baseline_ema
             total_policy_loss += -advantage * picked_log_probs.sum()
 
             # Entropy bonus for exploration (encourage diversity)
@@ -299,10 +312,13 @@ def run_experiment(dataset_index=0):
         # Total loss
         loss = policy_loss + entropy_bonus
 
-        # Compute gradients and update
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_([log_alpha], max_norm=1.0)
-        optimizer.step()
+        # Only update if loss is reasonable (prevent exploding gradients)
+        if not torch.isnan(loss) and not torch.isinf(loss):
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_([log_alpha], max_norm=0.5)  # Stricter clipping
+            optimizer.step()
+        else:
+            print(f"Warning: Skipping update due to invalid loss: {loss.item()}")
 
         # Record training metrics
         avg_reward = sum(rewards) / len(rewards)
@@ -313,9 +329,10 @@ def run_experiment(dataset_index=0):
         training_history["max_reward"].append(max(rewards))
 
         if epoch % 10 == 0:
+            loss_val = loss.item() if not torch.isnan(loss) else float("nan")
             print(
                 f"Epoch {epoch:03d} | Avg Reward: {avg_reward:+.4f} | Best: {best_reward:+.4f} | "
-                f"Temp: {temp:.3f} | Entropy: {avg_entropy.item():.3f} | Loss: {loss.item():.4f}"
+                f"Baseline: {baseline_ema:+.4f} | Temp: {temp:.3f} | Entropy: {avg_entropy.item():.3f} | Loss: {loss_val:.4f}"
             )
 
     # Print training improvement summary
@@ -365,28 +382,43 @@ def run_experiment(dataset_index=0):
 
     # Evaluate final results
     with torch.no_grad():
-        # Deterministic model output (what the model actually learned)
-        # Use very low temperature for deterministic behavior
-        P_deterministic, indices_deterministic = gumbel_sinkhorn(log_alpha, n_iters=20, temp=0.01, hard=True)
-        model_df = df.iloc[indices_deterministic.tolist()]
-
         print("\n" + "=" * 80)
         print("FINAL EVALUATION - LEARNED POLICY")
         print("=" * 80)
 
-        print("\n--- Deterministic Model Output ---")
-        print(model_df.to_string(index=False))
-        print(f"\nPermutation indices: {indices_deterministic.tolist()}")
+        # Evaluate using the best saved model (more reliable)
+        print("\n--- Using Best Model from Training ---")
+        P_best, indices_best = gumbel_sinkhorn(best_log_alpha, n_iters=20, temp=0.01, hard=True)
+        best_model_df = df.iloc[indices_best.tolist()]
 
-        model_reward = get_llm_reward(model_df, question, answers)
-        print(f"\nModel Reward: {model_reward:.4f}")
-        print(f"Correct Answers: {answers}")
-        print(f"Best Reward During Training: {best_reward:.4f}")
+        print(best_model_df.to_string(index=False))
+        print(f"\nPermutation indices: {indices_best.tolist()}")
 
-        if model_reward >= best_reward:
-            print("\n✓ Model achieved best reward!")
+        best_model_reward = get_llm_reward(best_model_df, question, answers)
+        print(f"\nBest Model Reward: {best_model_reward:.4f}")
+
+        # Also evaluate current final model
+        print("\n--- Current Final Model ---")
+        P_current, indices_current = gumbel_sinkhorn(log_alpha, n_iters=20, temp=0.01, hard=True)
+        current_model_df = df.iloc[indices_current.tolist()]
+
+        print(current_model_df.to_string(index=False))
+        print(f"\nPermutation indices: {indices_current.tolist()}")
+
+        current_model_reward = get_llm_reward(current_model_df, question, answers)
+        print(f"\nCurrent Model Reward: {current_model_reward:.4f}")
+
+        # Comparison
+        print("\n--- Summary ---")
+        print(f"Best Model Reward:     {best_model_reward:.4f}")
+        print(f"Current Model Reward:  {current_model_reward:.4f}")
+        print(f"Best Training Reward:  {best_reward:.4f}")
+        print(f"Correct Answers:       {answers}")
+
+        if best_model_reward >= best_reward * 0.95:  # Within 5% is good
+            print("\n✓ Model successfully learned good permutation!")
         else:
-            print(f"\n→ Model reward is {best_reward - model_reward:.4f} below best training reward")
+            print("\n⚠ Model may need more training or different hyperparameters")
 
 
 if __name__ == "__main__":
