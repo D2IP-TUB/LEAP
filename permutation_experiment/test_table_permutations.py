@@ -15,7 +15,8 @@ VLLM_URL = "http://localhost:8000/v1/chat/completions"
 # --- 1. YOUR PROMPT FUNCTION (PRESERVED) ---
 def build_select_row_prompt(table_csv, question):
     system_message = """You are a helpful assistant that selects relevant rows from tables.
-Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are relevant to answering the question.
+Given a table and a question, you should respond with select_row([row_indices]) containing the row numbers that are \
+relevant to answering the question.
 Only output the select_row function call, nothing else."""
 
     example_1_user = """Table:
@@ -64,6 +65,29 @@ def stable_sinkhorn(log_alpha, n_iters=20, temp=0.1):
     return torch.exp(P)
 
 
+def gumbel_sinkhorn(log_alpha, n_iters=20, temp=0.1, hard=False):
+    """
+    Gumbel-Sinkhorn: Adds Gumbel noise for exploration, then applies Sinkhorn.
+    If hard=True, uses straight-through estimator for discrete sampling.
+    """
+    # Add Gumbel noise
+    gumbel_noise = -torch.log(-torch.log(torch.rand_like(log_alpha) + 1e-20) + 1e-20)
+    log_alpha_noisy = log_alpha + gumbel_noise
+
+    # Apply Sinkhorn
+    P_soft = stable_sinkhorn(log_alpha_noisy, n_iters=n_iters, temp=temp)
+
+    if hard:
+        # Straight-through estimator: hard selection in forward, soft in backward
+        indices = torch.argmax(P_soft, dim=-1)
+        P_hard = torch.zeros_like(P_soft)
+        P_hard.scatter_(1, indices.unsqueeze(1), 1.0)
+        P = P_hard - P_soft.detach() + P_soft  # Gradient flows through P_soft
+        return P, indices
+    else:
+        return P_soft, None
+
+
 def df_to_indexed_csv(df):
     csv_str = " ," + ",".join(df.columns) + "\n"
     for i, row in enumerate(df.values):
@@ -77,7 +101,7 @@ def get_llm_reward(df, question, ground_truth):
     messages = build_select_row_prompt(table_csv, question)
 
     if USE_MOCK:
-        generated_text = "select_row([0, 1])"  # Mocking a multi-row selection
+        generated_text = "select_row([0, 1])"
     else:
         payload = {"messages": messages, "temperature": 0}
         try:
@@ -94,16 +118,16 @@ def get_llm_reward(df, question, ground_truth):
 
     try:
         selected_indices = [int(x.strip()) for x in match.group(1).split(",") if x.strip()]
+        print(f"resulted selection ids after processing {selected_indices}")
         if not selected_indices:
             return 0.0
 
-        # PARTIAL REWARD LOGIC:
-        # Base reward: Does the selection contain the answer?
         has_answer = False
         num_correct_rows = 0
 
         for idx in selected_indices:
             row_text = " ".join(df.iloc[[idx]].astype(str).values.flatten()).lower()
+            print(f"context selected: {row_text}")
             row_hit = any(str(ans).lower() in row_text for ans in ground_truth)
             if row_hit:
                 has_answer = True
@@ -112,11 +136,7 @@ def get_llm_reward(df, question, ground_truth):
         if not has_answer:
             return -0.1
 
-        # Efficiency Score: 1.0 if only correct rows selected,
-        # scales down as more "junk" rows are added.
         precision = num_correct_rows / len(selected_indices)
-
-        # Total Reward = 0.5 (for finding it) + 0.5 * precision
         return 0.5 + (0.5 * precision)
 
     except Exception as e:
@@ -124,7 +144,7 @@ def get_llm_reward(df, question, ground_truth):
         return 0.0
 
 
-# --- 4. MAIN OPTIMIZATION LOOP ---
+# --- 4. MAIN OPTIMIZATION LOOP WITH EXPLORATION ---
 def run_experiment(dataset_index=0):
     ds = load_dataset("wikitablequestions", split="train")
     item = ds[dataset_index]
@@ -132,7 +152,6 @@ def run_experiment(dataset_index=0):
     question = item["question"]
     answers = item["answers"]
 
-    # PRESERVED PRINTS
     print(f"initial question:\n {question}")
     print(f"initial table:\n {df}")
 
@@ -143,40 +162,73 @@ def run_experiment(dataset_index=0):
     print(f"--- Starting Optimization for Table {dataset_index} ---")
     print(f"Question: {question}")
 
-    for epoch in range(501):
+    # Temperature schedule: start high for exploration, anneal down
+    def temp_schedule(epoch):
+        return max(1.0 * (0.95 ** (epoch / 10)), 0.1)
+
+    # Entropy bonus schedule: higher early for exploration
+    def entropy_weight_schedule(epoch):
+        return max(0.01 * (0.99**epoch), 0.001)
+
+    best_reward = -float("inf")
+    best_indices = None
+
+    for epoch in range(51):
         optimizer.zero_grad()
-        P_soft = stable_sinkhorn(log_alpha, temp=0.5)
 
-        # Get permutation
-        with torch.no_grad():
-            indices = torch.argmax(P_soft, dim=-1)
-            permuted_df = df.iloc[indices.tolist()]
-            reward = get_llm_reward(permuted_df, question, answers)
+        # Get current temperature
+        temp = temp_schedule(epoch)
+        entropy_weight = entropy_weight_schedule(epoch)
 
+        # Sample permutation with Gumbel-Sinkhorn (exploration!)
+        P_soft, indices = gumbel_sinkhorn(log_alpha, n_iters=20, temp=temp, hard=True)
+
+        # Evaluate this permutation
+        permuted_df = df.iloc[indices.tolist()]
+        reward = get_llm_reward(permuted_df, question, answers)
+
+        # Track best permutation
+        if reward > best_reward:
+            best_reward = reward
+            best_indices = indices.clone()
+
+        # Compute log probabilities from the soft distribution
         log_probs = torch.log(P_soft + 1e-9)
         picked_log_probs = log_probs[torch.arange(n), indices]
 
-        # KEY FIX 1: Always compute gradients, not just when reward > 0
-        # Convert reward to tensor for gradient computation
-        reward_tensor = torch.tensor(reward, dtype=torch.float32)
-        loss = -reward_tensor * picked_log_probs.sum()
+        # Policy gradient loss with baseline (use best reward as baseline)
+        baseline = best_reward if epoch > 0 else 0.0
+        advantage = reward - baseline
+        policy_loss = -advantage * picked_log_probs.sum()
 
-        # KEY FIX 2: Always backward, but clip gradients
+        # Entropy bonus for exploration (encourage diversity)
+        entropy = -(P_soft * torch.log(P_soft + 1e-9)).sum()
+        entropy_bonus = -entropy_weight * entropy
+
+        # Total loss
+        loss = policy_loss + entropy_bonus
+
+        # Always compute gradients
         loss.backward()
         torch.nn.utils.clip_grad_norm_([log_alpha], max_norm=1.0)
         optimizer.step()
 
         if epoch % 10 == 0:
-            print(f"Epoch {epoch:02d} | Reward: {reward:.4f} | Loss: {loss.item():.4f}")
+            print(
+                f"Epoch {epoch:03d} | Reward: {reward:+.4f} | Best: {best_reward:+.4f} | "
+                f"Temp: {temp:.3f} | Entropy: {entropy.item():.3f} | Loss: {loss.item():.4f}"
+            )
 
+    # Use best permutation for final result
     with torch.no_grad():
-        final_indices = torch.argmax(stable_sinkhorn(log_alpha, temp=0.01), dim=-1).tolist()
-        final_df = df.iloc[final_indices]
+        final_df = df.iloc[best_indices.tolist()] if best_indices is not None else df
 
-        # PRESERVED PRINTS
-        print("\n--- Final Permuted Table ---")
+        print("\n--- Final Permuted Table (Best) ---")
         print(final_df.to_string(index=False))
+
+        print(f"generated answer is: {get_llm_reward(final_df, question, answers)}")
         print(f"correct answers are: {answers}")
+        print(f"Best reward achieved: {best_reward:.4f}")
 
 
 if __name__ == "__main__":
