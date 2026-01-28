@@ -180,63 +180,53 @@ class PromptBuilder:
 
     def build_cot_arguments_prompt(
         self,
-        *,
+        # *,
         question: str,
         table: Table,
         action_name: str,
-        action_history: Sequence[str],
         worker,
     ) -> str:
         """Prompt for CoT argument generation."""
-        # Check if we have examples for this action
-        examples_str = ""
-        if self.action_examples and self.action_examples.has_prompt(action_name):
-            examples_str = self.action_examples.get_examples(action_name)
 
-        # Original prompt structure
+        messages = []
+
+        prompt = self.action_examples.get_instruction(action_name)
+        examples, example_answers = self.action_examples.get_examples(action_name)
+
+        for example, example_answer in zip(examples, example_answers):
+            prompt += example
+            messages.append({"role": "user", "content": prompt})
+            messages.append({"role": "assistant", "content": example_answer})
+            prompt = ""
+
         table_str = table.to_csv(max_chars=self.cot_settings.args_table_chars)
-        prompt = f"Table:\n{table_str}\n\n"
-        prompt += f"Question: {question}\n\n"
-
-        if action_history:
-            prompt += "Actions taken so far:\n"
-            for idx, action in enumerate(action_history):
-                prompt += f"{idx + 1}. {action}\n"
-            prompt += "\n"
-
-        prompt += f"Selected action: {action_name}\n"
+        final_prompt = f"Table:\n{table_str}\n\n"
+        final_prompt += f"Question: {question}\n\n"
 
         if action_name == "select_row":
-            prompt += f"Available rows: 0 to {len(table.rows) - 1}\n"
-            instruction_prompt = "Which row indices should be selected? Provide the indices as a list, e.g., [0, 1, 2]\n"
-            instruction_prompt += "Row indices: "
+            final_prompt += f"Available rows: 0 to {len(table.rows) - 1}\n"
+            final_prompt += "Which row indices should be selected? Provide the indices as a list, e.g., [0, 1, 2]\n"
+            final_prompt += "Row indices: "
         elif action_name == "select_column":
-            prompt += f"Available columns: {list(table.columns)}\n"
-            instruction_prompt = 'Which columns should be selected? Provide the column names as a list, e.g., ["Name", "Age"]\n'
-            instruction_prompt += "Column names: "
+            final_prompt += f"Available columns: {list(table.columns)}\n"
+            final_prompt += 'Which columns should be selected? Provide the column names as a list, e.g., ["Name", "Age"]\n'
+            final_prompt += "Column names: "
+
+        messages.append({"role": "user", "content": final_prompt})
+
+        if self.is_instruct:
+            instruct_result = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            return instruct_result
         else:
-            prompt += "No arguments needed for end action.\n"
-            instruction_prompt = "Arguments: "
+            # For non-instruct models, just concatenate the messages
+            result = ""
+            for msg in messages:
+                if msg["role"] == "user":
+                    result += msg["content"] + "\n"
+                else:
+                    result += msg["content"] + "\n\n"
 
-        estimated_length = len(prompt) // 4
-        if estimated_length > worker.max_model_len - self.cot_settings.args_safety_margin_tokens:
-            table_str = table.to_csv(max_chars=self.cot_settings.args_fallback_table_chars)
-            question_short = self._truncate_text(question, self.cot_settings.args_question_truncation)
-            prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
-            prompt += f"Selected action: {action_name}\n"
-
-            if action_name == "select_row":
-                instruction_prompt = f"Which row indices (0 to {len(table.rows) - 1})?\nRow indices: "
-            else:
-                sample_cols = list(table.columns)[:3]
-                instruction_prompt = f"Which columns from {sample_cols}...?\nColumn names: "
-
-        # If we have examples, prepend them to instruction_prompt instead of prompt
-        # This ensures they go INSIDE [INST] tags in instruct mode
-        if examples_str:
-            instruction_prompt = examples_str + instruction_prompt
-
-        return self._append_instruction(prompt, instruction_prompt)
+            return result
 
     def build_query_prompt(
         self,
@@ -298,10 +288,3 @@ class PromptBuilder:
                 else:
                     result += msg["content"] + "\n\n"
             return result
-
-    def _append_instruction(self, prompt: str, instruction_prompt: str) -> str:
-        if self.is_instruct:
-            message = [{"role": "user", "content": instruction_prompt}]
-            addition = self.tokenizer.apply_chat_template(message, tokenize=False, add_generation_prompt=False).strip("<s> ")
-            return prompt + addition
-        return prompt + instruction_prompt

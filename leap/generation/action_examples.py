@@ -10,6 +10,7 @@ This module provides:
 
 from __future__ import annotations
 
+from ast import Tuple
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -178,38 +179,36 @@ class ActionPromptTemplate:
         """
         self.action_name = action_name
         self.examples = examples
-        self.instruction = instruction
-        self._template = self._build_template()
+        self._instructions = instruction
+        self._examples_template = self._build_examples_template()
 
-    def _build_template(self) -> str:
+    def _build_examples_template(self) -> Tuple[List[str], List[str]]:
         """Build the static part of the prompt (just examples in original format)."""
-        parts = []
+        examples = []
+        answers = []
 
         # Add examples in the same format as the original prompt
         # Only include: Table, Question, and Answer
         for i, example in enumerate(self.examples, 1):
             # Add "Table:" prefix to match original format
-            parts.append("Table:")
-            parts.append(example.format_table_for_prompt())
-            parts.append("")
-            parts.append(f"Question: {example.question}")
-            parts.append("")
+            example_parts = []
+            example_parts.append("Table:")
+            example_parts.append(example.format_table_for_prompt())
+            example_parts.append("")
+            example_parts.append(f"Question: {example.question}")
+            example_parts.append("")
+            example_parts.append("The answer is: ")
 
-            # Only add the answer (no explanation or other fields)
-            if example.answer:
-                parts.append(f"The answer is : {example.answer}")
-                parts.append("")
+            examples.append("\n".join(example_parts))
+            answers.append(example.answer)
 
-        return "\n".join(parts)
+        return examples, answers
 
-    def get_examples_only(self) -> str:
-        """
-        Get just the examples part (without current instance).
+    def get_examples_template(self) -> Tuple[List[str], List[str]]:
+        return self._examples_template
 
-        Returns:
-            Examples formatted in the original prompt style
-        """
-        return self._template
+    def get_instructions(self) -> str:
+        return self._instructions
 
 
 class ActionPromptBuilder:
@@ -228,7 +227,7 @@ class ActionPromptBuilder:
             examples_manager: Manager for loading examples. If None, creates default.
         """
         self.examples_manager = examples_manager or ActionExamplesManager()
-        self._templates: Dict[str, ActionPromptTemplate] = {}
+        self._templates: Dict[Tuple[List[str], List[str]], ActionPromptTemplate] = {}
         self._build_all_templates()
 
     def _build_all_templates(self):
@@ -236,27 +235,47 @@ class ActionPromptBuilder:
         # Define instructions for each action
         instructions = {
             "select_row": (
-                "Using f_select_row() to select relevant rows in the given table that support or oppose the statement.\n"
-                "Please use f_select_row([*]) to select all rows in the table."
+                "Use select_row() to select relevant rows in the given table that support or oppose the statement.\n"
+                "Please use select_row([*]) to select all rows in the table."
             ),
             "select_column": (
-                "Use f_select_column() to filter out useless columns in the table according to information in the statement and the table."
+                "Use select_column() to filter out useless columns in the table according to information in the statement and the table."
             ),
             "add_column": (
-                "To answer the question, we can first use f_add_column() to add more columns to the table.\n\n"
+                "Use add_column() to add more columns to the table. This is useful when you want to add information or extract information from another column.\n\n"
                 "The added columns should have these data types:\n"
-                "1. Numerical: the numerical strings that can be used in sort, sum\n"
-                "2. Datetype: the strings that describe a date, such as year, month, day\n"
-                "3. String: other strings"
+                "1. Numerical: the numerical strings that can be used in sort, sum.\n"
+                "2. Datetype: the strings that describe a date, such as year, month, day.\n"
+                "3. String: other strings.\n\n"
+                "Rules:\n"
+                "- The only valid operation is add_column().\n"
+                "- Do not provide any other operation.\n"
+                "- Do not nest operations.\n"
+                "- You must provide as many values as rows in the table.\n"
+                "- Do not provide more details than shown in the examples.\n"
+                "- A valid answer ends like: add_column(column_name, [value_1, value_2, ...])'\n"
             ),
-            "group_by": "To answer the question, we can first use f_group_by() to group the values in a column.",
+            "group_by": (
+                "To answer the question, the next operation is group_by() to group the values in a column.\n\n"
+                "Rules:\n"
+                "- The only valid operation is group_by(column_name).\n"
+                "- Do not provide any other operation.\n"
+                "- Do not nest operation.\n"
+                "- Do not provide more details than shown in the examples.\n"
+                "- A valid answer ends like: Therefore, the answer is: 'group_by(column_name).'"
+            ),
             "sort_by": (
-                "To answer the question, we can first use f_sort_by() to sort the values in a column to get the order of the items."
-                " The order can be 'large to small' or 'small to large'.\n\n"
+                "To answer the question, the next operation is sort_by() to sort the values in a column to get the order of the items. The order can be 'large to small' or 'small to large'.\n\n"
                 "The column to sort should have these data types:\n"
                 "1. Numerical: the numerical strings that can be used in sort\n"
                 "2. DateType: the strings that describe a date, such as year, month, day\n"
-                "3. String: other strings"
+                "3. String: other strings\n\n"
+                "Rules:\n"
+                "- The only valid operation is sort_by(column_name).\n"
+                "- Do not provide any other operation besides the order.\n"
+                "- Do not nest operation. \n"
+                "- Do not provide more details than shown in the examples.\n"
+                "- A valid answer ends like: Therefore, the answer is: 'sort_by(column_name), the order is order'.\n"
             ),
             "action_selection": "",  # No instruction needed for action selection examples
         }
@@ -283,7 +302,13 @@ class ActionPromptBuilder:
         if template is None:
             return None
 
-        return template.get_examples_only()
+        return template.get_examples_template()
+
+    def get_instruction(self, action_name: str) -> str:
+        template = self._templates.get(action_name)
+        if template is None:
+            return None
+        return template.get_instructions()
 
     def has_prompt(self, action_name: str) -> bool:
         """Check if a prompt template exists for this action."""

@@ -225,7 +225,6 @@ class TestCoTPromptFiltering:
             question="What is the average age?",
             table=sample_table,
             action_name="select_column",
-            action_history=action_history,
             worker=mock_worker,
         )
 
@@ -499,7 +498,6 @@ class TestCoTActionHistory:
             question="What is the average age?",
             table=sample_table,
             action_name="select_column",
-            action_history=action_history,
             worker=mock_worker,
         )
 

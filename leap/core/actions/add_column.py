@@ -164,7 +164,7 @@ class AddColumnAction(ActionDefinition):
 
         return None
 
-    def apply(self, table: Table, arguments: Tuple[str, List[str]]) -> Optional[Table]:
+    def apply(self, table: Table, arguments: List) -> Optional[Table]:
         """
         Apply add_column to table.
 
@@ -175,26 +175,28 @@ class AddColumnAction(ActionDefinition):
         Returns:
             New table with added column, or None if invalid
         """
-        if not isinstance(arguments, tuple) or len(arguments) != 2:
+        arguments = tuple(arguments)
+        if len(arguments) != 2:
             return None
-
         column_name, values = arguments
-
         # Validate
         if not column_name or not values:
             return None
-
         if len(values) != len(table.rows):
-            return None
-
+            # Fallback: fill up missing values if fewer values are provided than rows
+            if len(values) < len(table.rows):
+                print("WARNING: Values length less than table rows, filling up with empty strings.")
+                values = list(values) + [""] * (len(table.rows) - len(values))
+            elif len(values) > len(table.rows):
+                print("ERROR: Values length greater than table rows")
+                return None
         # Create new table with added column
         new_columns = list(table.columns) + [column_name]
         new_rows = []
-
         for i, row in enumerate(table.rows):
             new_row = list(row) + [values[i]]
             new_rows.append(new_row)
-
+        print("NEW TABLE CREATED")
         return Table(columns=new_columns, rows=new_rows)
 
     def validate(self, table: Table, arguments: Tuple[str, List[str]]) -> bool:

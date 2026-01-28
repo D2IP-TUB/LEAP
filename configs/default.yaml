@@ -20,7 +20,7 @@ dataset:
   path: null
 
 run:
-  max_examples: 10
+  max_examples: 1
 
 generation:
   use_constraints: false
@@ -34,11 +34,11 @@ generation:
 
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:
-    - add_column
-    - select_row
+    # - select_row
+    # - add_column
     - select_column
-    - group_by
-    - sort_by
+    # - group_by
+    # - sort_by
     - end
     # Note: direct_query is automatically applied after end(), not a separate action
 
@@ -47,7 +47,7 @@ generation:
     n_samples: 8
     per_action_samples:
       add_column: 1  # Generative action - fewer samples needed
-      select_row: 8
+      select_row: 1
       select_column: 8
       group_by: 1  # Deterministic action - fewer samples needed
       sort_by: 1   # Deterministic action - fewer samples needed

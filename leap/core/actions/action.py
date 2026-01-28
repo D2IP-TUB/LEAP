@@ -67,6 +67,20 @@ class Action:
 
                 return cls(action_name, args_list)
 
+            if action_name == "add_column" and "[" in args_str and not args_str.startswith("["):  # TODO: maybe rework?
+                new_col, new_values = tuple(args_str.split(",", 1))
+
+                if new_values.startswith("[") and new_values.endswith("]"):
+                    new_values_parsed = ast.literal_eval(new_values)
+                else:
+                    new_values = new_values.strip().split("[")[1].split("]")[0].strip()
+                    new_values_parsed = [v.replace(r'"', "").strip() for v in new_values.split(",")]
+
+                return cls(action_name, [new_col.strip(), new_values_parsed])
+            elif action_name == "add_column":
+                print("ERROR: Invalid add_column arguments: ", args_str)
+                return None
+
             # Comma-separated format: arg1, arg2, arg3
             if "," in args_str:
                 args_list = [arg.strip() for arg in args_str.split(",")]

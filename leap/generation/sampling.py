@@ -17,6 +17,7 @@ from vllm import SamplingParams
 
 from leap.core import Action, Table
 from leap.core.actions import REGISTRY
+from leap.generation.prompt_builder import PromptBuilder
 from leap.inference.constraints import (
     create_action_only_constraint_processor,
     create_arguments_only_constraint_processor,
@@ -522,7 +523,7 @@ class SamplingLayer:
         step: int,
         temperature: float,
         state_machines,
-        prompt_builder,
+        prompt_builder: PromptBuilder,
         question: str,
     ) -> List[Action]:
         """
@@ -541,12 +542,10 @@ class SamplingLayer:
             try:
                 # Transform context for this sample
                 modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
-
                 # Build fresh args prompt with modified context
                 args_prompt = prompt_builder.build_cot_arguments_prompt(
                     question=question,
                     table=modified_table,
-                    action_history=modified_history,
                     action_name=action_name,
                     worker=worker,
                 )
@@ -673,14 +672,12 @@ class SamplingLayer:
         # - "select_column ([ "Team" ]" -> "[ "Team" ]"
         # - "select_column([ "Team" ]" -> "[ "Team" ]"
         # - "select_([ "0" ]" -> "[ "0" ]"  (partial action name)
-
         # First, try exact action name match
-        pattern = rf"^\s*{re.escape(action_name)}\s*\(?\s*"
-        cleaned = re.sub(pattern, "", args_text, count=1)
 
-        # If that didn't match, try partial match "select_"
-        if cleaned == args_text and args_text.startswith("select_"):
-            # Remove "select_" or "select_row" or "select_column" prefix
-            cleaned = re.sub(r"^\s*select_[a-z]*\s*\(?\s*", "", args_text, count=1)
+        normalized_args_text = args_text.replace("\\", "")
+
+        pattern = rf"^\s*{re.escape(action_name)}\s*\(?\s*"
+        cleaned = re.sub(pattern, "", normalized_args_text, count=1)
+        cleaned = cleaned.replace(")", "")
 
         return cleaned.strip()

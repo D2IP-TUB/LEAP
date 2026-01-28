@@ -302,19 +302,14 @@ class ActionRegistry:
 
         Replaces Action.parse_name_only() logic.
         """
-        text = text.strip().lower()
 
-        # Try exact match first
-        if text in self._actions and self.is_enabled(text):
-            return text
+        names_and_args = text.strip().lower().split("->")
+        names = [aa.strip().split("(")[0].replace("\\", "").strip() for aa in names_and_args]
 
         # Try fuzzy matching with keywords
-        for name in self.get_enabled_names():
-            action = self._actions[name]
-            keywords = action.get_fuzzy_match_keywords()
-            for keyword in keywords:
-                if keyword.lower() in text:
-                    return name
+        for name in names:
+            if self.is_enabled(name):
+                return name
 
         return None
 

@@ -1,5 +1,7 @@
 __pycache__
+.cursor/
 .venv/
 .vscode
+
 logs/
 datasets/

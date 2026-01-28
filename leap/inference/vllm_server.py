@@ -94,6 +94,13 @@ class VLLMWorkerProcess(mp.Process):
             # Set GPU visibility for this process
             os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, self.gpu_ids))
 
+            # Configure enabled actions for this worker process
+            # Each worker has its own REGISTRY instance that needs to be configured
+            if self.generation_config.enabled_actions is not None:
+                from leap.core.actions import REGISTRY
+
+                REGISTRY.set_enabled_actions(list(self.generation_config.enabled_actions))
+
             generation_mode = self._get_generation_mode_string()
             print(f"Worker {self.worker_id} starting with GPUs: {self.gpu_ids}, mode: {generation_mode}")
 
