@@ -326,12 +326,12 @@ class ActionPromptBuilder:
         """
         if action_name == "select_row":
             return (
-                f"Available rows: 0 to {len(table.rows) - 1}\n"
+                f"Available rows: row 0 to row {len(table.rows) - 1}\n"
                 "Rules:\n"
-                "- The only valid operation is select_row([row_indices]).\n"
+                "- The only valid operation is select_row([row 0, row 1, ...]).\n"
                 "- Do not nest operation. \n"
                 "- Do not provide more details than shown in the examples\n"
-                "- A valid answer must end like this: The answer is: 'select_row([row_indices]).'\n"
+                "- A valid answer must end like this: The answer is: 'select_row([row 0, row 1, ...]).'\n"
             )
         elif action_name == "select_column":
             return (

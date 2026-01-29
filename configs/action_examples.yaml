@@ -30,17 +30,17 @@ examples:
     - table: " ,rank,airline,country,fleet size,remarks\nrow 0,1,caribbean airlines,trinidad and tobago,22,largest airline in the caribbean\nrow 1,2,liat,antigua and barbuda,17,second largest airline in the caribbean\nrow 2,3,cubana de aviacion,cuba,14,operational since 1929\nrow 3,4,inselair,curacao,12,operational since 2006\nrow 4,5,dutch antilles express,curacao,4,curacao second national carrier\nrow 5,6,air jamaica,trinidad and tobago,5,parent company is caribbean airlines\nrow 6,7,tiara air,aruba,3,aruba's national airline"
       question: "what is the remark for the airline dutch antilles express with fleet size over 4?"
       explanation: "the question asks for the record about dutch antilles express with a fleet size over 4. there is no row that perfectly satisfies this condition, but the most relevant row is row 4, which describes dutch antilles express with remarks curacao second national carrier and fleet size 4 (not over 4)."
-      answer: "select_row([4])"
+      answer: "select_row([row 4])"
 
     - table: " ,actor,character,soap opera,years,duration\nrow 0,tom jordon,charlie kelly,fair city,1989-,25 years\nrow 1,tony tormey,paul brennan,fair city,1989-,25 years\nrow 2,jim bartley,bela doyle,fair city,1989-,25 years\nrow 3,sarah flood,suzanne halpin,fair city,1989 - 2013,24 years\nrow 4,pat nolan,barry o'hanlon,fair city,1989 - 2011,22 years\nrow 5,martina stanley,dolores molloy,fair city,1992-,22 years\nrow 6,joan brosnan walsh,mags kelly,fair city,1989 - 2009,20 years\nrow 7,jean costello,rita doyle,fair city,1989 - 2008 / 2010,19 years\nrow 8,ciara o'callaghan,yvonne gleeson,fair city,1991 - 2004 / 2008-,19 years\nrow 9,celia murphy,niamh cassidy,fair city,1995-,19 years\nrow 10,tommy o'neill,john deegan,fair city,2001-,13 years\nrow 11,seamus moran,mike gleeson,fair city,1996 - 2008,12 years\nrow 12,rebecca smith,annette daly,fair city,1997 - 2009,12 years\nrow 13,grace barry,mary-ann byrne,glenroe,1990 - 2001,11 years\nrow 14,gemma doorly,sarah o'leary,fair city,2001 - 2011,10 years"
       question: "were seamus moran and rebecca smith in soap operas for a duration of 12 years?"
       explanation: "the question asks whether seamus moran and rebecca smith each have a duration of 12 years in the table. row 11 shows seamus moran with a duration of 12 years, and row 12 shows rebecca smith with a duration of 12 years."
-      answer: "select_row([11, 12])"
+      answer: "select_row([row 11, row 12])"
 
     - table: " ,years,displacement,engine,power,torque\nrow 0,1999 - 2004,4.0l (242cid),power tech i6,-,3000 rpm\nrow 1,1999 - 2004,4.7l (287cid),powertech v8,-,3200 rpm\nrow 2,2002 - 2004,4.7l (287cid),high output powertech v8,-,-\nrow 3,1999 - 2001,3.1l diesel,531 ohv diesel i5,-,-\nrow 4,2002 - 2004,2.7l diesel,om647 diesel i5,-,-"
       question: "did the jeep grand cherokee with the om647 diesel i5 have the third lowest numbered displacement?"
       explanation: "the question asks whether the om647 diesel i5 has the third lowest displacement value. to answer this, we need the rows with the three lowest displacement values and the row where the engine is om647 diesel i5."
-      answer: "select_row([4, 3, 0])"
+      answer: "select_row([row 4, row 3, row 0])"
 
   select_column:
     - table: " ,competition,total matches,cardiff win,draw,swansea win\nrow 0,league,55,19,16,20\nrow 1,fa cup,2,0,27,2\nrow 2,league cup,5,2,0,3"
@@ -138,13 +138,13 @@ examples:
     - table: " ,date,division,league,regular season,playoffs,open cup,avg. attendance\nrow 0,2001/01/02,2,usl a-league,4th western,quarterfinals,did not qualify,7169\nrow 1,2002/08/06,2,usl a-league,2nd pacific,1st round,did not qualify,6260\nrow 2,2005/03/24,2,usl first division,5th,quarterfinals,4th round,6028"
       question: "What was the last year team was part of the usl a-league?"
       explanation: "The question asks about the 'last year' for a specific league. We need to: 1) Extract year from the date column using add_column, 2) Filter to only usl a-league rows using select_row, 3) Keep relevant columns using select_column, 4) Sort by year to find the last one using sort_by."
-      answer: "add_column(year) -> select_row([0, 1]) -> select_column([year, league]) -> sort_by(year, desc) -> end"
+      answer: "add_column(year) -> select_row([row 0, row 1]) -> select_column([year, league]) -> sort_by(year, desc) -> end"
 
     # Example 2: Counting by category - requires extracting country and grouping
     - table: " ,rank,lane,athlete,time\nrow 0,1,6,manjeet kaur (ind),52.17\nrow 1,2,5,olga tereshkova (kaz),51.86\nrow 2,3,4,pinki pramanik (ind),53.06"
       question: "How many athletes are from India?"
       explanation: "The question asks to count athletes from a specific country. We need to: 1) Extract country from athlete names using add_column, 2) Filter to Indian athletes using select_row, 3) Keep relevant columns using select_column, 4) Group by country to count using group_by."
-      answer: "add_column(country of athletes) -> select_row([0, 2]) -> select_column([athlete, country of athletes]) -> group_by(country of athletes) -> end"
+      answer: "add_column(country of athletes) -> select_row([row 0, row 2]) -> select_column([athlete, country of athletes]) -> group_by(country of athletes) -> end"
 
     # Example 3: Superlative (highest) - requires extracting derived value and sorting
     - table: " ,week,when,kickoff,opponent,results final score,results team record,game site,attendance\nrow 0,1,saturday april 13,7:00 p.m.,at rhein fire,w 27-21,1-0,rheinstadion,32092\nrow 1,2,saturday april 20,7:00 p.m.,london monarchs,w 37-3,2-0,waldstadion,34186\nrow 2,3,sunday april 28,6:00 p.m.,at barcelona dragons,w 33-29,3-0,estadi olimpic de montjuic,17503"
@@ -156,4 +156,4 @@ examples:
     - table: " ,iso/iec standard,status,wg\nrow 0,iso/iec tr 19759,published (2005),20\nrow 1,iso/iec 15288,published (2008),7\nrow 2,iso/iec 12207,published (2011),7"
       question: "How many standards were published in 2011?"
       explanation: "The question asks to count standards from a specific year. We need to: 1) Extract year from status using add_column, 2) Filter to 2011 rows using select_row, 3) Keep relevant columns using select_column, 4) Group by year to count using group_by."
-      answer: "add_column(year) -> select_row([2]) -> select_column([iso/iec standard, year]) -> group_by(year) -> end"
+      answer: "add_column(year) -> select_row([row 2]) -> select_column([iso/iec standard, year]) -> group_by(year) -> end"

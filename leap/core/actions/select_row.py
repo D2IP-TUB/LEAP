@@ -50,7 +50,7 @@ class SelectRowAction(ActionDefinition):
 
     def get_prompt_text_iterative(self) -> str:
         """Prompt text for iterative generation."""
-        return "select_row([row_indices])"
+        return "select_row([row 0, row 1, ...])"
 
     def get_description(self) -> str:
         """Action description for prompts."""
