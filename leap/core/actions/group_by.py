@@ -7,6 +7,7 @@ Groups rows by a specified column and outputs a summary table with counts.
 Reference: Chain-of-Table paper (arXiv:2401.04398v2), Appendix A
 """
 
+from typing import Tuple
 import re
 from collections import Counter
 from typing import List, Optional
@@ -62,71 +63,9 @@ class GroupByAction(ActionDefinition):
         """
         return list(table.columns)
 
-    def parse_arguments(self, args_str: str, table: Table) -> Optional[str]:
-        """
-        Parse column name from argument string.
 
-        Expected formats:
-        - "Country"
-        - "column_name"
 
-        Returns:
-            Column name (str) or None if parsing fails
-        """
-        args_str = args_str.strip()
-
-        if not args_str or args_str == "[]":
-            return None
-
-        # Remove quotes if present
-        column_name = args_str.strip('"').strip("'").strip()
-
-        # Validate column exists
-        if column_name in table.columns:
-            return column_name
-
-        return None
-
-    def extract_arguments_from_text(self, text: str, table: Table) -> Optional[str]:
-        """
-        Extract column name from CoT text output.
-
-        From paper (Figure 13, page 20), expected format:
-        "Therefore, the answer is: f_group_by(Country)"
-
-        Patterns to match:
-        - "f_group_by(ColumnName)"
-        - "group_by(ColumnName)"
-        - "group by ColumnName"
-        """
-        text = text.strip()
-
-        # Pattern 1: group_by(ColumnName)
-        pattern1 = r"group_by\s*\(\s*([^)]+)\s*\)"
-        match = re.search(pattern1, text, re.IGNORECASE)
-
-        if match:
-            column_name = match.group(1).strip().strip('"').strip("'")
-            if column_name in table.columns:
-                return column_name
-
-        # Pattern 2: "group by ColumnName" (without parens)
-        pattern2 = r"group\s+by\s+([a-zA-Z_][a-zA-Z0-9_\s]*)"
-        match = re.search(pattern2, text, re.IGNORECASE)
-
-        if match:
-            column_name = match.group(1).strip()
-            # Try exact match first
-            if column_name in table.columns:
-                return column_name
-            # Try partial match (column name might have spaces)
-            for col in table.columns:
-                if col.lower().startswith(column_name.lower()):
-                    return col
-
-        return None
-
-    def apply(self, table: Table, arguments: str) -> Optional[Table]:
+    def apply(self, table: Table, arguments: Tuple[str]) -> Optional[Table]:
         """
         Apply group_by to table.
 
@@ -137,10 +76,11 @@ class GroupByAction(ActionDefinition):
         Returns:
             New table with grouped results, or None if invalid
         """
-        if not isinstance(arguments, str):
+
+        if not isinstance(arguments, Tuple) or len(arguments) != 1:
             return None
 
-        column_name = arguments
+        column_name = arguments[0]
 
         # Validate column exists
         if column_name not in table.columns:
@@ -165,29 +105,6 @@ class GroupByAction(ActionDefinition):
 
         return Table(columns=new_columns, rows=new_rows)
 
-    def validate(self, table: Table, arguments: str) -> bool:
-        """
-        Validate group_by arguments.
-
-        Checks:
-        - Argument is a string (column name)
-        - Column exists in table
-        - Table has at least one row
-        """
-        if not isinstance(arguments, str):
-            return False
-
-        if not arguments:
-            return False
-
-        if arguments not in table.columns:
-            return False
-
-        if len(table.rows) == 0:
-            return False
-
-        return True
-
     def get_prompt_text_iterative(self) -> str:
         """Prompt text for iterative generation."""
         return "group_by(column_name)"
@@ -195,10 +112,6 @@ class GroupByAction(ActionDefinition):
     def get_prompt_text_cot(self) -> str:
         """Prompt text for CoT generation."""
         return "group_by"
-
-    def get_fuzzy_match_keywords(self) -> List[str]:
-        """Keywords for fuzzy matching."""
-        return ["group_by", "group", "aggregate", "count"]
 
     def get_description(self) -> str:
         """Action description for prompts."""

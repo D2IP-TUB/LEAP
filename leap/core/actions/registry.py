@@ -45,52 +45,12 @@ class ActionDefinition(ABC):
         return False
 
     @abstractmethod
-    def generate_params(self, table: Table) -> List[str]:
-        """
-        Generate valid parameters for constraint system.
-
-        For select_row: ["row 0", "row 1", ...]
-        For select_column: ["col1", "col2", ...]
-        For end/direct_query: []
-        """
-        pass
-
-    @abstractmethod
-    def parse_arguments(self, args_str: str, table: Table) -> Optional[List[Any]]:
-        """
-        Parse arguments from LLM output.
-
-        Called by Action.parse() for this specific operation.
-        Return None if parsing fails.
-        """
-        pass
-
-    @abstractmethod
-    def extract_arguments_from_text(self, text: str, table: Table) -> Optional[List[Any]]:
-        """
-        Extract arguments from free-form text (for CoT two-phase generation).
-
-        Called by Action.extract_from_text() for this specific operation.
-        Return None if extraction fails.
-        """
-        pass
-
-    @abstractmethod
     def apply(self, table: Table, arguments: List[Any]) -> Optional[Table]:
         """
         Apply this operation to a table.
 
         Called by Action.apply_to_table() for this specific operation.
         Return None if operation fails.
-        """
-        pass
-
-    @abstractmethod
-    def validate(self, table: Table, arguments: List[Any]) -> bool:
-        """
-        Validate that arguments are valid for this table.
-
-        Called by Action.is_valid_for_table() for this specific operation.
         """
         pass
 
@@ -113,15 +73,6 @@ class ActionDefinition(ABC):
         Override if needed.
         """
         return self.name
-
-    def get_fuzzy_match_keywords(self) -> List[str]:
-        """
-        Get keywords for fuzzy matching in parse_name_only().
-
-        Default: [self.name]
-        Override to add additional keywords (e.g., ["row", "select_row"])
-        """
-        return [self.name]
 
     def get_description(self) -> str:
         """

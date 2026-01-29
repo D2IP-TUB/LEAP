@@ -128,55 +128,57 @@ class PromptBuilder:
                 instruction_prompt += f"{idx + 1}. {action}\n"
             instruction_prompt += "\n"
 
-        # Get action descriptions and list from registry
-        # Pass action_history to filter out already-used actions
-        # For CoT mode, we exclude terminating actions on first step (empty history)
-        action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=True)
         actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
-        instruction_prompt += f"{action_descriptions}\n\n"
+        
         instruction_prompt += f"Available actions: {actions_text}\n"
-        instruction_prompt += "What action should be performed next to answer the question?\n"
+        instruction_prompt += "What actions should be performed next to answer the question?\n"
         instruction_prompt += "Action: "
 
-        estimated_length = len(instruction_prompt) // 4
-        if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
-            table_str = table.to_csv(max_chars=self.cot_settings.action_fallback_table_chars)
-            question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
-            instruction_prompt = f"Table:\n{table_str}\n\nQuestion: {question_short}\n\n"
-            # Re-get filtered descriptions and actions for fallback case
-            action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=True)
-            actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
-            instruction_prompt += f"{action_descriptions}\n\n"
-            instruction_prompt += f"The next operation must be one of the following: {actions_text}\n"
-            instruction_prompt += "What action should be performed next?\nAction: "
-
-        # For action_selection, format examples as conversation history (for instruct models)
-        # Use messages/dictionary abstraction with apply_chat_template for model-agnostic formatting
         if self.action_examples and self.action_examples.has_prompt("action_selection"):
             examples = self.action_examples.examples_manager.get_examples("action_selection")
-            if examples and self.is_instruct:
-                # Build conversation history with examples using messages format
-                messages = []
-                for example in examples:
-                    # Format each example as a conversation turn (user message + assistant response)
-                    example_table_str = example.table.to_csv(max_chars=2000, crop=False)
-                    example_prompt = (
-                        f"Table:\n{example_table_str}\n\n"
-                        f"Question: {example.question}\n\n"
-                        "What action should be performed next to answer the question?\n"
-                        "Action: "
-                    )
-                    messages.append({"role": "user", "content": example_prompt})
-                    messages.append({"role": "assistant", "content": example.answer})
 
-                # Add current instance as final user message
-                messages.append({"role": "user", "content": instruction_prompt})
+        if not examples:
+            return self._append_instruction("", instruction_prompt)
 
-                # Use tokenizer to format the entire conversation - model-agnostic!
-                return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        # Build conversation history with examples using messages format
+        messages = []
 
-        # No examples or non-instruct mode: use regular formatting
-        return self._append_instruction("", instruction_prompt)
+        # Add instruction as system message if available
+        instruction = self.action_examples.get_instruction("action_selection")
+        if instruction:
+            messages.append({"role": "system", "content": instruction})
+
+        for example in examples:
+            # Format each example as a conversation turn (user message + assistant response)
+            example_table_str = example.table.to_csv(max_chars=2000, crop=False)
+            example_prompt = (
+                f"Table:\n{example_table_str}\n\n"
+                f"Question: {example.question}\n"
+            )
+            if example.explanation:
+                example_prompt += f"Explanation: {example.explanation}\n"
+            example_prompt += "Action: "
+            
+            messages.append({"role": "user", "content": example_prompt})
+            messages.append({"role": "assistant", "content": example.answer})
+
+        # Add current instance as final user message
+        messages.append({"role": "user", "content": instruction_prompt})
+
+        if self.is_instruct:
+            instruct_result = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            return instruct_result
+        else:
+            # For non-instruct models, just concatenate the messages
+            result = ""
+            for msg in messages:
+                if msg["role"] == "user":
+                    result += msg["content"] + "\n"
+                else:
+                    result += msg["content"] + "\n\n"
+
+            return result
+
 
     def build_cot_arguments_prompt(
         self,
@@ -202,15 +204,7 @@ class PromptBuilder:
         table_str = table.to_csv(max_chars=self.cot_settings.args_table_chars)
         final_prompt = f"Table:\n{table_str}\n\n"
         final_prompt += f"Question: {question}\n\n"
-
-        if action_name == "select_row":
-            final_prompt += f"Available rows: 0 to {len(table.rows) - 1}\n"
-            final_prompt += "Which row indices should be selected? Provide the indices as a list, e.g., [0, 1, 2]\n"
-            final_prompt += "Row indices: "
-        elif action_name == "select_column":
-            final_prompt += f"Available columns: {list(table.columns)}\n"
-            final_prompt += 'Which columns should be selected? Provide the column names as a list, e.g., ["Name", "Age"]\n'
-            final_prompt += "Column names: "
+        final_prompt += self.action_examples.get_final_instructions(action_name, table)
 
         messages.append({"role": "user", "content": final_prompt})
 

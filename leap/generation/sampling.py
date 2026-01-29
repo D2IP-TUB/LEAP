@@ -433,7 +433,7 @@ class SamplingLayer:
                 else:
                     sampling_params = SamplingParams(
                         temperature=0.7,
-                        max_tokens=100,
+                        max_tokens=900,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         stop=["\n", "Next", "Step"],
                         n=1,
@@ -574,7 +574,7 @@ class SamplingLayer:
                 else:
                     sampling_params = SamplingParams(
                         temperature=temperature,
-                        max_tokens=100,
+                        max_tokens=900,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         stop=["\n", "Next", "Step"],
                         n=1,
@@ -597,7 +597,6 @@ class SamplingLayer:
                     # e.g., "select_column ([ "Team" ]" -> "[ "Team" ]"
                     # This happens when constraints force full format but we only want args
                     args_text = self._clean_argument_text(args_text, action_name)
-
                     full_action_str = f"{action_name}({args_text})"
                     action = Action.parse(full_action_str)
                     return action
@@ -676,8 +675,10 @@ class SamplingLayer:
 
         normalized_args_text = args_text.replace("\\", "")
 
-        pattern = rf"^\s*{re.escape(action_name)}\s*\(?\s*"
+        pattern = rf"^.*?{re.escape(action_name)}\s*\(?\s*"
         cleaned = re.sub(pattern, "", normalized_args_text, count=1)
-        cleaned = cleaned.replace(")", "")
+        pattern = r"\)[^)]*$"
+        cleaned = re.sub(pattern, "", cleaned)
+       
 
         return cleaned.strip()

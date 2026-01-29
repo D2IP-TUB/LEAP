@@ -67,21 +67,20 @@ class Action:
 
                 return cls(action_name, args_list)
 
-            if action_name == "add_column" and "[" in args_str and not args_str.startswith("["):  # TODO: maybe rework?
-                new_col, new_values = tuple(args_str.split(",", 1))
+            if action_name.lower() == "add_column" and "[" in args_str:
+                args = args_str.split("[")
+                column = args[0].strip(",\"").strip()
+                value_string = "[" + args[1].strip()
 
-                if new_values.startswith("[") and new_values.endswith("]"):
-                    new_values_parsed = ast.literal_eval(new_values)
-                else:
-                    new_values = new_values.strip().split("[")[1].split("]")[0].strip()
-                    new_values_parsed = [v.replace(r'"', "").strip() for v in new_values.split(",")]
+                try:
+                    values = ast.literal_eval(value_string)
+                except Exception:
+                    values = value_string.strip().replace("[", "").replace("]", "").strip().split(",")
+                    values = [v.replace("\"", "").strip()for v in values]
 
-                return cls(action_name, [new_col.strip(), new_values_parsed])
-            elif action_name == "add_column":
-                print("ERROR: Invalid add_column arguments: ", args_str)
-                return None
 
-            # Comma-separated format: arg1, arg2, arg3
+                return cls(action_name, [column, values])
+
             if "," in args_str:
                 args_list = [arg.strip() for arg in args_str.split(",")]
             else:
@@ -94,6 +93,7 @@ class Action:
             return cls(action_name, args_list)
 
         except Exception:
+            print(f"[ERROR]: Failed to parse action: {action_str}")
             return None
 
     @staticmethod
@@ -133,36 +133,6 @@ class Action:
 
         return REGISTRY.parse_action_name_fuzzy(action_str)
 
-    @classmethod
-    def extract_from_text(cls, text: str, action_name: str, table: Table) -> Optional["Action"]:
-        """
-        Extract action from free-form text (used in Chain-of-Table).
-
-        Replaces generate.extract_arguments_from_text()
-
-        This handles the two-phase CoT generation where action name and
-        arguments are generated separately.
-        """
-        arguments = cls._extract_arguments_from_text(text, action_name, table)
-        if arguments is None:
-            return None
-        return cls(action_name, arguments)
-
-    @staticmethod
-    def _extract_arguments_from_text(text: str, action_name: str, table: Table) -> Optional[List]:
-        """
-        Internal helper: extract arguments for a specific action from free-form text.
-
-        Delegates to registry action definitions.
-        """
-        from .registry import REGISTRY
-
-        action_def = REGISTRY.get(action_name)
-        if action_def is None:
-            return None
-
-        return action_def.extract_arguments_from_text(text, table)
-
     def to_string(self) -> str:
         """
         Canonical string serialization.
@@ -191,21 +161,7 @@ class Action:
         if action_def is None:
             return None
 
-        return action_def.apply(table, list(self.arguments))
-
-    def is_valid_for_table(self, table: Table) -> bool:
-        """
-        Validate that this action can be applied to the given table.
-
-        Delegates to registry action definitions.
-        """
-        from .registry import REGISTRY
-
-        action_def = REGISTRY.get(self.name)
-        if action_def is None:
-            return False
-
-        return action_def.validate(table, list(self.arguments))
+        return action_def.apply(table, self.arguments)
 
     def __repr__(self) -> str:
         return f"Action({self.name}, args={list(self.arguments)})"

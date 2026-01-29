@@ -197,10 +197,9 @@ class ActionPromptTemplate:
             example_parts.append("")
             example_parts.append(f"Question: {example.question}")
             example_parts.append("")
-            example_parts.append("The answer is: ")
 
             examples.append("\n".join(example_parts))
-            answers.append(example.answer)
+            answers.append(f"The answer is: {example.answer}")
 
         return examples, answers
 
@@ -237,6 +236,7 @@ class ActionPromptBuilder:
             "select_row": (
                 "Use select_row() to select relevant rows in the given table that support or oppose the statement.\n"
                 "Please use select_row([*]) to select all rows in the table."
+                "A valid answer ends like: The answer is: 'select_row(column_name).'"
             ),
             "select_column": (
                 "Use select_column() to filter out useless columns in the table according to information in the statement and the table."
@@ -258,11 +258,11 @@ class ActionPromptBuilder:
             "group_by": (
                 "To answer the question, the next operation is group_by() to group the values in a column.\n\n"
                 "Rules:\n"
-                "- The only valid operation is group_by(column_name).\n"
+                "- The only valid operation is group_by(column_name)\n"
                 "- Do not provide any other operation.\n"
                 "- Do not nest operation.\n"
-                "- Do not provide more details than shown in the examples.\n"
-                "- A valid answer ends like: Therefore, the answer is: 'group_by(column_name).'"
+                "- Do not provide more details than shown in the examples including explenations text.\n"
+                "- A valid answer ends like: The answer is: 'group_by(column_name).'"
             ),
             "sort_by": (
                 "To answer the question, the next operation is sort_by() to sort the values in a column to get the order of the items. The order can be 'large to small' or 'small to large'.\n\n"
@@ -270,14 +270,10 @@ class ActionPromptBuilder:
                 "1. Numerical: the numerical strings that can be used in sort\n"
                 "2. DateType: the strings that describe a date, such as year, month, day\n"
                 "3. String: other strings\n\n"
-                "Rules:\n"
-                "- The only valid operation is sort_by(column_name).\n"
-                "- Do not provide any other operation besides the order.\n"
-                "- Do not nest operation. \n"
-                "- Do not provide more details than shown in the examples.\n"
-                "- A valid answer ends like: Therefore, the answer is: 'sort_by(column_name), the order is order'.\n"
             ),
-            "action_selection": "",  # No instruction needed for action selection examples
+            "action_selection": (
+                "Here are examples of using the operations to answer the questions:"
+            ),
         }
 
         # Build template for each action
@@ -313,3 +309,59 @@ class ActionPromptBuilder:
     def has_prompt(self, action_name: str) -> bool:
         """Check if a prompt template exists for this action."""
         return action_name in self._templates
+
+    def get_final_instructions(self, action_name: str, table: Table) -> str: # TODO: add to template?
+        """
+        Get the final instructions for an action prompt.
+
+        These are action-specific instructions that appear at the end of the prompt,
+        including available options and expected response format.
+
+        Args:
+            action_name: Name of the action
+            table: The current table (used for dynamic info like available columns/rows)
+
+        Returns:
+            Final instruction string for this action
+        """
+        if action_name == "select_row":
+            return (
+                f"Available rows: 0 to {len(table.rows) - 1}\n"
+                "Rules:\n"
+                "- The only valid operation is select_row([row_indices]).\n"
+                "- Do not nest operation. \n"
+                "- Do not provide more details than shown in the examples\n"
+                "- A valid answer must end like this: The answer is: 'select_row([row_indices]).'\n"
+            )
+        elif action_name == "select_column":
+            return (
+                f"Available columns: {list(table.columns)}\n"
+                'Which columns should be selected? Provide the column names as a list, e.g., ["Name", "Age"]\n'
+                "Column names: "
+            )
+        elif action_name == "sort_by":
+            return (
+                "Rules:\n"
+                "- The only valid operation is sort_by(column_name, order).\n"
+                "- The only valid order arguments are 'asc' and 'desc'.\n"
+                "- You must select a single column to sort by. Concatinating by 'and' is not allowed.\n"
+                "- Do not provide any other operation besides the order.\n"
+                "- Do not nest operation. \n"
+                "- Do not provide more details than shown in the examples\n"
+                "- A valid answer must end like this: The answer is: 'sort_by(column_name, order).'\n"
+            )
+        elif action_name == "add_column":
+            return ""
+        elif action_name == "group_by":
+            return (
+                "To answer the question, the next operation is group_by() to group the values in a column.\n\n"
+                "Rules:\n"
+                "- The only valid operation is group_by(column_name)\n"
+                "- Do not provide any other operation.\n"
+                "- Do not nest operation.\n"
+                "- Do not provide more details than shown in the examples including explenations text.\n"
+                "- A valid answer ends like: The answer is: 'group_by(column_name).'\n"
+                f"- Available columns: {list(table.columns)}\n"
+            )
+        else:
+            return ""
