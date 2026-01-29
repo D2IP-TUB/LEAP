@@ -69,7 +69,7 @@ class Action:
 
             if action_name.lower() == "add_column" and "[" in args_str:
                 args = args_str.split("[")
-                column = args[0].strip(",\"").strip()
+                column = args[0].strip(",").strip()
                 value_string = "[" + args[1].strip()
 
                 try:

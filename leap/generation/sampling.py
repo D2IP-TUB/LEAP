@@ -675,6 +675,10 @@ class SamplingLayer:
 
         normalized_args_text = args_text.replace("\\", "")
 
+        if action_name not in normalized_args_text and "[" in normalized_args_text and "]" in normalized_args_text:
+            args_text_cleaned = normalized_args_text.split("[")[1].split("]")[0].strip()
+            return "[" + args_text_cleaned + "]"
+
         pattern = rf"^.*?{re.escape(action_name)}\s*\(?\s*"
         cleaned = re.sub(pattern, "", normalized_args_text, count=1)
         pattern = r"\)[^)]*$"
