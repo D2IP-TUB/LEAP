@@ -11,7 +11,11 @@ from leap.core import Table
 from leap.utils.apply_action import apply_actions
 
 MODEL_ID = ""
-_project_root = Path(__file__).parent.parent.parent
+LOG_DIR = ""
+
+_project_root = Path(__file__).parent.parent.parent.parent
+RESULTS_FILE = str(_project_root / "logs" / "results.jsonl")
+OUTPUT_FILE = str(_project_root / "leap" / "utils" / "visual_logger" / "data.json")
 
 config_path_env = os.environ.get("LEAP_CONFIG_PATH")
 if config_path_env:
@@ -21,30 +25,36 @@ else:
 
 with open(config_path, "r", encoding="utf-8") as f:
     config_data = yaml.safe_load(f)
-    MODEL_ID = config_data.get("model", {}).get("id")
 
 
-presets_path = config_data.get("model", {}).get("presets_path", "configs/models.yaml")
+def load_model_config(model_name: str = None):
+    global LOG_DIR
+    if not model_name:
+        MODEL_ID = config_data.get("model", {}).get("id")
+    else:
+        MODEL_ID = model_name
 
-if not Path(presets_path).is_absolute():
-    models_path = _project_root / presets_path
-else:
-    models_path = Path(presets_path)
-with open(models_path, "r", encoding="utf-8") as f:
-    models_data = yaml.safe_load(f)
-    models = models_data.get("models", models_data)
+    presets_path = config_data.get("model", {}).get("presets_path", "configs/models.yaml")
 
-# Extract log_dir for the model
-model_log_dir = models[MODEL_ID].get("log_dir")
-LOG_DIR = str(_project_root / "logs" / model_log_dir)
-RESULTS_FILE = str(_project_root / "logs" / "results.jsonl")
-OUTPUT_FILE = str(_project_root / "leap" / "utils" / "data.json")
+    if not Path(presets_path).is_absolute():
+        models_path = _project_root / presets_path
+    else:
+        models_path = Path(presets_path)
+    with open(models_path, "r", encoding="utf-8") as f:
+        models_data = yaml.safe_load(f)
+        models = models_data.get("models", models_data)
+
+    model_log_dir = models[MODEL_ID].get("log_dir")
+
+    LOG_DIR = str(_project_root / "logs" / model_log_dir)
 
 
-def load_dataset_from_config(config_data: Dict[str, Any]):
-    dataset_cfg = config_data.get("dataset", {})
-    loader = dataset_cfg.get("loader", "huggingface").lower()
-
+def load_dataset_from_config(config_data: Dict[str, Any], dataset_path: Path = None):
+    if not dataset_path:
+        dataset_cfg = config_data.get("dataset", {})
+        loader = dataset_cfg.get("loader", "huggingface").lower()
+    else:
+        return load_from_disk(dataset_path)
     if loader == "huggingface":
         name = dataset_cfg.get("name")
         if not name:
@@ -244,10 +254,15 @@ def write_output_json(data: Dict[str, Any], output_filename: str):
         print(f"Error writing {output_filename}: {e}")
 
 
-def main():
+def main(dataset_path: Path = None, model_name: str = None):
     results_data = load_results_data(RESULTS_FILE)
 
-    dataset = load_dataset_from_config(config_data)
+    if dataset_path and model_name:
+        dataset = load_dataset_from_config(config_data, dataset_path)
+        load_model_config(model_name)
+    else:
+        dataset = load_dataset_from_config(config_data)
+        load_model_config()
     log_files = find_log_files(LOG_DIR)
     if not log_files:
         print("No log files found. Exiting.")

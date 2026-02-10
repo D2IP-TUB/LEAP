@@ -165,6 +165,83 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
     )
 
 
+def load_runtime_config_tool(config_path: Path, tokenizer) -> AppConfig:
+    """Load runtime configuration from YAML files.
+
+    Args:
+        config_path: Path to the main config file
+        tokenizer: Transformers tokenizer instance for the model
+
+    Returns:
+        AppConfig with all configuration loaded and validated
+    """
+    raw_config = _load_app_config(config_path)
+    # Configure enabled actions early, before building model config
+    from leap.core.actions import REGISTRY
+
+    generation_section = raw_config.get("generation", {})
+    enabled_actions = generation_section.get("enabled_actions")
+    if enabled_actions:
+        REGISTRY.set_enabled_actions(enabled_actions)
+
+    model_section = raw_config.get("model")
+    if not model_section or "id" not in model_section:
+        raise ValueError("Configuration must define 'model.id'")
+
+    presets_path = Path(model_section.get("presets_path", "configs/models.yaml"))
+    model_presets = _load_model_presets(presets_path)
+    model_config = _build_model_config(model_section, model_presets, tokenizer)
+
+    logging_section = raw_config.get("logging", {})
+    logging_config = _build_logging_config(logging_section, model_config.log_dir, model_config.id)
+    # dataset_section = raw_config.get("dataset")
+    # if not dataset_section:
+    #     raise ValueError("Configuration must include a 'dataset' section")
+    dataset_config = _build_dataset_config_tool()
+
+    run_config = RunConfig(max_examples=raw_config.get("run", {}).get("max_examples"))
+
+    generation_section = raw_config.get("generation", {})
+
+    # Load sampling config (import locally to avoid circular dependency)
+    from leap.generation.sampling import SamplingConfig
+
+    sampling_section = generation_section.get("sampling", {})
+    sampling_config = SamplingConfig(
+        enabled=sampling_section.get("enabled", False),
+        n_samples=sampling_section.get("n_samples", 1),
+        per_action_samples=dict(sampling_section.get("per_action_samples", {})),
+        debug=sampling_section.get("debug", False),
+        shuffle_invariant=sampling_section.get("shuffle_invariant", False),
+    )
+
+    generation_config = GenerationConfig(
+        use_constraints=generation_section.get("use_constraints", False),
+        use_global_constraints=generation_section.get("use_global_constraints", False),
+        strategy=generation_section.get("strategy", "cot"),
+        sampling=sampling_config,
+    )
+
+    return AppConfig(
+        model=model_config,
+        dataset=dataset_config,
+        run=run_config,
+        generation=generation_config,
+        logging=logging_config,
+    )
+
+
+def update_runtime_config_dataset_tool(app_config: AppConfig, dataset_path: Path):
+    dataset_config = _build_dataset_config_tool(dataset_path)
+    return AppConfig(
+        model=app_config.model,
+        dataset=dataset_config,
+        run=app_config.run,
+        generation=app_config.generation,
+        logging=app_config.logging,
+    )
+
+
 def _load_app_config(config_path: Path) -> Dict[str, Any]:
     with open(config_path, "r", encoding="utf-8") as config_file:
         data = yaml.safe_load(config_file) or {}
@@ -255,7 +332,7 @@ def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any], 
         tensor_parallel_size=hardware_defaults["tensor_parallel_size"],
         gpu_allocation=list(hardware_defaults["gpu_allocation"]),
         max_concurrent_requests=hardware_defaults.get("max_concurrent_requests", 16),
-        max_model_len=hardware_defaults.get("max_model_len", 2048),
+        max_model_len=hardware_defaults.get("max_model_len", 1024),
     )
 
     # Build tokenizer config
@@ -307,4 +384,16 @@ def _build_dataset_config(raw_dataset_config: Dict[str, Any]) -> DatasetConfig:
         trust_remote_code=raw_dataset_config.get("trust_remote_code"),
         data_files=raw_dataset_config.get("data_files"),
         path=raw_dataset_config.get("path"),
+    )
+
+
+def _build_dataset_config_tool(path: Path = None) -> DatasetConfig:
+    loader = "disk"
+    return DatasetConfig(
+        loader=loader,
+        name="temp",
+        split=None,
+        trust_remote_code=None,
+        data_files=None,
+        path=path,
     )
