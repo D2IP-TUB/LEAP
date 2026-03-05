@@ -52,7 +52,6 @@ action_descriptions:
     explanation: "The question asks about the club in the last position. We need to know the order of positions from last to first. We sort the rows according to column position."
 
 examples:
-
   query_answer:
     system: |
       Here is the table to answer this question. Please understand the table and answer the question with the table values only.
@@ -300,15 +299,15 @@ examples:
       2. Datetype: the strings that describe a date, such as year, month, day
       3. String: other strings
     examples:
-      # - table_caption: "nfl europe game schedule"
-      #   table: |
-      #     ,week,when,kickoff,opponent,results; final score,results; team record,game site,attendance
-      #     row 0,1,saturday april 13,7:00 p.m.,at rhein fire,W 27-21,1-0,rheinstadion,32092
-      #     row 1,2,saturday april 20,7:00 p.m.,london monarchs,W 37-3,2-0,waldstadion,34186
-      #     row 2,3,sunday april 28,6:00 p.m.,at barcelona dragons,W 33-29,3-0,estadi olímpic de montjuïc,17503
-      #   question: "What is the date of the competition with the highest attendance?"
-      #   explanation: "To answer the question, we need to know the attendance number of each competition. We extract the value from column attendance and create a different column attendance number for each row. The datatype is numerical."
-      #   answer: "add_column(attendance number, [32092, 34186, 17503])"
+      - table_caption: "nfl europe game schedule"
+        table: |
+          ,week,when,kickoff,opponent,results; final score,results; team record,game site,attendance
+          row 0,1,saturday april 13,7:00 p.m.,at rhein fire,W 27-21,1-0,rheinstadion,32092
+          row 1,2,saturday april 20,7:00 p.m.,london monarchs,W 37-3,2-0,waldstadion,34186
+          row 2,3,sunday april 28,6:00 p.m.,at barcelona dragons,W 33-29,3-0,estadi olímpic de montjuïc,17503
+        question: "What is the date of the competition with the highest attendance?"
+        explanation: "To answer the question, we need to know the attendance number of each competition. We extract the value from column attendance and create a different column attendance number for each row. The datatype is numerical."
+        answer: "add_column(attendance number, [32092, 34186, 17503])"
 
       - table_caption: "400m relay athletics"
         table: |
