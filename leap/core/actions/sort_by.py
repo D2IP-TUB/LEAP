@@ -155,6 +155,7 @@ class SortByAction(ActionDefinition):
 
         # Get column index
         col_idx = table.columns.index(column_name)
+
         # Sort rows
         def sort_key(row):
             value = row[col_idx]

@@ -223,14 +223,11 @@ class PromptBuilder:
         for example in examples:
             # Format each example as a conversation turn (user message + assistant response)
             example_table_str = example.table.to_csv(max_chars=2000, crop=False)
-            example_prompt = (
-                f"Table:\n{example_table_str}\n\n"
-                f"Question: {example.question}\n"
-            )
+            example_prompt = f"Table:\n{example_table_str}\n\nQuestion: {example.question}\n"
             if example.explanation:
                 example_prompt += f"Explanation: {example.explanation}\n"
             example_prompt += "Action: "
-            
+
             messages.append({"role": "user", "content": example_prompt})
             messages.append({"role": "assistant", "content": example.answer})
 
@@ -250,7 +247,6 @@ class PromptBuilder:
                     result += msg["content"] + "\n\n"
 
             return result
-
 
     def build_cot_arguments_prompt(
         self,
