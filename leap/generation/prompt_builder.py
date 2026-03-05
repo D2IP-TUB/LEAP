@@ -169,65 +169,45 @@ class PromptBuilder:
 
         # For action_selection, format examples as conversation history (for instruct models)
         # Use messages/dictionary abstraction with apply_chat_template for model-agnostic formatting
-        if self.action_examples and self.action_examples.has_prompt("action_selection"):
-            examples = self.action_examples.examples_manager.get_examples("action_selection")
-            if examples and self.is_instruct:
-                # Build conversation history with examples using messages format
-                action_selection_system = (
-                    self.action_examples.examples_manager.get_system_rules("action_selection")
-                    or "You are a helpful table question answering assistant"
-                )
-                messages = [{"role": "system", "content": action_selection_system}]
+        if not (self.action_examples and self.action_examples.has_prompt("action_selection")):
+            return self._append_instruction("", instruction_prompt)
 
-                # Build action-description preamble and attach to first example
-                action_descs = self.action_examples.examples_manager.get_action_descriptions()
-                preamble_parts = []
-                for desc in action_descs:
-                    table_repr = desc.get("table_repr", "").rstrip()
-                    block = (
-                        f"{desc['description']} For example,\n"
-                        f"Table:\n{table_repr}\n"
-                        f"Question: {desc['question']}\n"
-                        f"Function: {desc['function']}\n"
-                        f"Explanation: {desc['explanation']}"
-                    )
-                    preamble_parts.append(block)
-                preamble = "\n\n".join(preamble_parts)
-
-                for i, example in enumerate(examples):
-                    # Format each example as a conversation turn (user message + assistant response)
-                    example_table_str = example.format_table_for_prompt()
-                    example_actions_text = REGISTRY.get_prompt_text_cot(None, exclude_terminating_on_first=False)
-                    example_prompt = (
-                        f"{example_table_str}\n\n"
-                        f"Question: {example.question}\n\n"
-                        f"The next operation must be one of {example_actions_text}.\n"
-                        "Function Chain: "
-                    )
-                    if i == 0 and preamble:
-                        example_prompt = preamble + "\n\n" + example_prompt
-                    messages.append({"role": "user", "content": example_prompt})
-                    messages.append({"role": "assistant", "content": example.answer})
-
+        examples = self.action_examples.examples_manager.get_examples("action_selection")
         if not examples:
             return self._append_instruction("", instruction_prompt)
 
-        # Build conversation history with examples using messages format
-        messages = []
+        action_selection_system = (
+            self.action_examples.examples_manager.get_system_rules("action_selection")
+            or "You are a helpful table question answering assistant"
+        )
+        messages = [{"role": "system", "content": action_selection_system}]
 
-        # Add instruction as system message if available
-        instruction = self.action_examples.get_instruction("action_selection")
-        if instruction:
-            messages.append({"role": "system", "content": instruction})
+        # Build action-description preamble and attach to first example
+        action_descs = self.action_examples.examples_manager.get_action_descriptions()
+        preamble_parts = []
+        for desc in action_descs:
+            table_repr = desc.get("table_repr", "").rstrip()
+            block = (
+                f"{desc['description']} For example,\n"
+                f"Table:\n{table_repr}\n"
+                f"Question: {desc['question']}\n"
+                f"Function: {desc['function']}\n"
+                f"Explanation: {desc['explanation']}"
+            )
+            preamble_parts.append(block)
+        preamble = "\n\n".join(preamble_parts)
 
-        for example in examples:
-            # Format each example as a conversation turn (user message + assistant response)
-            example_table_str = example.table.to_csv(max_chars=2000, crop=False)
-            example_prompt = f"Table:\n{example_table_str}\n\nQuestion: {example.question}\n"
-            if example.explanation:
-                example_prompt += f"Explanation: {example.explanation}\n"
-            example_prompt += "Action: "
-
+        for i, example in enumerate(examples):
+            example_table_str = example.format_table_for_prompt()
+            example_actions_text = REGISTRY.get_prompt_text_cot(None, exclude_terminating_on_first=False)
+            example_prompt = (
+                f"{example_table_str}\n\n"
+                f"Question: {example.question}\n\n"
+                f"The next operation must be one of {example_actions_text}.\n"
+                "Function Chain: "
+            )
+            if i == 0 and preamble:
+                example_prompt = preamble + "\n\n" + example_prompt
             messages.append({"role": "user", "content": example_prompt})
             messages.append({"role": "assistant", "content": example.answer})
 
@@ -235,17 +215,14 @@ class PromptBuilder:
         messages.append({"role": "user", "content": instruction_prompt})
 
         if self.is_instruct:
-            instruct_result = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            return instruct_result
+            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         else:
-            # For non-instruct models, just concatenate the messages
             result = ""
             for msg in messages:
                 if msg["role"] == "user":
                     result += msg["content"] + "\n"
                 else:
                     result += msg["content"] + "\n\n"
-
             return result
 
     def build_cot_arguments_prompt(

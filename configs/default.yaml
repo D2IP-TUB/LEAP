@@ -22,7 +22,7 @@ dataset:
   path: null
 
 run:
-  max_examples: 100
+  max_examples: 300
 
 generation:
   use_constraints: false

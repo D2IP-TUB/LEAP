@@ -120,5 +120,22 @@ class Action:
 
         return action_def.apply(table, self.arguments)
 
+    def is_valid_for_table(self, table: Table) -> bool:
+        """
+        Check whether this action's arguments are valid for the given table.
+
+        Delegates to the ActionDefinition's validate() method.
+        """
+        from .registry import REGISTRY
+
+        action_def = REGISTRY.get(self.name)
+        if action_def is None:
+            return False
+
+        if not hasattr(action_def, "validate"):
+            return True
+
+        return action_def.validate(table, self.arguments)
+
     def __repr__(self) -> str:
         return f"Action({self.name}, args={list(self.arguments)})"
