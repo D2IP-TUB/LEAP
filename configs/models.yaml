@@ -1,4 +1,26 @@
 models:
+  "Qwen/Qwen2.5-7B-Instruct":
+    log_dir: "table_logs_qwen"
+    instruct: true
+    hardware:
+      num_workers: 1
+      tensor_parallel_size: 1
+      gpu_allocation: [3]
+      max_model_len: 30000
+    tokenizer: # needs updating
+      llama_tokenizer: true
+      closing_quote_token_ids:
+        closing_quote_id: 29908
+        dot_quote_id: 1213
+        closing_bracket_quote_id: 5513
+        colon_quote_id: 6160
+        quote_quote_id: 5124
+        list_close_quote_id: 18017
+        percent_close_quote_id: 23577
+        star_quote_id: 20605
+      token_ids:
+        comma_id: 29892
+        list_open_id: 29961
   "meta-llama/Llama-2-70b-hf":
     log_dir: "table_logs_llama"
     instruct: false
@@ -43,6 +65,28 @@ models:
         comma_id: 29892
         list_open_id: 29961
 
+  "meta-llama/Llama-4-Scout-17B-16E-Instruct":
+    log_dir: "table_logs_llama_4_scout_17b_16e_instruct"
+    instruct: true
+    hardware:
+      num_workers: 1
+      tensor_parallel_size: 4
+      gpu_allocation: [0, 1, 2, 3]
+      max_model_len: 32000
+    tokenizer: # needs updating
+      llama_tokenizer: true
+      closing_quote_token_ids: # well need to check this
+        closing_quote_id: 29908
+        dot_quote_id: 1213
+        closing_bracket_quote_id: 5513
+        colon_quote_id: 6160
+        quote_quote_id: 5124
+        list_close_quote_id: 18017
+        percent_close_quote_id: 23577
+        star_quote_id: 20605
+      token_ids:
+        comma_id: 29892
+        list_open_id: 29961
   "gpt2":
     log_dir: "table_logs_gpt2"
     instruct: false
@@ -124,8 +168,8 @@ models:
     instruct: false
     hardware:
       num_workers: 1
-      tensor_parallel_size: 4
-      gpu_allocation: [0, 1, 2, 3]
+      tensor_parallel_size: 2
+      gpu_allocation: [2,3]
     tokenizer:
       llama_tokenizer: true
       closing_quote_token_ids:

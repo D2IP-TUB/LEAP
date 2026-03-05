@@ -219,7 +219,7 @@ def main():
         print(f"Starting server with {num_workers} workers...")
         print(f"Logging configuration: {server.get_logging_stats()}")
 
-        if not server.start_workers():
+        if not server.start_workers(timeout=600):
             print("Failed to start all workers. Exiting.")
             return
 

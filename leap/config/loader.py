@@ -219,7 +219,7 @@ def _build_tokenizer_config(tokenizer_section: Dict[str, Any], tokenizer) -> Tok
 
     action_tokens = {}
     for action_name in REGISTRY.get_enabled_names():
-        action_tokens[action_name] = tokenizer.encode(action_name, add_special_tokens=False)
+        action_tokens[action_name] = tokenizer.encode(f"f_{action_name}", add_special_tokens=False)
 
     return TokenizerConfig(
         is_llama_tokenizer=is_llama_tokenizer,

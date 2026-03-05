@@ -7,8 +7,6 @@ Groups rows by a specified column and outputs a summary table with counts.
 Reference: Chain-of-Table paper (arXiv:2401.04398v2), Appendix A
 """
 
-from typing import Tuple
-import re
 from collections import Counter
 from typing import List, Optional
 
@@ -63,24 +61,46 @@ class GroupByAction(ActionDefinition):
         """
         return list(table.columns)
 
+    def parse_arguments(self, args_str: str) -> Optional[str]:
+        """
+        Parse column name from argument string.
 
 
-    def apply(self, table: Table, arguments: Tuple[str]) -> Optional[Table]:
+        Returns:
+            Column name (str) or None if parsing fails
+        """
+        args_str = args_str.strip()
+
+        if not args_str or args_str == "[]":
+            return None
+
+        column_name = args_str.strip('"').strip("'").strip()
+        # Stop at comma or semicolon (model may add extra prose), but NOT space (column names can have spaces)
+        for sep in [",", ";"]:
+            if sep in column_name:
+                column_name = column_name.split(sep)[0].strip()
+        return column_name.strip('"').strip("'")
+
+    def apply(self, table: Table, arguments) -> Optional[Table]:
         """
         Apply group_by to table.
 
         Args:
             table: Input table
-            arguments: Column name to group by
+            arguments: Column name to group by (str or single-element list)
 
         Returns:
             New table with grouped results, or None if invalid
         """
+        if isinstance(arguments, (list, tuple)):
+            if len(arguments) != 1:
+                return None
+            arguments = arguments[0]
 
-        if not isinstance(arguments, Tuple) or len(arguments) != 1:
+        if not isinstance(arguments, str):
             return None
 
-        column_name = arguments[0]
+        column_name = table.resolve_column(arguments) or arguments
 
         # Validate column exists
         if column_name not in table.columns:
@@ -105,13 +125,41 @@ class GroupByAction(ActionDefinition):
 
         return Table(columns=new_columns, rows=new_rows)
 
+    def validate(self, table: Table, arguments) -> bool:
+        """
+        Validate group_by arguments.
+
+        Checks:
+        - Argument is a string (column name)
+        - Column exists in table
+        - Table has at least one row
+        """
+        if isinstance(arguments, (list, tuple)):
+            if len(arguments) != 1:
+                return False
+            arguments = arguments[0]
+
+        if not isinstance(arguments, str):
+            return False
+
+        if not arguments:
+            return False
+
+        if table.resolve_column(arguments) is None:
+            return False
+
+        if len(table.rows) == 0:
+            return False
+
+        return True
+
     def get_prompt_text_iterative(self) -> str:
         """Prompt text for iterative generation."""
-        return "group_by(column_name)"
+        return "f_group_by(column_name)"
 
     def get_prompt_text_cot(self) -> str:
         """Prompt text for CoT generation."""
-        return "group_by"
+        return "f_group_by"
 
     def get_description(self) -> str:
         """Action description for prompts."""

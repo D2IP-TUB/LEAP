@@ -47,6 +47,17 @@ class DirectQueryAction(ActionDefinition):
         """Direct query takes no parameters."""
         return []
 
+    def parse_arguments(self, args_str: str) -> Optional[List[Any]]:
+        """
+        Direct query has no arguments.
+
+        Accepts empty string or empty list.
+        """
+        args_str = args_str.strip()
+        if not args_str or args_str == "[]":
+            return []
+        return None  # Invalid if arguments provided
+
     def apply(self, table: Table, arguments: List[Any]) -> Optional[Table]:
         """
         Apply direct_query - returns table unchanged.
@@ -58,11 +69,11 @@ class DirectQueryAction(ActionDefinition):
 
     def get_prompt_text_iterative(self) -> str:
         """Prompt text for iterative generation."""
-        return "direct_query()"
+        return "f_direct_query()"
 
     def get_prompt_text_cot(self) -> str:
         """Prompt text for CoT generation."""
-        return "direct_query"
+        return "f_direct_query"
 
     def get_description(self) -> str:
         """Action description for prompts."""

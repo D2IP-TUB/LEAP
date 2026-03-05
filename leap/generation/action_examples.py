@@ -10,10 +10,9 @@ This module provides:
 
 from __future__ import annotations
 
-from ast import Tuple
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -33,6 +32,7 @@ class ActionExample:
     question: str
     explanation: Optional[str] = None
     answer: Optional[str] = None
+    table_caption: Optional[str] = None
     # Additional fields for specific actions (e.g., select_column needs these)
     similar_words: Optional[List[str]] = None
     column_value_links: Optional[List[str]] = None
@@ -59,6 +59,7 @@ class ActionExample:
             question=data["question"],
             explanation=data.get("explanation"),
             answer=data.get("answer"),
+            table_caption=data.get("table_caption"),
             similar_words=data.get("similar_words"),
             column_value_links=data.get("column_value_links"),
             semantic_sentence_links=data.get("semantic_sentence_links"),
@@ -95,9 +96,11 @@ class ActionExample:
         return Table(columns=columns, rows=rows)
 
     def format_table_for_prompt(self) -> str:
-        """Format table using the standard Table.to_csv() method for consistency."""
-        # Use the same serialization as everywhere else in the system
-        return self.table.to_csv(max_chars=5000, crop=False)
+        """Format table (with optional caption) using the standard Table.to_csv() method for consistency."""
+        table_str = self.table.to_csv(max_chars=5000, crop=False)
+        if self.table_caption:
+            return f"Table caption: {self.table_caption}\nTable:\n{table_str}"
+        return f"Table:\n{table_str}"
 
 
 class ActionExamplesManager:
@@ -124,6 +127,8 @@ class ActionExamplesManager:
 
         self.examples_path = examples_path
         self._examples_cache: Optional[Dict[str, List[ActionExample]]] = None
+        self._system_rules_cache: Optional[Dict[str, str]] = None
+        self._action_descriptions_cache: Optional[List[Dict[str, str]]] = None
 
     def get_examples(self, action_name: str) -> List[ActionExample]:
         """
@@ -142,22 +147,58 @@ class ActionExamplesManager:
 
         return self._examples_cache.get(action_name, [])
 
+    def get_action_descriptions(self) -> List[Dict[str, str]]:
+        """Return the list of action description dicts from the YAML top-level key."""
+        if self._action_descriptions_cache is None:
+            self._load_examples()
+        return self._action_descriptions_cache or []
+
+    def get_system_rules(self, action_name: str) -> Optional[str]:
+        """
+        Get optional system rules string for a specific action.
+
+        Returns:
+            The system rules string if defined in the yaml, otherwise None.
+        """
+        if self._system_rules_cache is None:
+            self._load_examples()
+
+        return self._system_rules_cache.get(action_name)
+
     def _load_examples(self):
-        """Load examples from YAML file and cache them."""
+        """Load examples from YAML file and cache them.
+
+        Supports two formats per action:
+        - Bare list (legacy): action_name: [example, ...]
+        - Dict with optional system key: action_name: {system: "...", examples: [...]}
+        """
         if not self.examples_path.exists():
             raise FileNotFoundError(f"Action examples file not found: {self.examples_path}")
 
         with open(self.examples_path) as f:
             data = yaml.safe_load(f)
 
-        # Parse all examples
         self._examples_cache = {}
-        for action_name, examples_data in data.get("examples", {}).items():
-            self._examples_cache[action_name] = [ActionExample.from_dict(ex) for ex in examples_data]
+        self._system_rules_cache = {}
+        self._action_descriptions_cache = data.get("action_descriptions", [])
+        for action_name, action_data in data.get("examples", {}).items():
+            if isinstance(action_data, list):
+                # Legacy format: bare list of examples
+                examples_list = action_data
+                system_rules = None
+            else:
+                # New format: dict with optional "system" key and "examples" list
+                examples_list = action_data.get("examples", [])
+                system_rules = action_data.get("system")
+
+            self._examples_cache[action_name] = [ActionExample.from_dict(ex) for ex in examples_list]
+            if system_rules:
+                self._system_rules_cache[action_name] = system_rules
 
     def clear_cache(self):
         """Clear the examples cache (useful for testing or reloading)."""
         self._examples_cache = None
+        self._system_rules_cache = None
 
 
 class ActionPromptTemplate:
@@ -190,16 +231,20 @@ class ActionPromptTemplate:
         # Add examples in the same format as the original prompt
         # Only include: Table, Question, and Answer
         for i, example in enumerate(self.examples, 1):
-            # Add "Table:" prefix to match original format
             example_parts = []
-            example_parts.append("Table:")
             example_parts.append(example.format_table_for_prompt())
             example_parts.append("")
             example_parts.append(f"Question: {example.question}")
             example_parts.append("")
+            example_parts.append("Explanation: ")
 
             examples.append("\n".join(example_parts))
-            answers.append(f"The answer is: {example.answer}")
+
+            # Build answer in "explanation then answer" format
+            if example.explanation:
+                answers.append(f"{example.explanation}\nTherefore the answer is: {example.answer}.")
+            else:
+                answers.append(f"Therefore the answer is: {example.answer}.")
 
         return examples, answers
 
@@ -230,56 +275,14 @@ class ActionPromptBuilder:
         self._build_all_templates()
 
     def _build_all_templates(self):
-        """Build templates for all actions (called once during init)."""
-        # Define instructions for each action
-        instructions = {
-            "select_row": (
-                "Use select_row() to select relevant rows in the given table that support or oppose the statement.\n"
-                "Please use select_row([*]) to select all rows in the table."
-                "A valid answer ends like: The answer is: 'select_row(column_name).'"
-            ),
-            "select_column": (
-                "Use select_column() to filter out useless columns in the table according to information in the statement and the table."
-            ),
-            "add_column": (
-                "Use add_column() to add more columns to the table. This is useful when you want to add information or extract information from another column.\n\n"
-                "The added columns should have these data types:\n"
-                "1. Numerical: the numerical strings that can be used in sort, sum.\n"
-                "2. Datetype: the strings that describe a date, such as year, month, day.\n"
-                "3. String: other strings.\n\n"
-                "Rules:\n"
-                "- The only valid operation is add_column().\n"
-                "- Do not provide any other operation.\n"
-                "- Do not nest operations.\n"
-                "- You must provide as many values as rows in the table.\n"
-                "- Do not provide more details than shown in the examples.\n"
-                "- A valid answer ends like: add_column(column_name, [value_1, value_2, ...])'\n"
-            ),
-            "group_by": (
-                "To answer the question, the next operation is group_by() to group the values in a column.\n\n"
-                "Rules:\n"
-                "- The only valid operation is group_by(column_name)\n"
-                "- Do not provide any other operation.\n"
-                "- Do not nest operation.\n"
-                "- Do not provide more details than shown in the examples including explenations text.\n"
-                "- A valid answer ends like: The answer is: 'group_by(column_name).'"
-            ),
-            "sort_by": (
-                "To answer the question, the next operation is sort_by() to sort the values in a column to get the order of the items. The order can be 'large to small' or 'small to large'.\n\n"
-                "The column to sort should have these data types:\n"
-                "1. Numerical: the numerical strings that can be used in sort\n"
-                "2. DateType: the strings that describe a date, such as year, month, day\n"
-                "3. String: other strings\n\n"
-            ),
-            "action_selection": (
-                "Here are examples of using the operations to answer the questions:"
-            ),
-        }
+        """Build templates for all actions (called once during init).
 
-        # Build template for each action
-        for action_name, instruction in instructions.items():
+        Instructions are sourced entirely from the "system" field in action_examples.yaml.
+        """
+        for action_name in ("select_row", "select_column", "add_column", "group_by", "sort_by", "action_selection"):
             examples = self.examples_manager.get_examples(action_name)
-            if examples:  # Only build template if examples exist
+            if examples:
+                instruction = self.examples_manager.get_system_rules(action_name) or ""
                 self._templates[action_name] = ActionPromptTemplate(action_name, examples, instruction)
 
     def get_examples(self, action_name: str) -> Optional[str]:

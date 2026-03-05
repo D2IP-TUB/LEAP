@@ -52,6 +52,7 @@ class BaseGenerationStrategy:
         state_machines,
         question: str,
         step: int,
+        table_caption: Optional[str] = None,
     ) -> ActionStepResult:
         """
         Generate a single action for the current step.
@@ -110,6 +111,7 @@ class BaseGenerationStrategy:
                     state_machines=state_machines,
                     question=question,
                     step=step,
+                    table_caption=request.table_caption,
                 )
 
                 # Extract action and metadata from result
@@ -168,6 +170,22 @@ class BaseGenerationStrategy:
                     profiler.end_step(step_start, step, "apply_failed")
                     continue
 
+                # If the LLM wants to repeat the last action, go straight to end
+                if action_history and action.to_string() == action_history[-1]:
+                    print(f"Step {step}: Detected repeated action '{action.to_string()}', forcing end()")
+                    action_history.append("end()")
+                    action_history.append("direct_query()")
+                    if logging_callback:
+                        logging_callback(
+                            request_id,
+                            step + 1,
+                            "end()",
+                            current_table,
+                            generation_mode=generation_mode,
+                        )
+                    profiler.end_step(step_start, step, "end")
+                    break
+
                 current_table = new_table
                 action_history.append(action.to_string())
                 failures = 0
@@ -175,6 +193,9 @@ class BaseGenerationStrategy:
                 step += 1
                 profiler.end_step(step_start, step - 1, action.name)
                 print(f"Step {step}: Applied {action.to_string()}")
+                print(f"  [DEBUG] Table columns ({len(current_table.columns)}), rows ({len(current_table.rows)}):")
+                for col in current_table.columns:
+                    print(f"    - {col}")
 
                 if logging_callback:
                     logging_callback(
@@ -217,6 +238,7 @@ class BaseGenerationStrategy:
                     final_table=current_table,
                     action_history=action_history,
                     request_id=request_id,
+                    table_caption=request.table_caption,
                 )
             if generated_answers:
                 print(f"Generated answers: {generated_answers}")
@@ -272,6 +294,7 @@ class BaseGenerationStrategy:
         final_table: Table,
         action_history: List[str],
         request_id: str,
+        table_caption: Optional[str] = None,
     ) -> Optional[List[str]]:
         """
         Generate answers using Query(T,Q).
@@ -293,14 +316,11 @@ class BaseGenerationStrategy:
                 table=final_table,
                 action_history=action_history,
                 worker=worker,
+                table_caption=table_caption,
             )
 
             # Print prompt for direct_query (similar to other actions)
-            print(f"\n{'=' * 80}")
-            print("DIRECT_QUERY PROMPT:")
-            print(f"{'=' * 80}")
-            print(query_prompt)
-            print(f"{'=' * 80}\n")
+            print(f"\n{'=' * 80}\n[DIRECT QUERY PROMPT | {request_id}]\n{'=' * 80}\n{query_prompt}\n{'=' * 80}\n")
 
             # Generate answer from LLM using worker.generate_text()
             # Use temperature=0.0 for deterministic answer generation
@@ -318,11 +338,7 @@ class BaseGenerationStrategy:
             )
 
             # Print response for direct_query (similar to other actions)
-            print(f"\n{'=' * 80}")
-            print("DIRECT_QUERY RESPONSE:")
-            print(f"{'=' * 80}")
-            print(response if response else "(empty response)")
-            print(f"{'=' * 80}\n")
+            print(f"\n[DIRECT QUERY RESPONSE | {request_id}]\n{'=' * 80}\n{response if response else '(empty response)'}\n{'=' * 80}\n")
 
             if not response or not response.strip():
                 print(f"Warning: Empty response from Query(T,Q) for {request_id}")
@@ -392,6 +408,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
         state_machines,
         question: str,
         step: int,
+        table_caption: Optional[str] = None,
     ) -> ActionStepResult:
         """Generate a single action using iterative strategy (single-call)."""
         step_id = f"{request_id}_step{step}"
@@ -406,6 +423,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
             prompt_builder=self.prompt_builder,
             question=question,
             step=step,
+            table_caption=table_caption,
         )
         return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
 
@@ -439,6 +457,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
         state_machines,
         question: str,
         step: int,
+        table_caption: Optional[str] = None,
     ) -> ActionStepResult:
         """Generate a single action using two-phase strategy (action selection + args)."""
         # Always use sampling layer (with n=1 when sampling is disabled)
@@ -453,6 +472,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
             temperature_action=self.action_temperature,
             temperature_args=self.args_temperature,
             prompt_builder=self.prompt_builder,
+            table_caption=table_caption,
         )
         return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
 
@@ -523,6 +543,7 @@ class DirectQueryGenerationStrategy(BaseGenerationStrategy):
                 final_table=original_table,
                 action_history=action_history,
                 request_id=request_id,
+                table_caption=request.table_caption,
             )
 
         if generated_answers:

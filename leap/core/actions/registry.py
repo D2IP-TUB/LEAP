@@ -45,6 +45,28 @@ class ActionDefinition(ABC):
         return False
 
     @abstractmethod
+    def generate_params(self, table: Table) -> List[str]:
+        """
+        Generate valid parameters for constraint system.
+
+        For select_row: ["row 0", "row 1", ...]
+        For select_column: ["col1", "col2", ...]
+        For end/direct_query: []
+        """
+        pass
+
+    @abstractmethod
+    def parse_arguments(self, args_str: str) -> Optional[List[Any]]:
+        """
+        Parse arguments from LLM output string.
+
+        Extracts structure only — no table-based validation.
+        Validation against a specific table is handled by validate().
+        Return None if parsing fails.
+        """
+        pass
+
+    @abstractmethod
     def apply(self, table: Table, arguments: List[Any]) -> Optional[Table]:
         """
         Apply this operation to a table.
@@ -58,21 +80,21 @@ class ActionDefinition(ABC):
         """
         Get prompt text for iterative generation strategy.
 
-        Default format: "action_name([args])"
+        Default format: "f_action_name([args])"
         Override for custom formatting.
         """
         if not self.requires_args:
-            return f"{self.name}()"
-        return f"{self.name}([args])"
+            return f"f_{self.name}()"
+        return f"f_{self.name}([args])"
 
     def get_prompt_text_cot(self) -> str:
         """
         Get prompt text for CoT generation strategy.
 
-        Default: just the action name.
+        Default: just the action name with f_ prefix.
         Override if needed.
         """
-        return self.name
+        return f"f_{self.name}"
 
     def get_description(self) -> str:
         """
@@ -243,7 +265,7 @@ class ActionRegistry:
         for name in enabled:
             action = self._actions[name]
             desc = action.get_description()
-            lines.append(f"{name}: {desc}")
+            lines.append(f"f_{name}: {desc}")
 
         return "\n".join(lines)
 
@@ -257,10 +279,11 @@ class ActionRegistry:
         names_and_args = text.strip().lower().split("->")
         names = [aa.strip().split("(")[0].replace("\\", "").strip() for aa in names_and_args]
 
-        # Try fuzzy matching with keywords
+        # Try fuzzy matching with keywords (strip f_ prefix if present)
         for name in names:
-            if self.is_enabled(name):
-                return name
+            lookup_name = name[2:] if name.startswith("f_") else name
+            if self.is_enabled(lookup_name):
+                return lookup_name
 
         return None
 
