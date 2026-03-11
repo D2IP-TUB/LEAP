@@ -607,14 +607,26 @@ class SamplingLayer:
                     final_result = result
 
                 if final_result and final_result.outputs:
-                    args_text = final_result.outputs[0].text.strip()
-                    # DEBUG: Print Phase 2 response
-                    print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_text}\n{'=' * 80}\n")
+                    raw_args_text = final_result.outputs[0].text.strip()
 
-                    # Clean up: Remove action name prefix if model incorrectly generated it
-                    args_text = self._clean_argument_text(args_text, action_name)
+                    print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{raw_args_text}\n{'=' * 80}\n")
+                   
+                    args_text = self._clean_argument_text(raw_args_text, action_name)
                     full_action_str = f"{action_name}({args_text})"
                     action = Action.parse(full_action_str)
+
+                    if action and action.name == "add_column":
+                        action = await self._extend_add_column_per_row(
+                            action=action,
+                            table=modified_table,
+                            prompt_builder=prompt_builder,
+                            worker=worker,
+                            step_id=step_id,
+                            request_id=request_id,
+                            step=step,
+                            explanation=raw_args_text,
+                        )
+
                     return action
                 return None
             except Exception as e:
@@ -631,6 +643,61 @@ class SamplingLayer:
         candidates = [r for r in results if r is not None and not isinstance(r, Exception)]
 
         return candidates
+
+    async def _extend_add_column_per_row(
+        self,
+        *,
+        action: Action,
+        table: Table,
+        prompt_builder,
+        worker,
+        step_id: str,
+        request_id: str,
+        step: int,
+        explanation: str,
+    ) -> Action:
+        """Extend an add_column action by generating any missing row values one at a time.
+
+        If the action already has values for all rows, returns it unchanged.
+        Otherwise uses the existing values as seed examples and generates the rest row-by-row.
+        """
+        col_name, seed_values = action.arguments
+        if len(seed_values) >= len(table.rows):
+            return action
+
+        all_values = list(seed_values)
+
+        for row_idx in range(len(seed_values), len(table.rows)):
+            per_row_prompt = prompt_builder.build_add_column_per_row_prompt(
+                table=table,
+                column_name=col_name,
+                target_row=table.rows[row_idx],
+                target_row_idx=row_idx,
+                seed_values=list(seed_values),
+                explanation=explanation,
+            )
+            row_id = f"{step_id}_row{row_idx}"
+            row_params = SamplingParams(
+                temperature=0.0,
+                max_tokens=50,
+                stop_token_ids=[worker.tokenizer.eos_token_id],
+                stop=["\n"],
+                n=1,
+            )
+            print(
+                f"\n{'=' * 80}\n[PHASE 2 PROMPT - ADD_COLUMN ROW {row_idx} | {request_id} step={step}]\n{'=' * 80}\n{per_row_prompt}\n{'=' * 80}\n"  # noqa: E501
+            )
+            row_gen = worker.engine.generate(per_row_prompt, row_params, row_id)
+            row_result = None
+            async for r in row_gen:
+                row_result = r
+            val = row_result.outputs[0].text.strip() if row_result and row_result.outputs else ""
+            # Take only the first non-empty line in case the model generated extra text
+            val = next((line.strip() for line in val.splitlines() if line.strip()), val)
+            print(f"\n[PHASE 2 RESPONSE - ADD_COLUMN ROW {row_idx} | {request_id}]\n{'=' * 80}\n{val}\n{'=' * 80}\n")
+            all_values.append(val)
+
+        return Action("add_column", [col_name, all_values])
 
     def filter_candidates(self, candidates: List[Action], table: Table, action_history: List[str] = None) -> List[Action]:
         """Filter candidates to only valid actions. Override to customize filtering."""

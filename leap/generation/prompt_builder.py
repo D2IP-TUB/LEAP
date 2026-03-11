@@ -62,6 +62,17 @@ class PromptBuilder:
             return f"Table caption: {caption}\nTable:\n{table_str}"
         return f"Table:\n{table_str}"
 
+    @staticmethod
+    def _format_row_csv(table: Table, row: tuple, row_idx: int) -> str:
+        """Format a single row as CSV with the correct row index in the label."""
+        import csv as _csv
+        import io
+        out = io.StringIO()
+        writer = _csv.writer(out)
+        writer.writerow([" "] + list(table.columns))
+        writer.writerow([f"row {row_idx}"] + list(row))
+        return out.getvalue().rstrip()
+
     def build_iterative_prompt(
         self,
         *,
@@ -248,6 +259,9 @@ class PromptBuilder:
             messages.append({"role": "user", "content": example})
             messages.append({"role": "assistant", "content": example_answer})
 
+        if action_name == "add_column" and len(table.rows) > 3:
+            table = Table(columns=list(table.columns), rows=[list(r) for r in table.rows[:3]])
+
         table_str = self._format_table(table, self.cot_settings.args_table_chars, table_caption)
         final_prompt = f"{table_str}\n\n"
         final_prompt += f"Question: {question}\n\n"
@@ -267,6 +281,56 @@ class PromptBuilder:
                 else:
                     result += msg["content"] + "\n\n"
 
+            return result
+
+    def build_add_column_per_row_prompt(
+        self,
+        *,
+        table: Table,
+        column_name: str,
+        target_row: tuple,
+        target_row_idx: int,
+        seed_values: list,
+        explanation: str,
+    ) -> str:
+        """Prompt to generate the add_column value for a single row.
+
+        Chat-template format: task description in each user turn, each seed row
+        as a user/assistant example, target row as the final user message.
+
+            User:  <task description>\\n\\n<row CSV>\\n\\n<prompt line>
+            Asst:  <seed value>
+            ...
+            User:  <task description>\\n\\n<target row CSV>\\n\\n<prompt line>
+        """
+        # Extract reasoning text — everything before "Therefore the answer is:"
+        for marker in ("Therefore, the answer is:", "Therefore the answer is:"):
+            if marker in explanation:
+                task_description = explanation[: explanation.index(marker)].strip()
+                break
+        else:
+            task_description = explanation.strip()
+
+        prompt_line = f"We need to determine the value for column '{column_name}'. The value:"
+
+        messages = []
+
+        # One user/assistant shot per seed row
+        for i, (row, value) in enumerate(zip(table.rows[:3], seed_values[:3])):
+            row_csv = self._format_row_csv(table, row, i)
+            messages.append({"role": "user", "content": f"{task_description}\n\n{row_csv}\n\n{prompt_line}"})
+            messages.append({"role": "assistant", "content": str(value)})
+
+        # Target row — final user message
+        target_csv = self._format_row_csv(table, target_row, target_row_idx)
+        messages.append({"role": "user", "content": f"{task_description}\n\n{target_csv}\n\n{prompt_line}"})
+
+        if self.is_instruct:
+            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        else:
+            result = ""
+            for msg in messages:
+                result += msg["content"] + "\n" if msg["role"] == "user" else msg["content"] + "\n\n"
             return result
 
     def build_query_prompt(
