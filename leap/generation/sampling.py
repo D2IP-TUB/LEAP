@@ -562,6 +562,7 @@ class SamplingLayer:
                     question=question,
                     table=modified_table,
                     action_name=action_name,
+                    action_history=modified_history,
                     worker=worker,
                     table_caption=table_caption,
                 )
@@ -610,7 +611,7 @@ class SamplingLayer:
                     raw_args_text = final_result.outputs[0].text.strip()
 
                     print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{raw_args_text}\n{'=' * 80}\n")
-                   
+
                     args_text = self._clean_argument_text(raw_args_text, action_name)
                     full_action_str = f"{action_name}({args_text})"
                     action = Action.parse(full_action_str)

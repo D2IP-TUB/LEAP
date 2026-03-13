@@ -96,6 +96,15 @@ class ActionDefinition(ABC):
         """
         return f"f_{self.name}"
 
+    def get_fuzzy_match_keywords(self) -> List[str]:
+        """
+        Get keywords for fuzzy matching in parse_name_only().
+
+        Default: [self.name]
+        Override to add additional keywords (e.g., ["row", "select_row"])
+        """
+        return [self.name]
+
     def get_description(self) -> str:
         """
         Get human-readable description of what this action does.
@@ -282,8 +291,16 @@ class ActionRegistry:
         # Try fuzzy matching with keywords (strip f_ prefix if present)
         for name in names:
             lookup_name = name[2:] if name.startswith("f_") else name
-            if self.is_enabled(lookup_name):
+            if lookup_name in self._actions and self.is_enabled(lookup_name):
                 return lookup_name
+
+        # Try keyword matching
+        for name in self.get_enabled_names():
+            action = self._actions[name]
+            keywords = action.get_fuzzy_match_keywords()
+            for keyword in keywords:
+                if keyword.lower() in text.strip().lower():
+                    return name
 
         return None
 
