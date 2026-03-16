@@ -25,43 +25,17 @@ All notable changes to the LEAP project are documented in this file.
   - Debug mode for observing generation and voting process in real-time
   - Concurrent sample generation using `asyncio.gather()` for maximum throughput
 - **Shuffle Invariant SamplingLayer**: Implement shuffle invariant sampling for an equivariance action behavior
-- **Action Examples System**: New comprehensive action examples framework
-  - YAML-based action examples configuration (`configs/action_examples.yaml`)
-- **Configurable Generation Strategies**: Added support for reading generation strategy from config
-  - Support for direct strategy selection via configuration
-  - Add query only generation strategy
-
-#### Configuration
-- **Enhanced Prompt Configuration**: Added configurable prompt length settings
-- **Temperature Configuration**: Added per-task temperature configuration for action type selection
-- **Model Configuration**: Extended model configuration in `configs/models.yaml`
-- **Action Examples Configuration**: New `configs/action_examples.yaml` for managing action examples
-
+- **Visual Logger Implementation**: Implemented a visual logger that helps visualise the output of the experiments
 #### Refactoring
 - Renamed `inference.py` to `types.py` for better clarity
 - Moved `action.py` from `leap/core/` to `leap/core/actions/`
-- Modularized action implementations:
-  - `leap/core/actions/end.py` - END action implementation
-  - `leap/core/actions/select_column.py` - SELECT_COLUMN action
-  - `leap/core/actions/select_row.py` - SELECT_ROW action
-  - `leap/core/actions/direct_query.py` - Direct query action
-- Extract shared orchestration for generation strategies
+- Extract shared orchesteration for generation strategies
 - Use sampling layer as an interface for single response requests
 - Enhanced evaluator, prompt builder, and sampling logic
 - Refactored inference constraints for better maintainability
-- **Prompt Builder Enhancements**:
-  - Improved tag placement for examples and conditions (use tokenizer for automatic prompt building)
-  - Better handling of action examples in prompts
-  - Support for action history context
 
 ### Changed
 - Updated configuration schema in `configs/default.yaml` for action registry support
-- Enhanced prompt templates with better example formatting
-- Improved action type selection prompt with additional examples
-- Reduced temperature for action type selection for more consistent results (similar to CoTables paper)
-- Replaced `use_chain_of_table` config flag with generation strategy `cot`
-- Generation strategies are now uniformly configured through the strategy selection in config
-- Direct query action now reads examples from `action_examples.yaml`
 
 ## [0.1.0] - 2025-12-03
 

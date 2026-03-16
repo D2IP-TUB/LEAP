@@ -118,6 +118,19 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
                 "actions": actions,
                 "execution_accuracy": result.execution_accuracy,
                 "execution_metrics": result.execution_metrics.to_dict(),  # Use to_dict() method
+                "sampling_metadata": [
+                    {
+                        "candidate_actions": m.candidate_actions,
+                        "valid_actions": m.valid_actions,
+                        "winner": m.action.to_dict(),
+                        "n_requested": m.n_requested,
+                        "n_generated": m.n_generated,
+                        "n_valid": m.n_valid,
+                        "winner_votes": m.winner_votes,
+                        "total_votes": m.total_votes,
+                    }
+                    for m in (result.sampling_metadata or [])
+                ],
                 "metadata": {
                     "num_steps": len(actions),
                     "generation_mode": get_generation_mode_string(generation_config),
