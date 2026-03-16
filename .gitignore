@@ -2,6 +2,9 @@ __pycache__
 .cursor/
 .venv/
 .vscode
+.claude
 
 logs/
 datasets/
+
+CLAUDE.md
