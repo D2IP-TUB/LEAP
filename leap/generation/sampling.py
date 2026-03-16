@@ -17,6 +17,7 @@ from vllm import SamplingParams
 
 from leap.core import Action, Table
 from leap.core.actions import REGISTRY
+from leap.generation.prompt_builder import PromptBuilder
 from leap.inference.constraints import (
     create_action_only_constraint_processor,
     create_arguments_only_constraint_processor,
@@ -133,6 +134,7 @@ class SamplingLayer:
         temperature_action: float,
         state_machines,
         prompt_builder,
+        table_caption: str = None,
     ) -> str:
         """
         Generate the action type, optimizing for single-option scenarios.
@@ -165,7 +167,7 @@ class SamplingLayer:
         else:
             # Generate action type via LLM
             action_prompt = prompt_builder.build_cot_action_prompt(
-                question=question, table=table, action_history=action_history, worker=worker
+                question=question, table=table, action_history=action_history, worker=worker, table_caption=table_caption
             )
 
             action_types = await self.generate_action_types(worker, action_prompt, 1, request_id, step, temperature_action, state_machines)
@@ -188,6 +190,7 @@ class SamplingLayer:
         prompt_builder,
         question: str,
         step: int,
+        table_caption: str = None,
     ) -> SamplingResult:
         """Generate and vote on action candidates."""
 
@@ -224,7 +227,7 @@ class SamplingLayer:
 
         # Generate N candidates with context transformation
         candidates = await self.generate_candidates(
-            worker, n_samples, table, action_history, request_id, state_machines, prompt_builder, question, step
+            worker, n_samples, table, action_history, request_id, state_machines, prompt_builder, question, step, table_caption
         )
 
         if self.config.debug:
@@ -241,6 +244,9 @@ class SamplingLayer:
                 invalid = set(c.to_string() for c in candidates) - set(c.to_string() for c in valid_candidates)
                 for inv in invalid:
                     print(f"  [INVALID] {inv}")
+                print(f"  [DEBUG] Table columns ({len(table.columns)}), rows ({len(table.rows)}):")
+                for col in table.columns:
+                    print(f"    - {col}")
 
         # Vote on best action
         action, winner_votes = self.aggregate_candidates(valid_candidates)
@@ -279,6 +285,7 @@ class SamplingLayer:
         temperature_action: float,
         temperature_args: float,
         prompt_builder,
+        table_caption: str = None,
     ) -> SamplingResult:
         """
         Two-phase sampling for Chain-of-Table:
@@ -300,6 +307,7 @@ class SamplingLayer:
             temperature_action=temperature_action,
             state_machines=state_machines,
             prompt_builder=prompt_builder,
+            table_caption=table_caption,
         )
 
         # Check if this action requires arguments
@@ -337,6 +345,7 @@ class SamplingLayer:
             state_machines,
             prompt_builder,
             question,
+            table_caption,
         )
 
         if self.config.debug:
@@ -353,6 +362,9 @@ class SamplingLayer:
                 invalid = set(c.to_string() for c in args_candidates) - set(c.to_string() for c in valid_candidates)
                 for inv in invalid:
                     print(f"  [INVALID] {inv}")
+                print(f"  [DEBUG] Table columns ({len(table.columns)}), rows ({len(table.rows)}):")
+                for col in table.columns:
+                    print(f"    - {col}")
 
         action, winner_votes = self.aggregate_candidates(valid_candidates)
 
@@ -388,6 +400,7 @@ class SamplingLayer:
         prompt_builder,
         question: str,
         step: int,
+        table_caption: str = None,
     ) -> List[Action]:
         """
         Generate N action candidates with context transformation.
@@ -415,6 +428,7 @@ class SamplingLayer:
                     action_history=modified_history,
                     worker=worker,
                     step=step,
+                    table_caption=table_caption,
                 )
 
                 # Generate single action with this prompt
@@ -438,7 +452,7 @@ class SamplingLayer:
                 else:
                     sampling_params = SamplingParams(
                         temperature=0.7,
-                        max_tokens=100,
+                        max_tokens=900,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         stop=["\n", "Next", "Step"],
                         n=1,
@@ -459,7 +473,8 @@ class SamplingLayer:
                     action = Action.parse(response_text)
                     return action
                 return None
-            except Exception:
+            except Exception as e:
+                print(f"[SAMPLING ERROR] Sample {sample_idx} failed: {type(e).__name__}: {e}")
                 return None
 
         # Create all sample generation tasks concurrently
@@ -498,7 +513,7 @@ class SamplingLayer:
             )
 
         # DEBUG: Print Phase 1 prompt
-        print(f"\n{'=' * 80}\n[PHASE 1 PROMPT - ACTION SELECTION]\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
+        print(f"\n{'=' * 80}\n[PHASE 1 PROMPT - ACTION SELECTION | {request_id} step={step}]\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
 
         result_generator = worker.engine.generate(prompt, sampling_params, step_id)
         final_result = None
@@ -510,7 +525,7 @@ class SamplingLayer:
             for output in final_result.outputs:
                 response_text = output.text.strip()
                 # DEBUG: Print Phase 1 response
-                print(f"\n[PHASE 1 RESPONSE]\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
+                print(f"\n[PHASE 1 RESPONSE | {request_id} step={step}]\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
                 action_name = Action.parse_name_only(response_text)
                 if action_name:
                     action_types.append(action_name)
@@ -528,8 +543,9 @@ class SamplingLayer:
         step: int,
         temperature: float,
         state_machines,
-        prompt_builder,
+        prompt_builder: PromptBuilder,
         question: str,
+        table_caption: str = None,
     ) -> List[Action]:
         """
         Generate N argument sets for a given action type with context transformation.
@@ -547,14 +563,14 @@ class SamplingLayer:
             try:
                 # Transform context for this sample
                 modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
-
                 # Build fresh args prompt with modified context
                 args_prompt = prompt_builder.build_cot_arguments_prompt(
                     question=question,
                     table=modified_table,
-                    action_history=modified_history,
                     action_name=action_name,
+                    action_history=modified_history,
                     worker=worker,
+                    table_caption=table_caption,
                 )
 
                 step_id = f"{request_id}_args_step{step}_sample{sample_idx}"
@@ -581,14 +597,16 @@ class SamplingLayer:
                 else:
                     sampling_params = SamplingParams(
                         temperature=temperature,
-                        max_tokens=100,
+                        max_tokens=900,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
-                        stop=["\n", "Next", "Step"],
+                        stop=["Next", "Step"],
                         n=1,
                     )
 
                 # DEBUG: Print Phase 2 prompt
-                print(f"\n{'=' * 80}\n[PHASE 2 PROMPT - ARGUMENTS] Sample {sample_idx}\n{'=' * 80}\n{args_prompt}\n{'=' * 80}\n")
+                print(
+                    f"\n{'=' * 80}\n[PHASE 2 PROMPT - ARGUMENTS | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_prompt}\n{'=' * 80}\n"  # noqa: E501
+                )
 
                 result_generator = worker.engine.generate(args_prompt, sampling_params, step_id)
                 final_result = None
@@ -596,20 +614,30 @@ class SamplingLayer:
                     final_result = result
 
                 if final_result and final_result.outputs:
-                    args_text = final_result.outputs[0].text.strip()
-                    # DEBUG: Print Phase 2 response
-                    print(f"\n[PHASE 2 RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{args_text}\n{'=' * 80}\n")
+                    raw_args_text = final_result.outputs[0].text.strip()
 
-                    # Clean up: Remove action name prefix if model incorrectly generated it
-                    # e.g., "select_column ([ "Team" ]" -> "[ "Team" ]"
-                    # This happens when constraints force full format but we only want args
-                    args_text = self._clean_argument_text(args_text, action_name)
+                    print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{raw_args_text}\n{'=' * 80}\n")
 
+                    args_text = self._clean_argument_text(raw_args_text, action_name)
                     full_action_str = f"{action_name}({args_text})"
                     action = Action.parse(full_action_str)
+
+                    if action and action.name == "add_column":
+                        action = await self._extend_add_column_per_row(
+                            action=action,
+                            table=modified_table,
+                            prompt_builder=prompt_builder,
+                            worker=worker,
+                            step_id=step_id,
+                            request_id=request_id,
+                            step=step,
+                            explanation=raw_args_text,
+                        )
+
                     return action
                 return None
-            except Exception:
+            except Exception as e:
+                print(f"[SAMPLING ERROR] Sample {sample_idx} failed: {type(e).__name__}: {e}")
                 return None
 
         # Create all argument generation tasks concurrently
@@ -623,17 +651,69 @@ class SamplingLayer:
 
         return candidates
 
-    def filter_candidates(self, candidates: List[Action], table: Table) -> List[Action]:
+    async def _extend_add_column_per_row(
+        self,
+        *,
+        action: Action,
+        table: Table,
+        prompt_builder,
+        worker,
+        step_id: str,
+        request_id: str,
+        step: int,
+        explanation: str,
+    ) -> Action:
+        """Extend an add_column action by generating any missing row values one at a time.
+
+        If the action already has values for all rows, returns it unchanged.
+        Otherwise uses the existing values as seed examples and generates the rest row-by-row.
+        """
+        col_name, seed_values = action.arguments
+        if len(seed_values) >= len(table.rows):
+            return action
+
+        all_values = list(seed_values)
+
+        for row_idx in range(len(seed_values), len(table.rows)):
+            per_row_prompt = prompt_builder.build_add_column_per_row_prompt(
+                table=table,
+                column_name=col_name,
+                target_row=table.rows[row_idx],
+                target_row_idx=row_idx,
+                seed_values=list(seed_values),
+                explanation=explanation,
+            )
+            row_id = f"{step_id}_row{row_idx}"
+            row_params = SamplingParams(
+                temperature=0.0,
+                max_tokens=50,
+                stop_token_ids=[worker.tokenizer.eos_token_id],
+                stop=["\n"],
+                n=1,
+            )
+            print(
+                f"\n{'=' * 80}\n[PHASE 2 PROMPT - ADD_COLUMN ROW {row_idx} | {request_id} step={step}]\n{'=' * 80}\n{per_row_prompt}\n{'=' * 80}\n"  # noqa: E501
+            )
+            row_gen = worker.engine.generate(per_row_prompt, row_params, row_id)
+            row_result = None
+            async for r in row_gen:
+                row_result = r
+            val = row_result.outputs[0].text.strip() if row_result and row_result.outputs else ""
+            # Take only the first non-empty line in case the model generated extra text
+            val = next((line.strip() for line in val.splitlines() if line.strip()), val)
+            print(f"\n[PHASE 2 RESPONSE - ADD_COLUMN ROW {row_idx} | {request_id}]\n{'=' * 80}\n{val}\n{'=' * 80}\n")
+            all_values.append(val)
+
+        return Action("add_column", [col_name, all_values])
+
+    def filter_candidates(self, candidates: List[Action], table: Table, action_history: List[str] = None) -> List[Action]:
         """Filter candidates to only valid actions. Override to customize filtering."""
-        valid = []
-        for action in candidates:
-            try:
-                result = action.apply_to_table(table)
-                if result is not None:
-                    valid.append(action)
-            except Exception:
-                pass
-        return valid
+        used_actions = REGISTRY._extract_action_names_from_history(action_history) if action_history else set()
+        return [
+            action
+            for action in candidates
+            if action.is_valid_for_table(table) and (action.name not in used_actions or action.name == "end")
+        ]
 
     def aggregate_candidates(self, candidates: List[Action]) -> tuple[Optional[Action], int]:
         """Vote on candidates. Override to customize aggregation logic."""
@@ -679,14 +759,45 @@ class SamplingLayer:
         # - "select_column ([ "Team" ]" -> "[ "Team" ]"
         # - "select_column([ "Team" ]" -> "[ "Team" ]"
         # - "select_([ "0" ]" -> "[ "0" ]"  (partial action name)
-
         # First, try exact action name match
-        pattern = rf"^\s*{re.escape(action_name)}\s*\(?\s*"
+
+        # Match "Therefore the answer is: f_action_name(...)" pattern
+        marker = "therefore the answer is:"
+        marker_idx = args_text.lower().find(marker)
+        if marker_idx >= 0:
+            after_marker = args_text[marker_idx + len(marker) :].strip()
+            # Find the last ')' and extract everything up to and including it
+            last_paren = after_marker.rfind(")")
+            if last_paren >= 0:
+                after_marker = after_marker[: last_paren + 1]
+            args_text = after_marker
+
+        # Normalize backslashes only for regex matching — do NOT use this for the returned value
+        normalized_args_text = args_text.replace("\\", "")
+
+        # Try to extract just the args from f_action_name(args) or action_name(args)
+        # Try f_-prefixed version first (LLM generates f_sort_by(...) etc.)
+        for name_pattern in [rf"f_{re.escape(action_name)}", rf"\b{re.escape(action_name)}"]:
+            # Find the opening paren after the action name
+            open_match = re.search(rf"{name_pattern}\s*\(", normalized_args_text, re.IGNORECASE)
+            if open_match:
+                open_pos = open_match.end()  # position after '('
+                # Find matching closing paren (accounting for nested parens)
+                depth = 1
+                pos = open_pos
+                while pos < len(normalized_args_text) and depth > 0:
+                    if normalized_args_text[pos] == "(":
+                        depth += 1
+                    elif normalized_args_text[pos] == ")":
+                        depth -= 1
+                    pos += 1
+                if depth == 0:
+                    close_pos = pos - 1  # position of closing ')'
+                    # Use match offsets on the original args_text (offsets are same since we only stripped backslashes)
+                    return args_text[open_pos:close_pos].strip().rstrip(".'\"")
+
+        # Fallback: strip action name prefix (with or without f_) then everything after closing paren
+        pattern = rf"^\s*(?:f_)?{re.escape(action_name)}\s*\(?\s*"
         cleaned = re.sub(pattern, "", args_text, count=1)
-
-        # If that didn't match, try partial match "select_"
-        if cleaned == args_text and args_text.startswith("select_"):
-            # Remove "select_" or "select_row" or "select_column" prefix
-            cleaned = re.sub(r"^\s*select_[a-z]*\s*\(?\s*", "", args_text, count=1)
-
-        return cleaned.strip()
+        cleaned = cleaned.replace(")", "")
+        return cleaned.strip().rstrip(".'\"")  # Strip trailing punctuation from prompt format

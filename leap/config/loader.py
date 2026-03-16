@@ -55,6 +55,7 @@ class GenerationConfig:
     use_global_constraints: bool
     strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
+    enabled_actions: tuple = None  # Tuple of enabled action names (immutable for frozen dataclass)
 
 
 @dataclass(frozen=True)
@@ -114,7 +115,7 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
 
     generation_section = raw_config.get("generation", {})
     enabled_actions = generation_section.get("enabled_actions")
-    if enabled_actions:
+    if enabled_actions is not None:
         REGISTRY.set_enabled_actions(enabled_actions)
 
     model_section = raw_config.get("model")
@@ -154,6 +155,7 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
         use_global_constraints=generation_section.get("use_global_constraints", False),
         strategy=generation_section.get("strategy", "cot"),
         sampling=sampling_config,
+        enabled_actions=tuple(enabled_actions) if enabled_actions else None,
     )
 
     return AppConfig(
@@ -217,7 +219,7 @@ def _build_tokenizer_config(tokenizer_section: Dict[str, Any], tokenizer) -> Tok
 
     action_tokens = {}
     for action_name in REGISTRY.get_enabled_names():
-        action_tokens[action_name] = tokenizer.encode(action_name, add_special_tokens=False)
+        action_tokens[action_name] = tokenizer.encode(f"f_{action_name}", add_special_tokens=False)
 
     return TokenizerConfig(
         is_llama_tokenizer=is_llama_tokenizer,
