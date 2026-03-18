@@ -23,7 +23,7 @@ templates_path = os.path.join(script_dir, "templates")
 app.mount("/static", StaticFiles(directory=static_path), name="static")
 templates = Jinja2Templates(directory=templates_path)
 
-SERVER_URL = "http://localhost:8006/process"
+SERVER_URL = "http://localhost:8000/process"
 
 
 @app.get("/", response_class=HTMLResponse)

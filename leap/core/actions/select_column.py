@@ -2,7 +2,6 @@
 Select Column Action - Select specific columns by name.
 """
 
-import re
 from typing import Any, List, Optional
 
 from ..table import Table
@@ -24,7 +23,7 @@ class SelectColumnAction(ActionDefinition):
         """Generate column parameters for constraint system."""
         return list(table.columns)
 
-    def parse_arguments(self, args_str: str, table: Table) -> Optional[List[Any]]:
+    def parse_arguments(self, args_str: str) -> Optional[List[Any]]:
         """
         Parse column names from argument string.
 
@@ -34,68 +33,35 @@ class SelectColumnAction(ActionDefinition):
         - "col1, col2"
         """
         args_str = args_str.strip()
+        # Normalize unicode/fancy quotes to plain ASCII
+        args_str = args_str.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
 
         if not args_str or args_str == "[]":
             return []
 
         # Try to extract column names
         try:
-            if args_str.startswith("[") and args_str.endswith("]"):
-                # List format
-                import ast
+            import ast
 
-                columns = ast.literal_eval(args_str)
+            # Extract bracketed list if present (ignore extra text after closing bracket)
+            bracket_start = args_str.find("[")
+            bracket_end = args_str.rfind("]")
+            if bracket_start >= 0 and bracket_end > bracket_start:
+                bracketed = args_str[bracket_start : bracket_end + 1]
+                try:
+                    columns = ast.literal_eval(bracketed)
+                except Exception:
+                    # Unquoted column names inside brackets, e.g. [Name in English, Depth]
+                    inner = bracketed[1:-1]
+                    columns = [col.strip().strip('"').strip("'") for col in inner.split(",")]
             else:
-                # Comma-separated, possibly quoted
+                # Comma-separated, possibly quoted — take only up to any sentence-ending punctuation
                 columns = [col.strip().strip('"').strip("'") for col in args_str.split(",")]
 
-            return columns
+            # Normalize newlines to spaces — table columns have \n replaced with space at load time
+            return [col.replace("\n", " ") if isinstance(col, str) else col for col in columns]
         except Exception:
             return None
-
-    def extract_arguments_from_text(self, text: str, table: Table) -> Optional[List[Any]]:
-        """
-        Extract column names from free-form text (CoT).
-
-        Tries various patterns to find column names.
-        """
-        text = text.strip()
-
-        # Try various patterns for column names
-        patterns = [
-            r'\[(["\'][^"\']+["\'](?:\s*,\s*["\'][^"\']+["\'])*)\]',
-            r'["\']([^"\']+)["\'](?:\s*,\s*["\']([^"\']+)["\'])*',
-            r'columns?\s+(["\'][^"\']+["\'](?:\s*,\s*["\'][^"\']+["\'])*)',
-        ]
-
-        mentioned_columns = []
-
-        for pattern in patterns:
-            matches = re.findall(pattern, text, re.IGNORECASE)
-            if matches:
-                for match in matches:
-                    if isinstance(match, tuple):
-                        for col in match:
-                            if col and col.strip("\"'") in table.columns:
-                                mentioned_columns.append(col.strip("\"'"))
-                    else:
-                        col_matches = re.findall(r'["\']([^"\']+)["\']', match)
-                        for col in col_matches:
-                            if col in table.columns:
-                                mentioned_columns.append(col)
-
-        if mentioned_columns:
-            return list(set(mentioned_columns))
-
-        # Fallback: check if column names appear in text
-        for col in table.columns:
-            if col.lower() in text.lower():
-                mentioned_columns.append(col)
-
-        if mentioned_columns:
-            return list(set(mentioned_columns[:3]))  # Limit to 3
-
-        return None
 
     def apply(self, table: Table, arguments: List[Any]) -> Optional[Table]:
         """Apply column selection to table."""
@@ -107,18 +73,14 @@ class SelectColumnAction(ActionDefinition):
             return False
 
         for col in arguments:
-            if col not in table.columns:
+            if table.resolve_column(col) is None:
                 return False
 
         return True
 
     def get_prompt_text_iterative(self) -> str:
         """Prompt text for iterative generation."""
-        return 'select_column(["column_names"])'
-
-    def get_fuzzy_match_keywords(self) -> List[str]:
-        """Keywords for fuzzy matching."""
-        return ["select_column", "column"]
+        return 'f_select_column(["column_names"])'
 
     def get_description(self) -> str:
         """Action description for prompts."""

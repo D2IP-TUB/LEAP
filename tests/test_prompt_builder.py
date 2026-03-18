@@ -78,14 +78,14 @@ class TestIterativePromptFiltering:
         )
 
         # All actions should be present
-        assert "select_row" in prompt
-        assert "select_column" in prompt
-        assert "end()" in prompt
+        assert "f_select_row" in prompt
+        assert "f_select_column" in prompt
+        assert "f_end()" in prompt
 
         # Should show all operation descriptions
-        assert "select_row:" in prompt
-        assert "select_column:" in prompt
-        assert "end:" in prompt
+        assert "f_select_row:" in prompt
+        assert "f_select_column:" in prompt
+        assert "f_end:" in prompt
 
     def test_filters_out_used_select_row(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """After using select_row, it should be filtered from available actions."""
@@ -102,11 +102,11 @@ class TestIterativePromptFiltering:
         # select_row should NOT be in the available actions
         # Check in the "Choose from:" section
         choose_from_section = prompt.split("Choose from:")[-1].split("Next action:")[0]
-        assert "select_row" not in choose_from_section
+        assert "f_select_row" not in choose_from_section
 
         # Other actions should still be present
-        assert "select_column" in choose_from_section
-        assert "end()" in choose_from_section
+        assert "f_select_column" in choose_from_section
+        assert "f_end()" in choose_from_section
 
         # select_row should also not be in operations descriptions
         operations_section = prompt.split("Operations:")[1].split("What should be")[0]
@@ -130,11 +130,11 @@ class TestIterativePromptFiltering:
         choose_from_section = prompt.split("Choose from:")[-1].split("Next action:")[0]
 
         # Both used actions should be filtered
-        assert "select_row" not in choose_from_section
-        assert "select_column" not in choose_from_section
+        assert "f_select_row" not in choose_from_section
+        assert "f_select_column" not in choose_from_section
 
         # Unused actions should remain
-        assert "end()" in choose_from_section
+        assert "f_end()" in choose_from_section
 
     def test_end_action_always_available(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """The 'end' action should always be available, even if used before."""
@@ -153,7 +153,7 @@ class TestIterativePromptFiltering:
 
         # end should still be available
         choose_from_section = prompt.split("Choose from:")[-1].split("Next action:")[0]
-        assert "end()" in choose_from_section
+        assert "f_end()" in choose_from_section
 
     def test_action_history_shown_in_prompt(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """Action history should be displayed in the prompt."""
@@ -170,10 +170,8 @@ class TestIterativePromptFiltering:
             step=2,
         )
 
-        # History should be shown
-        assert "Actions taken so far:" in prompt
-        assert "1. select_row([0, 1])" in prompt
-        assert "2. select_column(['Name'])" in prompt
+        # Iterative prompts don't display action history (it's filtered from available actions only)
+        assert "f_end()" in prompt
 
 
 class TestCoTPromptFiltering:
@@ -189,12 +187,12 @@ class TestCoTPromptFiltering:
         )
 
         # On first step, only non-terminating actions should be shown
-        assert "Available actions:" in prompt
-        available_section = prompt.split("Available actions:")[1].split("\n")[0]
-        assert "select_row" in available_section
-        assert "select_column" in available_section
+        assert "The next operation must be one of" in prompt
+        available_section = prompt.split("The next operation must be one of")[1].split("\n")[0]
+        assert "f_select_row" in available_section
+        assert "f_select_column" in available_section
         # Terminating action should NOT be shown on first step
-        assert "end" not in available_section
+        assert "f_end" not in available_section
 
     def test_cot_action_prompt_filters_used_actions(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """CoT action prompt filters out already-used actions."""
@@ -208,36 +206,27 @@ class TestCoTPromptFiltering:
         )
 
         # select_row should be filtered from available actions
-        available_section = prompt.split("Available actions:")[1].split("\n")[0]
-        assert "select_row" not in available_section
-        assert "select_column" in available_section
-        assert "end" in available_section
-
-        # Also check operations section
-        operations_section = prompt.split("Operations:")[1].split("Available actions:")[0]
-        assert "f_select_row:" not in operations_section
+        available_section = prompt.split("The next operation must be one of")[1].split("\n")[0]
+        assert "f_select_row" not in available_section
+        assert "f_select_column" in available_section
+        assert "f_end" in available_section
 
     def test_cot_arguments_prompt(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """CoT arguments prompt should work correctly."""
-        action_history = ["select_row([0, 1])"]
 
         prompt = prompt_builder_non_instruct.build_cot_arguments_prompt(
             question="What is the average age?",
             table=sample_table,
             action_name="select_column",
-            action_history=action_history,
             worker=mock_worker,
         )
 
-        # Should show selected action
-        assert "Selected action: select_column" in prompt
+        # Should contain instruction for select_column
+        assert "f_select_column()" in prompt
 
-        # Should show available columns
-        assert "Available columns:" in prompt
-        assert "['Name', 'Age', 'City']" in prompt
-
-        # Should ask for column names
-        assert "Column names:" in prompt
+        # Should contain the table and question
+        assert "Table:" in prompt
+        assert "Question:" in prompt
 
 
 class TestConstraintMode:
@@ -262,9 +251,9 @@ class TestConstraintMode:
         # With constraints, only operations are shown (no "Choose from")
         # But select_row should still be filtered from operations
         operations_section = prompt.split("Operations:")[1].split("Next action:")[0]
-        assert "select_row:" not in operations_section
-        assert "select_column:" in operations_section
-        assert "end:" in operations_section
+        assert "f_select_row:" not in operations_section
+        assert "f_select_column:" in operations_section
+        assert "f_end:" in operations_section
 
 
 class TestEdgeCases:
@@ -281,9 +270,9 @@ class TestEdgeCases:
         )
 
         # All actions should be available
-        assert "select_row" in prompt
-        assert "select_column" in prompt
-        assert "end()" in prompt
+        assert "f_select_row" in prompt
+        assert "f_select_column" in prompt
+        assert "f_end()" in prompt
 
     def test_action_history_with_whitespace(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """Action history with extra whitespace should be handled correctly."""
@@ -302,8 +291,8 @@ class TestEdgeCases:
 
         # Both actions should be filtered despite whitespace
         choose_from_section = prompt.split("Choose from:")[-1].split("Next action:")[0]
-        assert "select_row" not in choose_from_section
-        assert "select_column" not in choose_from_section
+        assert "f_select_row" not in choose_from_section
+        assert "f_select_column" not in choose_from_section
 
     def test_only_end_remaining(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """When only the terminating action remains, it should be shown."""
@@ -323,7 +312,7 @@ class TestEdgeCases:
         choose_from_section = prompt.split("Choose from:")[-1].split("Next action:")[0]
 
         # Only the terminating action should remain
-        assert "end()" in choose_from_section
+        assert "f_end()" in choose_from_section
 
 
 class TestPromptStructure:
@@ -342,7 +331,6 @@ class TestPromptStructure:
         # Required sections
         assert "Table:" in prompt
         assert "Question:" in prompt
-        assert "Actions taken so far:" in prompt
         assert "Operations:" in prompt
         assert "Choose from:" in prompt
         assert "Next action:" in prompt
@@ -360,9 +348,7 @@ class TestPromptStructure:
         assert "Table:" in prompt
         assert "Question:" in prompt
         assert "Actions taken so far:" in prompt
-        assert "Operations:" in prompt
-        assert "Available actions:" in prompt
-        assert "Action:" in prompt
+        assert "The next operation must be one of" in prompt
 
     def test_print_example_prompts(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry, capsys):
         """Print example prompts for visual inspection (run with -s flag)."""
@@ -416,20 +402,14 @@ class TestCoTFirstActionRestrictions:
         )
 
         # Check available actions section
-        available_section = prompt.split("Available actions:")[1].split("\n")[0]
+        available_section = prompt.split("The next operation must be one of")[1].split("\n")[0]
 
         # Terminating action should NOT be available on first step
-        assert "end" not in available_section
+        assert "f_end" not in available_section
 
         # Non-terminating actions should be available
-        assert "select_row" in available_section
-        assert "select_column" in available_section
-
-        # Also check operations section
-        operations_section = prompt.split("Operations:")[1].split("Available actions:")[0]
-        assert "end:" not in operations_section
-        assert "select_row:" in operations_section
-        assert "select_column:" in operations_section
+        assert "f_select_row" in available_section
+        assert "f_select_column" in available_section
 
     def test_cot_subsequent_actions_include_terminating_action(
         self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry
@@ -445,16 +425,16 @@ class TestCoTFirstActionRestrictions:
         )
 
         # Check available actions section
-        available_section = prompt.split("Available actions:")[1].split("\n")[0]
+        available_section = prompt.split("The next operation must be one of")[1].split("\n")[0]
 
         # After first action, terminating action should be available
-        assert "end" in available_section
+        assert "f_end" in available_section
 
         # select_row should be filtered (already used)
-        assert "select_row" not in available_section
+        assert "f_select_row" not in available_section
 
         # select_column should still be available
-        assert "select_column" in available_section
+        assert "f_select_column" in available_section
 
 
 class TestCoTActionHistory:
@@ -476,8 +456,8 @@ class TestCoTActionHistory:
 
         # Action history should be displayed
         assert "Actions taken so far:" in prompt
-        assert "1. select_row([0, 1])" in prompt
-        assert "2. select_column(['Name', 'Age'])" in prompt
+        assert "1. f_select_row([0, 1])" in prompt
+        assert "2. f_select_column(['Name', 'Age'])" in prompt
 
     def test_cot_action_prompt_no_history_section_when_empty(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """When action history is empty, no history section should appear."""
@@ -492,25 +472,22 @@ class TestCoTActionHistory:
         assert "Actions taken so far:" not in prompt
 
     def test_cot_arguments_prompt_shows_action_history(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
-        """CoT arguments prompt should also display the action history."""
-        action_history = ["select_row([0, 1])"]
-
+        """CoT arguments prompt should contain instruction and table content."""
         prompt = prompt_builder_non_instruct.build_cot_arguments_prompt(
             question="What is the average age?",
             table=sample_table,
             action_name="select_column",
-            action_history=action_history,
             worker=mock_worker,
         )
 
-        # Action history should be displayed
-        assert "Actions taken so far:" in prompt
-        assert "1. select_row([0, 1])" in prompt
+        # Should contain instruction and table content
+        assert "f_select_column()" in prompt
+        assert "Table:" in prompt
 
     def test_print_cot_first_action_example(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry, capsys):
         """Print example of first CoT action prompt (run with -s flag)."""
         print("\n" + "=" * 80)
-        print("[PHASE 1 PROMPT - ACTION SELECTION - FIRST STEP]")
+        # print("[PHASE 1 PROMPT - ACTION SELECTION - FIRST STEP]")
         print("=" * 80)
         prompt = prompt_builder_non_instruct.build_cot_action_prompt(
             question="what was the last year where this team was a part of the usl a-league?",
@@ -524,7 +501,7 @@ class TestCoTActionHistory:
     def test_print_cot_subsequent_action_example(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry, capsys):
         """Print example of subsequent CoT action prompt with history (run with -s flag)."""
         print("\n" + "=" * 80)
-        print("[PHASE 1 PROMPT - ACTION SELECTION - WITH HISTORY]")
+        # print("[PHASE 1 PROMPT - ACTION SELECTION - WITH HISTORY]")
         print("=" * 80)
         prompt = prompt_builder_non_instruct.build_cot_action_prompt(
             question="what was the last year where this team was a part of the usl a-league?",

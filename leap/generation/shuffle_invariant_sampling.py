@@ -154,6 +154,7 @@ class ShuffleInvariantSamplingLayer(SamplingLayer):
         prompt_builder,
         question: str,
         step: int,
+        table_caption: str = None,
     ) -> List[Action]:
         """
         Generate N candidates with permutation tracking.
@@ -176,7 +177,7 @@ class ShuffleInvariantSamplingLayer(SamplingLayer):
 
         # Generate candidates using parent method (which calls transform_context)
         candidates = await super().generate_candidates(
-            worker, n, table, action_history, request_id, state_machines, prompt_builder, question, step
+            worker, n, table, action_history, request_id, state_machines, prompt_builder, question, step, table_caption
         )
 
         # Map candidates to sample indices
@@ -201,6 +202,7 @@ class ShuffleInvariantSamplingLayer(SamplingLayer):
         state_machines,
         prompt_builder,
         question: str,
+        table_caption: str = None,
     ) -> List[Action]:
         """
         Generate N argument sets with permutation tracking.
@@ -221,7 +223,18 @@ class ShuffleInvariantSamplingLayer(SamplingLayer):
 
         # Generate candidates using parent method
         candidates = await super().generate_arguments(
-            worker, action_name, n, table, action_history, request_id, step, temperature, state_machines, prompt_builder, question
+            worker,
+            action_name,
+            n,
+            table,
+            action_history,
+            request_id,
+            step,
+            temperature,
+            state_machines,
+            prompt_builder,
+            question,
+            table_caption,
         )
 
         # Map candidates to sample indices

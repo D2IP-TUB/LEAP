@@ -56,22 +56,13 @@ class ActionDefinition(ABC):
         pass
 
     @abstractmethod
-    def parse_arguments(self, args_str: str, table: Table) -> Optional[List[Any]]:
+    def parse_arguments(self, args_str: str) -> Optional[List[Any]]:
         """
-        Parse arguments from LLM output.
+        Parse arguments from LLM output string.
 
-        Called by Action.parse() for this specific operation.
+        Extracts structure only — no table-based validation.
+        Validation against a specific table is handled by validate().
         Return None if parsing fails.
-        """
-        pass
-
-    @abstractmethod
-    def extract_arguments_from_text(self, text: str, table: Table) -> Optional[List[Any]]:
-        """
-        Extract arguments from free-form text (for CoT two-phase generation).
-
-        Called by Action.extract_from_text() for this specific operation.
-        Return None if extraction fails.
         """
         pass
 
@@ -85,34 +76,25 @@ class ActionDefinition(ABC):
         """
         pass
 
-    @abstractmethod
-    def validate(self, table: Table, arguments: List[Any]) -> bool:
-        """
-        Validate that arguments are valid for this table.
-
-        Called by Action.is_valid_for_table() for this specific operation.
-        """
-        pass
-
     def get_prompt_text_iterative(self) -> str:
         """
         Get prompt text for iterative generation strategy.
 
-        Default format: "action_name([args])"
+        Default format: "f_action_name([args])"
         Override for custom formatting.
         """
         if not self.requires_args:
-            return f"{self.name}()"
-        return f"{self.name}([args])"
+            return f"f_{self.name}()"
+        return f"f_{self.name}([args])"
 
     def get_prompt_text_cot(self) -> str:
         """
         Get prompt text for CoT generation strategy.
 
-        Default: just the action name.
+        Default: just the action name with f_ prefix.
         Override if needed.
         """
-        return self.name
+        return f"f_{self.name}"
 
     def get_fuzzy_match_keywords(self) -> List[str]:
         """
@@ -292,7 +274,7 @@ class ActionRegistry:
         for name in enabled:
             action = self._actions[name]
             desc = action.get_description()
-            lines.append(f"{name}: {desc}")
+            lines.append(f"f_{name}: {desc}")
 
         return "\n".join(lines)
 
@@ -302,18 +284,22 @@ class ActionRegistry:
 
         Replaces Action.parse_name_only() logic.
         """
-        text = text.strip().lower()
 
-        # Try exact match first
-        if text in self._actions and self.is_enabled(text):
-            return text
+        names_and_args = text.strip().lower().split("->")
+        names = [aa.strip().split("(")[0].replace("\\", "").strip() for aa in names_and_args]
 
-        # Try fuzzy matching with keywords
+        # Try fuzzy matching with keywords (strip f_ prefix if present)
+        for name in names:
+            lookup_name = name[2:] if name.startswith("f_") else name
+            if lookup_name in self._actions and self.is_enabled(lookup_name):
+                return lookup_name
+
+        # Try keyword matching
         for name in self.get_enabled_names():
             action = self._actions[name]
             keywords = action.get_fuzzy_match_keywords()
             for keyword in keywords:
-                if keyword.lower() in text:
+                if keyword.lower() in text.strip().lower():
                     return name
 
         return None

@@ -220,6 +220,8 @@ async def process_experiment(request: Request, req_data: ExperimentRequest, x_se
             action_str = result[0].action_history[i]
             action = Action.parse(action_str)
             if not action:
+                if action_str == "direct_query()":
+                    continue
                 step = {
                     "index": len(steps_log),
                     "action": {"action": "invalid", "args": [action_str]},
@@ -231,7 +233,6 @@ async def process_experiment(request: Request, req_data: ExperimentRequest, x_se
             else:
                 if action.name in {"initial", "direct_query"}:
                     continue
-
                 if action.name == "end":
                     step = {"index": len(steps_log), "action": action, "table": current_table, "sampling_metadata": None}
 
@@ -263,4 +264,4 @@ async def process_experiment(request: Request, req_data: ExperimentRequest, x_se
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8006)
+    uvicorn.run(app, host="127.0.0.1", port=8000)

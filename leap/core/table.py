@@ -16,7 +16,10 @@ class Table:
     def __init__(self, columns: List[str], rows: List[List[Any]]):
         """Initialize with mutable lists, convert to immutable internally"""
         # Use object.__setattr__ because dataclass is frozen
-        object.__setattr__(self, "columns", tuple(columns))
+        # Normalize newlines in column names — LLM sees CSV headers as single-line
+        # and reproduces \n as the surrounding chars joined (e.g. "IEC\nType" → "IECType")
+        # which breaks fuzzy matching. Replace \n with space so the LLM sees clean names.
+        object.__setattr__(self, "columns", tuple(col.replace("\n", " ").replace("\\n", " ") for col in columns))
         object.__setattr__(self, "rows", tuple(tuple(row) for row in rows))
 
     @classmethod
@@ -91,13 +94,38 @@ class Table:
         new_rows = [self.rows[i] for i in valid_indices]
         return Table(columns=list(self.columns), rows=new_rows)
 
+    @staticmethod
+    def _norm(s: str) -> str:
+        """Normalize string for fuzzy column matching: lowercase, collapse non-alphanumeric to spaces."""
+        import re
+
+        return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+    def resolve_column(self, column_name: str) -> Optional[str]:
+        """Return the actual column name, trying exact → case-insensitive → normalized match."""
+        # Pass 1: exact match
+        if column_name in self.columns:
+            return column_name
+        # Pass 2: case-insensitive
+        lower = column_name.lower()
+        for col in self.columns:
+            if col.lower() == lower:
+                return col
+        # Pass 3: normalize special chars (underscores, hyphens, etc.) to spaces
+        norm_query = self._norm(column_name)
+        for col in self.columns:
+            if self._norm(col) == norm_query:
+                return col
+        return None
+
     def select_columns(self, column_names: List[str]) -> Optional["Table"]:
         """
-        Select specific columns by name.
+        Select specific columns by name (case-insensitive).
 
         Returns None if no valid columns provided.
         """
-        valid_columns = [col for col in column_names if col in self.columns]
+        resolved = [self.resolve_column(col) for col in column_names]
+        valid_columns = [col for col in resolved if col is not None]
 
         if not valid_columns:
             return None

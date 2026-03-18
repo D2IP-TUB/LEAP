@@ -373,7 +373,7 @@ class ActionOnlyConstraintStateMachine:
         # Pre-compute action tokens from enabled actions
         self.action_tokens = {}
         for action_name in REGISTRY.get_enabled_names():
-            self.action_tokens[action_name] = tokenizer.encode(action_name, add_special_tokens=False)
+            self.action_tokens[action_name] = tokenizer.encode(f"f_{action_name}", add_special_tokens=False)
         self.reset()
 
     def reset(self):
