@@ -101,8 +101,10 @@ class Table:
 
         return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
-    def resolve_column(self, column_name: str) -> Optional[str]:
+    def resolve_column(self, column_name) -> Optional[str]:
         """Return the actual column name, trying exact → case-insensitive → normalized match."""
+        if not isinstance(column_name, str):
+            return None
         # Pass 1: exact match
         if column_name in self.columns:
             return column_name

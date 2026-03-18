@@ -59,7 +59,7 @@ class SelectColumnAction(ActionDefinition):
                 columns = [col.strip().strip('"').strip("'") for col in args_str.split(",")]
 
             # Normalize newlines to spaces — table columns have \n replaced with space at load time
-            return [col.replace("\n", " ") if isinstance(col, str) else col for col in columns]
+            return [str(col).replace("\n", " ") for col in columns]
         except Exception:
             return None
 

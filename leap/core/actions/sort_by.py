@@ -118,8 +118,10 @@ class SortByAction(ActionDefinition):
 
         return None
 
-    def _resolve_column(self, table: Table, column_name: str) -> Optional[str]:
+    def _resolve_column(self, table: Table, column_name) -> Optional[str]:
         """Case-insensitive column name resolution."""
+        if not isinstance(column_name, str):
+            return None
         if column_name in table.columns:
             return column_name
         lower = column_name.lower()
