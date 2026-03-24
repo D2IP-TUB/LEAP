@@ -170,9 +170,10 @@ class BaseGenerationStrategy:
                     profiler.end_step(step_start, step, "apply_failed")
                     continue
 
-                # If the LLM wants to repeat the last action, go straight to end
-                if action_history and action.to_string() == action_history[-1]:
-                    print(f"Step {step}: Detected repeated action '{action.to_string()}', forcing end()")
+                # If the LLM selects an action type that has already been used, force end
+                used_action_names = {s.split("(")[0].strip() for s in action_history}
+                if action.name in used_action_names:
+                    print(f"Step {step}: Action '{action.name}' already used, forcing end()")
                     action_history.append("end()")
                     action_history.append("direct_query()")
                     if logging_callback:
