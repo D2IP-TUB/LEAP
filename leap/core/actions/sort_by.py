@@ -159,19 +159,18 @@ class SortByAction(ActionDefinition):
         col_idx = table.columns.index(column_name)
 
         # Sort rows
-        def is_numeric(v):
+        def to_float(v):
             try:
-                float(v)
-                return True
+                return float(str(v).replace(",", ""))
             except (ValueError, TypeError):
-                return False
+                return None
 
-        all_numeric = all(is_numeric(row[col_idx]) for row in table.rows)
+        all_numeric = all(to_float(row[col_idx]) is not None for row in table.rows)
 
         if all_numeric:
 
             def sort_key(row):
-                return float(row[col_idx])
+                return to_float(row[col_idx])
         else:
 
             def sort_key(row):
