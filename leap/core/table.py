@@ -34,7 +34,7 @@ class Table:
         """Convert to dictionary format for serialization"""
         return {"columns": list(self.columns), "rows": [list(row) for row in self.rows]}
 
-    def to_csv(self, max_chars: int = 1500, max_rows: int = 10, crop: bool = True) -> str:
+    def to_csv(self, max_chars: int = 1500, max_rows: int = 100, crop: bool = True) -> str:
         """
         Serialize table to CSV string with budget constraints.
 
