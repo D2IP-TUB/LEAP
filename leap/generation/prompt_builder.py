@@ -55,9 +55,10 @@ class PromptBuilder:
                 self.action_examples = None
 
     @staticmethod
-    def _format_table(table: Table, max_chars: int, caption: Optional[str] = None) -> str:
+    def _format_table(table: Table, max_chars: int, caption: Optional[str] = None, crop: bool = False) -> str:
         """Format table CSV with optional caption prefix."""
-        table_str = table.to_csv(max_chars=max_chars)
+        table_str = table.to_csv(max_chars=max_chars, crop=crop)
+
         if caption:
             return f"Table caption: {caption}\nTable:\n{table_str}"
         return f"Table:\n{table_str}"
@@ -99,7 +100,7 @@ class PromptBuilder:
 
         estimated_length = len(step_prompt) // 4
         if estimated_length > worker.max_model_len - self.iterative_settings.safety_margin_tokens:
-            table_str = self._format_table(table, self.iterative_settings.fallback_table_chars, table_caption)
+            table_str = self._format_table(table, self.iterative_settings.fallback_table_chars, table_caption, True)
             question_short = self._truncate_text(question, self.iterative_settings.question_truncation)
             step_prompt = f"{table_str}\n\nQuestion: {question_short}\n"
             instruction_prompt = self._build_iterative_instruction(worker, action_history, fallback=True)
@@ -191,7 +192,7 @@ class PromptBuilder:
 
         estimated_length = len(instruction_prompt) // 4
         if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
-            table_str = self._format_table(table, self.cot_settings.action_fallback_table_chars, table_caption)
+            table_str = self._format_table(table, self.cot_settings.action_fallback_table_chars, table_caption, True)
             available_label = "The next operation must be one of the following"
             question_suffix = "What actions should be performed next?"
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
@@ -254,6 +255,11 @@ class PromptBuilder:
             table = Table(columns=list(table.columns), rows=[list(r) for r in table.rows[:3]])
 
         table_str = self._format_table(table, self.cot_settings.args_table_chars, table_caption)
+        
+        estimated_length = len(instruction) // 4
+        if estimated_length > worker.max_model_len - self.cot_settings.args_table_chars:
+            table_str = self._format_table(table, self.cot_settings.action_fallback_table_chars, table_caption, True)
+
         final_prompt = f"{table_str}\n\n"
         final_prompt += f"Question: {question}\n"
 
@@ -367,6 +373,7 @@ class PromptBuilder:
 
         # Add current query
         table_str = self._format_table(table, 2000, table_caption)
+        
         current_instruction = f"{table_str}\n\n"
         current_instruction += f"Question: {question}\n"
 
