@@ -145,47 +145,33 @@ class PromptBuilder:
         """Build the user-message body for an action-selection turn."""
         prompt = f"{table_str}\n\n"
         prompt += f"Question: {question}\n\n"
+        prompt += "Actions taken so far:\n"
         if action_history:
-            prompt += "Actions taken so far:\n"
             for idx, action in enumerate(action_history):
                 prompt += f"{idx + 1}. {self._to_display_action(action)}\n"
-            prompt += "\n"
-        action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=True)
+        else:
+            prompt += "None\n"
+        prompt += "\n"
         actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
-        prompt += f"{action_descriptions}\n\n"
         prompt += f"{available_label}: {actions_text}\n"
         prompt += question_suffix
         return prompt
 
-    @staticmethod
-    def _build_action_descriptions_preamble(action_descs: list) -> str:
-        """Build the illustrated per-action preamble from YAML action_descriptions."""
-        parts = []
-        for desc in action_descs:
-            table_repr = desc.get("table_repr", "").rstrip()
-            parts.append(
-                f"{desc['description']} For example,\n"
-                f"Table:\n{table_repr}\n"
-                f"Question: {desc['question']}\n"
-                f"Function: {desc['function']}\n"
-                f"Explanation: {desc['explanation']}"
-            )
-        return "\n\n".join(parts)
-
-    def _build_action_selection_example_message(self, example, *, preamble: str = "") -> str:
+    def _build_action_selection_example_message(self, example) -> str:
         """Build the user-message content for a single few-shot action-selection example."""
-        example_action_descriptions = REGISTRY.get_action_descriptions(None, exclude_terminating_on_first=False)
-        example_actions_text = REGISTRY.get_prompt_text_cot(None, exclude_terminating_on_first=False)
-        prompt = (
-            f"{example.format_table_for_prompt()}\n\n"
-            f"Question: {example.question}\n\n"
-            f"{example_action_descriptions}\n\n"
-            f"Available actions: {example_actions_text}\n"
-            "What action should be performed next to answer the question?\n"
-            "Action: "
-        )
-        if preamble:
-            prompt = preamble + "\n\n" + prompt
+        action_history = example.action_history or []
+        example_actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
+        prompt = f"{example.format_table_for_prompt()}\n\n"
+        prompt += f"Question: {example.question}\n\n"
+        prompt += "Actions taken so far:\n"
+        if action_history:
+            for idx, action in enumerate(action_history):
+                prompt += f"{idx + 1}. {self._to_display_action(action)}\n"
+        else:
+            prompt += "None\n"
+        prompt += "\n"
+        prompt += f"Available actions: {example_actions_text}\n"
+        prompt += "What actions should be performed next?"
         return prompt
 
     def build_cot_action_prompt(
@@ -200,14 +186,14 @@ class PromptBuilder:
         """Prompt for CoT action selection (dynamic plan)."""
         table_str = self._format_table(table, self.cot_settings.action_table_chars, table_caption)
         available_label = "Available actions"
-        question_suffix = "What action should be performed next to answer the question?\nAction: "
+        question_suffix = "What actions should be performed next?"
         instruction_prompt = self._build_action_selection_body(table_str, question, action_history, available_label, question_suffix)
 
         estimated_length = len(instruction_prompt) // 4
         if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
             table_str = self._format_table(table, self.cot_settings.action_fallback_table_chars, table_caption)
             available_label = "The next operation must be one of the following"
-            question_suffix = "What action should be performed next?\nAction: "
+            question_suffix = "What actions should be performed next?"
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
             instruction_prompt = self._build_action_selection_body(
                 table_str, question_short, action_history, available_label, question_suffix
@@ -224,13 +210,10 @@ class PromptBuilder:
             self.action_examples.examples_manager.get_system_rules("action_selection")
             or "You are a helpful table question answering assistant"
         )
-        preamble = self._build_action_descriptions_preamble(self.action_examples.examples_manager.get_action_descriptions())
         messages = [{"role": "system", "content": system}]
 
-        for i, example in enumerate(examples):
-            messages.append(
-                {"role": "user", "content": self._build_action_selection_example_message(example, preamble=preamble if i == 0 else "")}
-            )
+        for example in examples:
+            messages.append({"role": "user", "content": self._build_action_selection_example_message(example)})
             messages.append({"role": "assistant", "content": example.answer})
 
         messages.append({"role": "user", "content": instruction_prompt})
@@ -272,13 +255,7 @@ class PromptBuilder:
 
         table_str = self._format_table(table, self.cot_settings.args_table_chars, table_caption)
         final_prompt = f"{table_str}\n\n"
-        final_prompt += f"Question: {question}\n\n"
-        if action_history:
-            final_prompt += "Actions taken so far:\n"
-            for idx, action in enumerate(action_history):
-                final_prompt += f"{idx + 1}. {self._to_display_action(action)}\n"
-            final_prompt += "\n"
-        final_prompt += "Explanation: "
+        final_prompt += f"Question: {question}\n"
 
         messages.append({"role": "user", "content": final_prompt})
 
@@ -327,6 +304,18 @@ class PromptBuilder:
         prompt_line = f"We need to determine the value for column '{column_name}'. The value:"
 
         messages = []
+
+        if self.is_instruct:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"Output only the cell value for the '{column_name}' column. "
+                        "Reply with a single word, number, or short phrase only. "
+                        "No explanation, no sentences, no punctuation at the end."
+                    ),
+                }
+            )
 
         # One user/assistant shot per seed row
         for i, (row, value) in enumerate(zip(table.rows[:3], seed_values[:3])):

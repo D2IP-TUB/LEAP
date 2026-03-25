@@ -17,7 +17,7 @@ model:
 
 dataset:
   loader: "huggingface"  # options: huggingface, json, disk
-  name: "ayeshalashkarwala/extracting-wikitable-questions"
+  name: "wikitablequestions"
   split: "train"
   trust_remote_code: true
   data_files: null
@@ -39,7 +39,7 @@ generation:
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:
     - select_row
-    - add_column
+    # - add_column
     - select_column
     - group_by
     - sort_by

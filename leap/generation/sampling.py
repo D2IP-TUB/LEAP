@@ -506,9 +506,8 @@ class SamplingLayer:
         else:
             sampling_params = SamplingParams(
                 temperature=temperature,
-                max_tokens=30,
+                max_tokens=100,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
-                stop=["\n", "Arguments", "Next"],
                 n=n,
             )
 
@@ -701,6 +700,21 @@ class SamplingLayer:
             val = row_result.outputs[0].text.strip() if row_result and row_result.outputs else ""
             # Take only the first non-empty line in case the model generated extra text
             val = next((line.strip() for line in val.splitlines() if line.strip()), val)
+            # If the model produced a verbose sentence instead of a bare value, extract just the value.
+            # Handles patterns like "The value ... is <X>" and "The value ... is an empty string".
+            import re as _re
+
+            _verbose = _re.search(
+                r"\bthe value\b.*?\bis\s+(an empty string|['\"]?(.*?)['\"]?)[,.]?\s*$",
+                val,
+                _re.IGNORECASE,
+            )
+            if _verbose:
+                candidate = _verbose.group(1)
+                if candidate.lower() == "an empty string":
+                    val = ""
+                else:
+                    val = _verbose.group(2).strip() if _verbose.group(2) else candidate.strip()
             print(f"\n[PHASE 2 RESPONSE - ADD_COLUMN ROW {row_idx} | {request_id}]\n{'=' * 80}\n{val}\n{'=' * 80}\n")
             all_values.append(val)
 

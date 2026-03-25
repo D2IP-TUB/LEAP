@@ -321,6 +321,9 @@ class ActionRegistry:
             paren_idx = action_str.find("(")
             if paren_idx > 0:
                 action_name = action_str[:paren_idx].strip()
+                # Strip f_ prefix if present (action strings may be formatted as "f_select_row(...)")
+                if action_name.startswith("f_"):
+                    action_name = action_name[2:]
                 action_names.add(action_name)
             else:
                 # Handle cases where action might not have parentheses

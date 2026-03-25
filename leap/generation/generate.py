@@ -89,9 +89,8 @@ async def generate_action_selection(
         else:
             sampling_params = SamplingParams(
                 temperature=temperature,
-                max_tokens=30,
+                max_tokens=100,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
-                stop=["\n", "Arguments", "Next"],
             )
 
         action_text = await worker.generate_text(prompt, step_id, sampling_params)

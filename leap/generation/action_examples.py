@@ -39,6 +39,8 @@ class ActionExample:
     semantic_sentence_links: Optional[List[str]] = None
     # For f_add_column - stores the actual values added
     added_column_values: Optional[List[str]] = None
+    # For action_selection mid-chain examples - actions already taken
+    action_history: Optional[List[str]] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ActionExample":
@@ -64,6 +66,7 @@ class ActionExample:
             column_value_links=data.get("column_value_links"),
             semantic_sentence_links=data.get("semantic_sentence_links"),
             added_column_values=data.get("added_column_values"),
+            action_history=data.get("action_history"),
         )
 
     @staticmethod
@@ -235,16 +238,9 @@ class ActionPromptTemplate:
             example_parts.append(example.format_table_for_prompt())
             example_parts.append("")
             example_parts.append(f"Question: {example.question}")
-            example_parts.append("")
-            example_parts.append("Explanation: ")
 
             examples.append("\n".join(example_parts))
-
-            # Build answer in "explanation then answer" format
-            if example.explanation:
-                answers.append(f"{example.explanation}\nTherefore the answer is: {example.answer}.")
-            else:
-                answers.append(f"Therefore the answer is: {example.answer}.")
+            answers.append(example.answer)
 
         return examples, answers
 
