@@ -52,7 +52,6 @@ class BaseGenerationStrategy:
         state_machines,
         question: str,
         step: int,
-        table_caption: Optional[str] = None,
     ) -> ActionStepResult:
         """
         Generate a single action for the current step.
@@ -111,7 +110,6 @@ class BaseGenerationStrategy:
                     state_machines=state_machines,
                     question=question,
                     step=step,
-                    table_caption=request.table_caption,
                 )
 
                 # Extract action and metadata from result
@@ -170,9 +168,10 @@ class BaseGenerationStrategy:
                     profiler.end_step(step_start, step, "apply_failed")
                     continue
 
-                # If the LLM wants to repeat the last action, go straight to end
-                if action_history and action.to_string() == action_history[-1]:
-                    print(f"Step {step}: Detected repeated action '{action.to_string()}', forcing end()")
+                # If the LLM selects an action type that has already been used, force end
+                used_action_names = {s.split("(")[0].strip() for s in action_history}
+                if action.name in used_action_names:
+                    print(f"Step {step}: Action '{action.name}' already used, forcing end()")
                     action_history.append("end()")
                     action_history.append("direct_query()")
                     if logging_callback:
@@ -238,9 +237,11 @@ class BaseGenerationStrategy:
                     final_table=current_table,
                     action_history=action_history,
                     request_id=request_id,
-                    table_caption=request.table_caption,
+                    original_table=original_table,
                 )
             if generated_answers:
+                original_table_str = self.prompt_builder._format_table(original_table, 5000)
+                print(f"\n[ORIGINAL TABLE | {request_id}]\n{'=' * 80}\n{original_table_str}\nQuestion: {question}\n{'=' * 80}\n")
                 print(f"Generated answers: {generated_answers}")
                 if ground_truth_answers:
                     print(f"Expected answers:  {ground_truth_answers}")
@@ -294,7 +295,7 @@ class BaseGenerationStrategy:
         final_table: Table,
         action_history: List[str],
         request_id: str,
-        table_caption: Optional[str] = None,
+        original_table: Optional[Table] = None,
     ) -> Optional[List[str]]:
         """
         Generate answers using Query(T,Q).
@@ -305,6 +306,7 @@ class BaseGenerationStrategy:
             final_table: Final table after all transformations
             action_history: History of actions taken
             request_id: Request identifier
+            original_table: Original table before any transformations (for debugging)
 
         Returns:
             List of generated answer strings, or None if generation fails
@@ -316,11 +318,10 @@ class BaseGenerationStrategy:
                 table=final_table,
                 action_history=action_history,
                 worker=worker,
-                table_caption=table_caption,
             )
 
             # Print prompt for direct_query (similar to other actions)
-            print(f"\n{'=' * 80}\n[DIRECT QUERY PROMPT | {request_id}]\n{'=' * 80}\n{query_prompt}\n{'=' * 80}\n")
+            # print(f"\n{'=' * 80}\n[DIRECT QUERY PROMPT | {request_id}]\n{'=' * 80}\n{query_prompt}\n{'=' * 80}\n")
 
             # Generate answer from LLM using worker.generate_text()
             # Use temperature=0.0 for deterministic answer generation
@@ -328,7 +329,7 @@ class BaseGenerationStrategy:
                 temperature=0.0,
                 max_tokens=200,  # Reasonable limit for answer length
                 stop_token_ids=[worker.tokenizer.eos_token_id],
-                stop=["\n\n", "\nExplanation:", "\nNote:"],  # Stop at double newline or explanation markers
+                stop=["\n", "\n\n"],  # Stop at double newline or explanation markers
             )
 
             response = await worker.generate_text(
@@ -408,7 +409,6 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
         state_machines,
         question: str,
         step: int,
-        table_caption: Optional[str] = None,
     ) -> ActionStepResult:
         """Generate a single action using iterative strategy (single-call)."""
         step_id = f"{request_id}_step{step}"
@@ -423,7 +423,6 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
             prompt_builder=self.prompt_builder,
             question=question,
             step=step,
-            table_caption=table_caption,
         )
         return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
 
@@ -457,7 +456,6 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
         state_machines,
         question: str,
         step: int,
-        table_caption: Optional[str] = None,
     ) -> ActionStepResult:
         """Generate a single action using two-phase strategy (action selection + args)."""
         # Always use sampling layer (with n=1 when sampling is disabled)
@@ -472,7 +470,6 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
             temperature_action=self.action_temperature,
             temperature_args=self.args_temperature,
             prompt_builder=self.prompt_builder,
-            table_caption=table_caption,
         )
         return ActionStepResult(action=sampling_result.action, metadata=sampling_result)
 
@@ -543,10 +540,12 @@ class DirectQueryGenerationStrategy(BaseGenerationStrategy):
                 final_table=original_table,
                 action_history=action_history,
                 request_id=request_id,
-                table_caption=request.table_caption,
+                original_table=original_table,
             )
 
         if generated_answers:
+            original_table_str = self.prompt_builder._format_table(original_table, 5000)
+            print(f"\n[ORIGINAL TABLE | {request_id}]\n{'=' * 80}\n{original_table_str}\nQuestion: {question}\n{'=' * 80}\n")
             print(f"Generated answers: {generated_answers}")
             if ground_truth_answers:
                 print(f"Expected answers:  {ground_truth_answers}")

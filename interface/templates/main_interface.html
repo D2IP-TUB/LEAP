@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LEAP Experiment Tool</title>
+    <link rel="stylesheet" href="/static/main_interface.css">
+</head>
+<body>
+
+    <div class="main-wrapper">
+        <div class="container">
+            <header>
+                <h1>LEAP Experiment Tool</h1>
+            </header>
+
+            <form id="experimentForm">
+                <div class="form-group">
+                    <label>Upload Dataset (CSV)</label>
+                    <div class="file-drop-area">
+                        <span class="file-msg">Drag and drop file here or click to select</span>
+                        <input type="file" id="fileInput" name="file" accept=".csv" required>
+                        <div class="file-name" id="fileNameDisplay"></div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="questionInput">Question</label>
+                    <input type="text" id="questionInput" name="question" placeholder="e.g. What is the value of [column_name] in row # ?" required>
+                </div>
+                
+                <button type="submit" id="submitBtn">Run Experiment</button>
+            </form>
+
+            <div id="loader" class="hidden">
+                <div class="loader"></div>
+                <p style="text-align: center; color: #666;">Processing on GPU Server...This may take a few seconds...</p>
+            </div>
+
+            <div id="errorArea" class="hidden error-box"></div>
+
+            <div id="resultsArea" class="hidden">
+                
+                <div class="divider"></div>
+
+                <h2 class="results-heading">Results</h2>
+
+                <div class="action-list-panel">
+                    <h3>All Actions</h3>
+                    <div id="actionList" class="action-list-items"></div>
+                </div>
+
+                <div id="stepDetailView">
+                    
+                    <div class="nav-controls">
+                        <button id="prevBtn" class="nav-btn">← Previous Step</button>
+                        <span id="stepIndicator">Step 0 of 0</span>
+                        <button id="nextBtn" class="nav-btn">Next Step →</button>
+                    </div>
+
+                    <div id="logsContainer"></div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script src="/static/main_interface.js"></script>
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const fileNameDisplay = document.getElementById('fileNameDisplay');
+        const fileMsg = document.querySelector('.file-msg');
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                fileNameDisplay.textContent = e.target.files[0].name;
+                fileMsg.style.display = 'none';
+            } else {
+                fileNameDisplay.textContent = '';
+                fileMsg.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
