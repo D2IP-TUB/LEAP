@@ -1,12 +1,12 @@
 models:
-  "Qwen/Qwen2.5-7B-Instruct":
-    log_dir: "table_logs_qwen"
+  "Qwen/Qwen2.5-32B-Instruct":
+    log_dir: "table_logs_qwen2.5-32B-instruct"
     instruct: true
     hardware:
-      num_workers: 1
-      tensor_parallel_size: 2
-      gpu_allocation: [2,3]
-      max_model_len: 30000
+      num_workers: 2
+      tensor_parallel_size: 1
+      gpu_allocation: [1,2]
+      max_model_len: 32000
     tokenizer: # needs updating
       llama_tokenizer: true
       closing_quote_token_ids:

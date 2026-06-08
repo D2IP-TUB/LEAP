@@ -55,12 +55,9 @@ class PromptBuilder:
                 self.action_examples = None
 
     @staticmethod
-    def _format_table(table: Table, max_chars: int, caption: Optional[str] = None, crop: bool = False) -> str:
-        """Format table CSV with optional caption prefix."""
+    def _format_table(table: Table, max_chars: int, crop: bool = False) -> str:
+        """Format table CSV."""
         table_str = table.to_csv(max_chars=max_chars, crop=crop)
-
-        if caption:
-            return f"Table caption: {caption}\nTable:\n{table_str}"
         return f"Table:\n{table_str}"
 
     @staticmethod
@@ -83,11 +80,10 @@ class PromptBuilder:
         action_history: Sequence[str],
         worker,
         step: int,
-        table_caption: Optional[str] = None,
     ) -> str:
         """Create a constraint-aware prompt for iterative generation."""
         max_chars = self.iterative_settings.initial_table_chars if step == 0 else self.iterative_settings.step_table_chars
-        table_str = self._format_table(table, max_chars, table_caption)
+        table_str = self._format_table(table, max_chars)
 
         step_prompt = f"{table_str}\n\nQuestion: {question}\n"
         # if action_history:
@@ -100,7 +96,7 @@ class PromptBuilder:
 
         estimated_length = len(step_prompt) // 4
         if estimated_length > worker.max_model_len - self.iterative_settings.safety_margin_tokens:
-            table_str = self._format_table(table, self.iterative_settings.fallback_table_chars, table_caption, True)
+            table_str = self._format_table(table, self.iterative_settings.fallback_table_chars, True)
             question_short = self._truncate_text(question, self.iterative_settings.question_truncation)
             step_prompt = f"{table_str}\n\nQuestion: {question_short}\n"
             instruction_prompt = self._build_iterative_instruction(worker, action_history, fallback=True)
@@ -172,7 +168,7 @@ class PromptBuilder:
             prompt += "None\n"
         prompt += "\n"
         prompt += f"Available actions: {example_actions_text}\n"
-        prompt += "What actions should be performed next?"
+        # prompt += "What actions should be performed next?"
         return prompt
 
     def build_cot_action_prompt(
@@ -182,19 +178,20 @@ class PromptBuilder:
         table: Table,
         action_history: Sequence[str],
         worker,
-        table_caption: Optional[str] = None,
     ) -> str:
         """Prompt for CoT action selection (dynamic plan)."""
-        table_str = self._format_table(table, self.cot_settings.action_table_chars, table_caption)
+        table_str = self._format_table(table, self.cot_settings.action_table_chars)
         available_label = "Available actions"
-        question_suffix = "What actions should be performed next?"
+        # question_suffix = "What actions should be performed next?"
+        question_suffix = ""
         instruction_prompt = self._build_action_selection_body(table_str, question, action_history, available_label, question_suffix)
 
         estimated_length = len(instruction_prompt) // 4
         if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
-            table_str = self._format_table(table, self.cot_settings.action_fallback_table_chars, table_caption, True)
+            table_str = self._format_table(table, self.cot_settings.action_fallback_table_chars, True)
             available_label = "The next operation must be one of the following"
-            question_suffix = "What actions should be performed next?"
+            # question_suffix = "What actions should be performed next?"
+            question_suffix = ""
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
             instruction_prompt = self._build_action_selection_body(
                 table_str, question_short, action_history, available_label, question_suffix
@@ -235,7 +232,6 @@ class PromptBuilder:
         action_name: str,
         action_history: Sequence[str],
         worker,
-        table_caption: Optional[str] = None,
     ) -> str:
         """Prompt for CoT argument generation."""
 
@@ -254,11 +250,11 @@ class PromptBuilder:
         if action_name == "add_column" and len(table.rows) > 3:
             table = Table(columns=list(table.columns), rows=[list(r) for r in table.rows[:3]])
 
-        table_str = self._format_table(table, self.cot_settings.args_table_chars, table_caption)
-        
+        table_str = self._format_table(table, self.cot_settings.args_table_chars)
+
         estimated_length = len(instruction) // 4
         if estimated_length > worker.max_model_len - self.cot_settings.args_table_chars:
-            table_str = self._format_table(table, self.cot_settings.action_fallback_table_chars, table_caption, True)
+            table_str = self._format_table(table, self.cot_settings.action_fallback_table_chars, True)
 
         final_prompt = f"{table_str}\n\n"
         final_prompt += f"Question: {question}\n"
@@ -348,7 +344,6 @@ class PromptBuilder:
         table: Table,
         action_history: Sequence[str],
         worker,
-        table_caption: Optional[str] = None,
     ) -> str:
         """
         Build Query(T,Q) prompt for answer generation.
@@ -369,11 +364,12 @@ class PromptBuilder:
         for example in query_examples:
             example_instruction = f"{example.format_table_for_prompt()}\n\nQuestion: {example.question}\n"
             messages.append({"role": "user", "content": example_instruction})
-            messages.append({"role": "assistant", "content": f"Answer:\n{example.answer}"})
+            # messages.append({"role": "assistant", "content": f"Answer:\n{example.answer}"})
+            messages.append({"role": "assistant", "content": f"{example.answer}"})
 
         # Add current query
-        table_str = self._format_table(table, 2000, table_caption)
-        
+        table_str = self._format_table(table, 2000)
+
         current_instruction = f"{table_str}\n\n"
         current_instruction += f"Question: {question}\n"
 
@@ -381,7 +377,8 @@ class PromptBuilder:
 
         # Use tokenizer to format the conversation - model-agnostic!
         if self.is_instruct:
-            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) + "Answer:"
+            # return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) + "Answer:"
+            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         else:
             # For non-instruct models, just concatenate the messages
             result = ""

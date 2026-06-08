@@ -169,8 +169,8 @@ class TableLogger:
 
             with open(table_path, "w", encoding="utf-8", newline="") as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow(table["columns"])
-                for row in table["rows"]:
+                writer.writerow(table.columns)
+                for row in table.rows:
                     writer.writerow(row)
         except Exception as e:
             print(f"Warning: Failed to save table CSV: {e}")

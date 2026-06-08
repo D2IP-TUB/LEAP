@@ -20,7 +20,13 @@ class Table:
         # and reproduces \n as the surrounding chars joined (e.g. "IEC\nType" → "IECType")
         # which breaks fuzzy matching. Replace \n with space so the LLM sees clean names.
         object.__setattr__(self, "columns", tuple(col.replace("\n", " ").replace("\\n", " ") for col in columns))
-        object.__setattr__(self, "rows", tuple(tuple(row) for row in rows))
+
+        def _norm_cell(v: Any) -> Any:
+            if isinstance(v, str):
+                return v.replace("\n", " ").replace("\\n", " ")
+            return v
+
+        object.__setattr__(self, "rows", tuple(tuple(_norm_cell(v) for v in row) for row in rows))
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Table":
@@ -34,7 +40,7 @@ class Table:
         """Convert to dictionary format for serialization"""
         return {"columns": list(self.columns), "rows": [list(row) for row in self.rows]}
 
-    def to_csv(self, max_chars: int = 1500, max_rows: int = 100, crop: bool = True) -> str:
+    def to_csv(self, max_chars: int = 1500, max_rows: int = 100, crop: bool = False) -> str:
         """
         Serialize table to CSV string with budget constraints.
 

@@ -1,7 +1,7 @@
 model:
   # id: "meta-llama/Llama-4-Scout-17B-16E-Instruct"
   # id: "mistralai/Mixtral-8x7B-v0.1"
-  id: Qwen/Qwen2.5-7B-Instruct
+  id: Qwen/Qwen2.5-32B-Instruct
   # id: "gpt2"
   presets_path: "configs/models.yaml"
   # possible alternatives:
@@ -24,7 +24,7 @@ dataset:
   path: null
 
 run:
-  max_examples: 300
+  max_examples: 100
 
 generation:
   use_constraints: false
@@ -39,7 +39,7 @@ generation:
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:
     - select_row
-    # - add_column
+    - add_column
     - select_column
     - group_by
     - sort_by

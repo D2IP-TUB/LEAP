@@ -134,7 +134,6 @@ class SamplingLayer:
         temperature_action: float,
         state_machines,
         prompt_builder,
-        table_caption: str = None,
     ) -> str:
         """
         Generate the action type, optimizing for single-option scenarios.
@@ -167,7 +166,7 @@ class SamplingLayer:
         else:
             # Generate action type via LLM
             action_prompt = prompt_builder.build_cot_action_prompt(
-                question=question, table=table, action_history=action_history, worker=worker, table_caption=table_caption
+                question=question, table=table, action_history=action_history, worker=worker
             )
 
             action_types = await self.generate_action_types(worker, action_prompt, 1, request_id, step, temperature_action, state_machines)
@@ -190,7 +189,6 @@ class SamplingLayer:
         prompt_builder,
         question: str,
         step: int,
-        table_caption: str = None,
     ) -> SamplingResult:
         """Generate and vote on action candidates."""
 
@@ -227,7 +225,7 @@ class SamplingLayer:
 
         # Generate N candidates with context transformation
         candidates = await self.generate_candidates(
-            worker, n_samples, table, action_history, request_id, state_machines, prompt_builder, question, step, table_caption
+            worker, n_samples, table, action_history, request_id, state_machines, prompt_builder, question, step
         )
 
         if self.config.debug:
@@ -285,7 +283,6 @@ class SamplingLayer:
         temperature_action: float,
         temperature_args: float,
         prompt_builder,
-        table_caption: str = None,
     ) -> SamplingResult:
         """
         Two-phase sampling for Chain-of-Table:
@@ -293,8 +290,8 @@ class SamplingLayer:
         Phase 2: Generate N arguments based on per_action_samples config
         """
 
-        if self.config.debug:
-            print(f"\n[SAMPLING DEBUG] Two-phase generation for {request_id} step {step}")
+        # if self.config.debug:
+        #     print(f"\n[SAMPLING DEBUG] Two-phase generation for {request_id} step {step}")
 
         # Phase 1: Generate action type (optimized to skip LLM when only one option)
         action_type = await self._generate_action_type(
@@ -307,7 +304,6 @@ class SamplingLayer:
             temperature_action=temperature_action,
             state_machines=state_machines,
             prompt_builder=prompt_builder,
-            table_caption=table_caption,
         )
 
         # Check if this action requires arguments
@@ -345,7 +341,6 @@ class SamplingLayer:
             state_machines,
             prompt_builder,
             question,
-            table_caption,
         )
 
         if self.config.debug:
@@ -400,7 +395,6 @@ class SamplingLayer:
         prompt_builder,
         question: str,
         step: int,
-        table_caption: str = None,
     ) -> List[Action]:
         """
         Generate N action candidates with context transformation.
@@ -428,7 +422,6 @@ class SamplingLayer:
                     action_history=modified_history,
                     worker=worker,
                     step=step,
-                    table_caption=table_caption,
                 )
 
                 # Generate single action with this prompt
@@ -512,7 +505,7 @@ class SamplingLayer:
             )
 
         # DEBUG: Print Phase 1 prompt
-        print(f"\n{'=' * 80}\n[PHASE 1 PROMPT - ACTION SELECTION | {request_id} step={step}]\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
+        # print(f"\n{'=' * 80}\n[PHASE 1 PROMPT - ACTION SELECTION | {request_id} step={step}]\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
 
         result_generator = worker.engine.generate(prompt, sampling_params, step_id)
         final_result = None
@@ -524,7 +517,7 @@ class SamplingLayer:
             for output in final_result.outputs:
                 response_text = output.text.strip()
                 # DEBUG: Print Phase 1 response
-                print(f"\n[PHASE 1 RESPONSE | {request_id} step={step}]\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
+                # print(f"\n[PHASE 1 RESPONSE | {request_id} step={step}]\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
                 action_name = Action.parse_name_only(response_text)
                 if action_name:
                     action_types.append(action_name)
@@ -544,7 +537,6 @@ class SamplingLayer:
         state_machines,
         prompt_builder: PromptBuilder,
         question: str,
-        table_caption: str = None,
     ) -> List[Action]:
         """
         Generate N argument sets for a given action type with context transformation.
@@ -569,7 +561,6 @@ class SamplingLayer:
                     action_name=action_name,
                     action_history=modified_history,
                     worker=worker,
-                    table_caption=table_caption,
                 )
 
                 step_id = f"{request_id}_args_step{step}_sample{sample_idx}"
@@ -598,14 +589,14 @@ class SamplingLayer:
                         temperature=temperature,
                         max_tokens=900,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
-                        stop=["Next", "Step"],
+                        stop=["\n", "Next", "Step"],
                         n=1,
                     )
 
                 # DEBUG: Print Phase 2 prompt
-                print(
-                    f"\n{'=' * 80}\n[PHASE 2 PROMPT - ARGUMENTS | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_prompt}\n{'=' * 80}\n"  # noqa: E501
-                )
+                # print(
+                #     f"\n{'=' * 80}\n[PHASE 2 PROMPT - ARGUMENTS | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_prompt}\n{'=' * 80}\n"  # noqa: E501
+                # )
 
                 result_generator = worker.engine.generate(args_prompt, sampling_params, step_id)
                 final_result = None
@@ -615,7 +606,7 @@ class SamplingLayer:
                 if final_result and final_result.outputs:
                     raw_args_text = final_result.outputs[0].text.strip()
 
-                    print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{raw_args_text}\n{'=' * 80}\n")
+                    # print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{raw_args_text}\n{'=' * 80}\n") # noqa: E501
 
                     args_text = self._clean_argument_text(raw_args_text, action_name)
                     full_action_str = f"{action_name}({args_text})"
@@ -690,9 +681,9 @@ class SamplingLayer:
                 stop=["\n"],
                 n=1,
             )
-            print(
-                f"\n{'=' * 80}\n[PHASE 2 PROMPT - ADD_COLUMN ROW {row_idx} | {request_id} step={step}]\n{'=' * 80}\n{per_row_prompt}\n{'=' * 80}\n"  # noqa: E501
-            )
+            # print(
+            #     f"\n{'=' * 80}\n[PHASE 2 PROMPT - ADD_COLUMN ROW {row_idx} | {request_id} step={step}]\n{'=' * 80}\n{per_row_prompt}\n{'=' * 80}\n"  # noqa: E501
+            # )
             row_gen = worker.engine.generate(per_row_prompt, row_params, row_id)
             row_result = None
             async for r in row_gen:
@@ -715,7 +706,7 @@ class SamplingLayer:
                     val = ""
                 else:
                     val = _verbose.group(2).strip() if _verbose.group(2) else candidate.strip()
-            print(f"\n[PHASE 2 RESPONSE - ADD_COLUMN ROW {row_idx} | {request_id}]\n{'=' * 80}\n{val}\n{'=' * 80}\n")
+            # print(f"\n[PHASE 2 RESPONSE - ADD_COLUMN ROW {row_idx} | {request_id}]\n{'=' * 80}\n{val}\n{'=' * 80}\n")
             all_values.append(val)
 
         return Action("add_column", [col_name, all_values])

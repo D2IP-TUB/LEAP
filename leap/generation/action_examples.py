@@ -10,6 +10,8 @@ This module provides:
 
 from __future__ import annotations
 
+import csv as csv_module
+import io
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -32,7 +34,6 @@ class ActionExample:
     question: str
     explanation: Optional[str] = None
     answer: Optional[str] = None
-    table_caption: Optional[str] = None
     # Additional fields for specific actions (e.g., select_column needs these)
     similar_words: Optional[List[str]] = None
     column_value_links: Optional[List[str]] = None
@@ -61,7 +62,6 @@ class ActionExample:
             question=data["question"],
             explanation=data.get("explanation"),
             answer=data.get("answer"),
-            table_caption=data.get("table_caption"),
             similar_words=data.get("similar_words"),
             column_value_links=data.get("column_value_links"),
             semantic_sentence_links=data.get("semantic_sentence_links"),
@@ -72,8 +72,6 @@ class ActionExample:
     @staticmethod
     def _parse_table_from_csv(csv_str: str) -> Table:
         """Parse table from CSV string format (matching Table.to_csv() output)."""
-        import csv as csv_module
-        import io
 
         # Parse as CSV (matching Table.to_csv() format)
         lines = csv_str.strip().split("\n")
@@ -99,10 +97,8 @@ class ActionExample:
         return Table(columns=columns, rows=rows)
 
     def format_table_for_prompt(self) -> str:
-        """Format table (with optional caption) using the standard Table.to_csv() method for consistency."""
+        """Format table using the standard Table.to_csv() method for consistency."""
         table_str = self.table.to_csv(max_chars=5000, crop=False)
-        if self.table_caption:
-            return f"Table caption: {self.table_caption}\nTable:\n{table_str}"
         return f"Table:\n{table_str}"
 
 
