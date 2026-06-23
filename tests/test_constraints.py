@@ -3,6 +3,7 @@ from transformers import AutoTokenizer
 
 from leap.config.loader import TokenizerConfig
 from leap.core import Table
+from leap.core.actions import REGISTRY
 from leap.inference.constraints import (
     ConstraintStateMachine,
 )
@@ -34,6 +35,13 @@ def tokenizer_config(gpt2_tokenizer):
             "end": gpt2_tokenizer.encode("end", add_special_tokens=False),
         },
     )
+
+
+@pytest.fixture(autouse=True)
+def enabled_constraint_actions():
+    REGISTRY.set_enabled_actions(["select_row", "select_column", "end"])
+    yield
+    REGISTRY._enabled_actions = None
 
 
 def make_table(num_rows=5, columns=None):
@@ -211,3 +219,24 @@ def test_end_action_finishes_when_only_end_allowed(gpt2_tokenizer, tokenizer_con
         for token in end_tokens[1:]:
             machine.update_state(token)
     assert machine.allowed_tokens() == [gpt2_tokenizer.eos_token_id]
+
+
+def test_add_column_bypasses_full_action_state_machine(gpt2_tokenizer, tokenizer_config):
+    REGISTRY.set_enabled_actions(["add_column", "select_row", "end"])
+    config = TokenizerConfig(
+        **{
+            **tokenizer_config.__dict__,
+            "action_tokens": {
+                **tokenizer_config.action_tokens,
+                "add_column": gpt2_tokenizer.encode("add_column", add_special_tokens=False),
+            },
+        }
+    )
+    machine = ConstraintStateMachine(make_table(), gpt2_tokenizer, config, use_global_constraints=False)
+
+    for token in config.action_tokens["add_column"]:
+        assert token in machine.allowed_tokens()
+        machine.update_state(token)
+
+    assert machine.current_action == "add_column"
+    assert machine.bypass_constraints is True

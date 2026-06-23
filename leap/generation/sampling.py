@@ -566,7 +566,7 @@ class SamplingLayer:
                 step_id = f"{request_id}_args_step{step}_sample{sample_idx}"
 
                 # Generate single argument set
-                if worker.use_constraints:
+                if worker.use_constraints and action_name != "add_column":
                     # Use arguments-only constraint processor for two-phase generation
                     # This prevents the model from generating the action name again
                     constraint_processor = create_arguments_only_constraint_processor(
@@ -604,11 +604,13 @@ class SamplingLayer:
                     final_result = result
 
                 if final_result and final_result.outputs:
-                    raw_args_text = final_result.outputs[0].text.strip()
+                    args_text = final_result.outputs[0].text.strip()
 
-                    # print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{raw_args_text}\n{'=' * 80}\n") # noqa: E501
+                    print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_text}\n{'=' * 80}\n")  # noqa: E501
 
-                    args_text = self._clean_argument_text(raw_args_text, action_name)
+                    if not worker.use_constraints or action_name == "add_column":
+                        args_text = self._clean_argument_text(args_text, action_name)
+
                     full_action_str = f"{action_name}({args_text})"
                     action = Action.parse(full_action_str)
 
@@ -621,7 +623,7 @@ class SamplingLayer:
                             step_id=step_id,
                             request_id=request_id,
                             step=step,
-                            explanation=raw_args_text,
+                            explanation=args_text,
                         )
 
                     return action

@@ -42,13 +42,12 @@ class SelectRowAction(ActionDefinition):
         if args_str.strip() == "[*]":
             return ["*"]
 
-        # Only accept [row X, row Y, ...] format
-        match = re.fullmatch(r"\[\s*(row\s+\d+)(\s*,\s*row\s+\d+)*\s*\]", args_str)
-        if not match:
+        pattern = r'\[\s*(?:"row\s+\d+"(?:\s*,\s*"row\s+\d+")*|row\s+\d+(?:\s*,\s*row\s+\d+)*)\s*\]'
+        if not re.fullmatch(pattern, args_str):
             return None
 
         try:
-            indices = [int(token.strip()) for token in re.findall(r"row\s+(\d+)", args_str)]
+            indices = [int(x) for x in re.findall(r"row\s+(\d+)", args_str)]
             return indices
         except Exception:
             return None

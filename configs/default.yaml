@@ -27,7 +27,7 @@ run:
   max_examples: 100
 
 generation:
-  use_constraints: false
+  use_constraints: true
   use_global_constraints: false
 
   # Generation strategy: "iterative", "cot", or "direct_query"
