@@ -274,6 +274,9 @@ class ConstraintStateMachine:
             return [self.tokenizer_config.list_open_id]
 
         elif self.state == "in_params":
+            if self.selected_params and self.current_action == "group_by":
+                return [self.tokenizer_config.list_close_id]
+
             allowed = set()
             remaining_params = set(self.valid_params[self.current_action]) - self.selected_params
             token_map = self.column_token_map if self.current_action == "select_column" else self.row_token_map
@@ -668,7 +671,6 @@ class ArgumentsOnlyConstraintStateMachine:
 
         elif self.state == "in_next_params":
             allowed = set()
-
             if self.expecting_parameter:
                 if self.action_name == "sort_by":
                     if not self.current_param:
