@@ -271,6 +271,9 @@ class ConstraintStateMachine:
             return [self.tokenizer_config.list_open_id]
 
         elif self.state == "in_params":
+            if self.selected_params and self.current_action == "group_by":
+                return [self.tokenizer_config.list_close_id]
+
             allowed = set()
             remaining_params = set(self.valid_params[self.current_action]) - self.selected_params
             token_map = self.column_token_map if self.current_action == "select_column" else self.row_token_map
@@ -505,20 +508,24 @@ class ArgumentsOnlyConstraintStateMachine:
         self.table = table
         self.reset()
 
+        self.non_list_action_names = ["group_by", "sort_by", "add_column"]
+
         # Set up valid parameters based on action type
         if action_name == "select_row":
             num_rows = min(500, len(table.rows))
             self.valid_params = [f"row {i}" for i in range(num_rows)]
-        elif action_name == "select_column":
+        elif action_name in ["select_column", "group_by", "sort_by", "add_column"]:
             self.valid_params = list(table.columns)
         else:  # end
             self.valid_params = []
 
-        # Build token maps
+        self._build_token_map()
+
+    def _build_token_map(self):
         self.param_token_map = {}
         for param in self.valid_params:
             quoted = f'"{param}"'
-            tokens = tokenizer.encode(quoted, add_special_tokens=False)
+            tokens = self.tokenizer.encode(quoted, add_special_tokens=False)
             if tokens:
                 self.param_token_map[param] = tokens
 
@@ -541,10 +548,20 @@ class ArgumentsOnlyConstraintStateMachine:
             self._handle_start(token)
         elif self.state == "in_params":
             self._handle_params(token)
+        elif self.state == "in_next_params":
+            self._handle_params(token)
         elif self.state == "in_paren_close":
             self._handle_paren_close(token)
 
     def _handle_start(self, token):
+        # Expect opening quote: "
+        if self.action_name in self.non_list_action_names and token == self.tokenizer_config.quote_id:
+            self.state = "in_params"
+            self.current_param = []
+            self.param_complete = False
+            self.expecting_parameter = True
+            self._handle_params(token)
+
         # Expect opening bracket: [
         if token == self.tokenizer_config.list_open_id:
             self.state = "in_params"
@@ -559,36 +576,53 @@ class ArgumentsOnlyConstraintStateMachine:
             return
 
         if self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
-            if token in self.tokenizer_config.closing_quotes_tokens:
-                self.current_param.append(token)
-                param_text = self.tokenizer.decode(self.current_param)
-                clean_param = param_text.strip('"')
-
-                is_valid = False
-                for param, tokens in self.param_token_map.items():
-                    exp = (
-                        (self.tokenizer_config.is_llama_tokenizer and clean_param == param) or self.current_param == tokens
-                    ) and param not in self.selected_params
-                    if exp:
-                        self.selected_params.add(param)
-                        self.param_complete = True
-                        self.expecting_parameter = False
-                        is_valid = True
-                        break
-
-                if not is_valid:
-                    self.param_complete = False
-
-                self.current_param = []
-            else:
-                self.current_param.append(token)
+            self._handle_arg_token(token)
         elif self.param_complete:
             if token == self.tokenizer_config.comma_id:
                 self.param_complete = False
                 self.expecting_parameter = True
+
+                if self.action_name in ["sort_by", "add_column"]:
+                    self.selected_params = set()
+                    self.state = "in_next_params"
+
+                    if self.action_name == "sort_by":
+                        self.valid_params = ["asc", "desc"]
+                        self._build_token_map()
+
             elif token == self.tokenizer_config.list_close_id:
                 self.state = "finish"
                 self.finished = True
+
+        if self.param_complete:
+            if self.action_name == "group_by" or (self.action_name in ["sort_by", "add_column"] and self.state == "in_next_params"):
+                self.state = "finish"
+                self.finished = True
+
+    def _handle_arg_token(self, token):
+        if token in self.tokenizer_config.closing_quotes_tokens:
+            self.current_param.append(token)
+            param_text = self.tokenizer.decode(self.current_param)
+            clean_param = param_text.strip('"')
+
+            is_valid = False
+            for param, tokens in self.param_token_map.items():
+                exp = (
+                    (self.tokenizer_config.is_llama_tokenizer and clean_param == param) or self.current_param == tokens
+                ) and param not in self.selected_params
+                if exp:
+                    self.selected_params.add(param)
+                    self.param_complete = True
+                    self.expecting_parameter = False
+                    is_valid = True
+                    break
+
+            if not is_valid:
+                self.param_complete = False
+
+            self.current_param = []
+        else:
+            self.current_param.append(token)
 
     def _handle_paren_close(self, token):
         # Not used in arguments-only mode
@@ -599,7 +633,8 @@ class ArgumentsOnlyConstraintStateMachine:
             return [self.tokenizer.eos_token_id]
 
         if self.state == "start":
-            # Must start with [
+            if self.action_name in self.non_list_action_names:
+                return [self.tokenizer_config.quote_id]
             return [self.tokenizer_config.list_open_id]
 
         elif self.state == "in_params":
@@ -624,6 +659,24 @@ class ArgumentsOnlyConstraintStateMachine:
                 if remaining_params:
                     allowed.add(self.tokenizer_config.comma_id)
                 allowed.add(self.tokenizer_config.list_close_id)
+            if allowed:
+                return list(allowed)
+            return [self.tokenizer.eos_token_id]
+
+        elif self.state == "in_next_params":
+            allowed = set()
+            
+            if self.expecting_parameter:
+                if self.action_name == "sort_by":
+                    if not self.current_param:
+                        return [self.tokenizer_config.quote_id]
+                    else:
+                        for param in self.valid_params:
+                            param_text = self.tokenizer.decode(self.current_param)
+                            cleaned_param_text = "".join(param_text).strip('"')
+                            if cleaned_param_text in param:
+                                full_seq = self.param_token_map[param]
+                                allowed.add(full_seq[len(param_text)])
 
             if allowed:
                 return list(allowed)
