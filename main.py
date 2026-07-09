@@ -2,8 +2,11 @@ import json
 import logging
 import multiprocessing as mp
 import os
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass, replace
+from datetime import datetime
+from hashlib import sha1
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +41,7 @@ logging.getLogger("transformers").setLevel(logging.ERROR)
 os.environ["VLLM_USE_V1"] = "0"
 os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 CONFIG_PATH = Path(os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
+RESULTS_ROOT = Path(os.environ.get("LEAP_RESULTS_ROOT", "results"))
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,17 @@ class RuntimeContext:
     prompt_builder: PromptBuilder
     tokenizer: AutoTokenizer
     dataset: Any
+
+
+@dataclass(frozen=True)
+class RunOutputPaths:
+    run_dir: Path
+    results_file: Path
+    table_log_dir: Path
+    accuracy_file: Path
+    manifest_file: Path
+    config_slug: str
+    timestamp: str
 
 
 def load_dataset_from_config(dataset_config: DatasetConfig):
@@ -97,8 +112,91 @@ def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
     )
 
 
+def _json_safe(value: Any) -> Any:
+    if is_dataclass(value):
+        return _json_safe(asdict(value))
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def _sanitize_slug(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-._")
+    return slug or "run"
+
+
+def build_config_slug(app_config: AppConfig) -> str:
+    identity = {
+        "model_id": app_config.model.id,
+        "model_log_dir": app_config.model.log_dir,
+        "dataset": app_config.dataset,
+        "run": app_config.run,
+        "generation": app_config.generation,
+    }
+    identity_json = json.dumps(_json_safe(identity), sort_keys=True)
+    config_hash = sha1(identity_json.encode("utf-8")).hexdigest()[:8]
+    base = f"{app_config.model.log_dir}_{app_config.generation.strategy}_{config_hash}"
+    return _sanitize_slug(base)
+
+
+def create_run_output_paths(app_config: AppConfig, results_root: Path | str = "results") -> RunOutputPaths:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    config_slug = build_config_slug(app_config)
+    run_dir = Path(results_root) / config_slug / timestamp
+    return RunOutputPaths(
+        run_dir=run_dir,
+        results_file=run_dir / "results.jsonl",
+        table_log_dir=run_dir / "table_logs",
+        accuracy_file=run_dir / "end_to_end_accuracy.json",
+        manifest_file=run_dir / "run_config.json",
+        config_slug=config_slug,
+        timestamp=timestamp,
+    )
+
+
+def apply_run_output_paths(app_config: AppConfig, paths: RunOutputPaths) -> AppConfig:
+    return replace(
+        app_config,
+        model=replace(app_config.model, results_file=str(paths.results_file)),
+        logging=replace(app_config.logging, log_dir=str(paths.table_log_dir)),
+    )
+
+
+def write_end_to_end_accuracy(accuracy: float, output_file: Path | str) -> None:
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump({"end_to_end_accuracy": accuracy}, f, indent=2)
+
+
+def write_run_manifest(app_config: AppConfig, paths: RunOutputPaths, config_path: Path) -> None:
+    manifest = {
+        "config_slug": paths.config_slug,
+        "timestamp": paths.timestamp,
+        "config_path": str(config_path),
+        "run_dir": str(paths.run_dir),
+        "results_file": str(paths.results_file),
+        "table_log_dir": str(paths.table_log_dir),
+        "end_to_end_accuracy_file": str(paths.accuracy_file),
+        "model": _json_safe(app_config.model),
+        "dataset": _json_safe(app_config.dataset),
+        "run": _json_safe(app_config.run),
+        "generation": _json_safe(app_config.generation),
+        "logging": _json_safe(app_config.logging),
+    }
+    paths.manifest_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(paths.manifest_file, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+
 def write_results_to_jsonl(results: list[InferenceResult], output_file, generation_config: GenerationSettings):
     """Write results to JSONL file with execution accuracy metrics"""
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
         for i, result in enumerate(results):
             actions = []
@@ -128,6 +226,7 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
                         "n_valid": m.n_valid,
                         "winner_votes": m.winner_votes,
                         "total_votes": m.total_votes,
+                        "fallback_reason": m.fallback_reason,
                     }
                     for m in (result.sampling_metadata or [])
                 ],
@@ -144,7 +243,9 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
 
 def get_generation_mode_string(generation_config: GenerationSettings):
     """Get a descriptive string for the current generation mode"""
-    if generation_config.strategy == "cot":
+    if generation_config.strategy == "direct_query":
+        return "direct_query"
+    elif generation_config.strategy == "cot":
         constraint_desc = "with_constraints" if generation_config.use_constraints else "without_constraints"
         return f"chain_of_table_{constraint_desc}"
     elif generation_config.use_constraints:
@@ -175,14 +276,52 @@ def create_sampling_layer(generation_settings: GenerationSettings) -> SamplingLa
         return SamplingLayer(config=generation_settings.sampling)
 
 
-def main():
+def build_inference_requests(runtime: RuntimeContext, max_examples: int | None) -> list[InferenceRequest]:
+    requests = []
+    dataset = runtime.dataset
+    subset_size = len(dataset) if max_examples is None else min(max_examples, len(dataset))
+
+    for i, example in enumerate(dataset):
+        if i >= subset_size:
+            break
+        requests.append(InferenceRequest.from_example(example, index=i))
+
+    return requests
+
+
+def finalize_results(
+    results: list[InferenceResult], model_settings, generation_settings: GenerationSettings, run_paths: RunOutputPaths
+) -> None:
+    profiler = get_aggregate_profiler()
+    for result in results:
+        if result.profiling_data:
+            profiler.add_request_profile(
+                result.profiling_data["total_time"],
+                result.profiling_data["operation_timings"],
+                result.profiling_data["num_steps"],
+            )
+
+    end_to_end_accuracy = analyze_execution_accuracy(results)
+    write_results_to_jsonl(results, model_settings.results_file, generation_settings)
+    write_end_to_end_accuracy(end_to_end_accuracy, run_paths.accuracy_file)
+    print_sample_results(results)
+    get_aggregate_profiler().print_summary()
+
+
+def main() -> int:
     """Main function using the modular vLLM server with comprehensive logging"""
     print("Setting up modular vLLM server with integrated logging...")
 
     runtime = build_runtime(CONFIG_PATH)
-    app_config = runtime.config
+    original_config = runtime.config
+    run_paths = create_run_output_paths(original_config, results_root=RESULTS_ROOT)
+    app_config = apply_run_output_paths(original_config, run_paths)
     model_settings = app_config.model
     generation_settings = app_config.generation
+
+    run_paths.run_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Run output directory: {run_paths.run_dir}")
+    write_run_manifest(app_config, run_paths, CONFIG_PATH)
 
     # Create sampling layer (always created, with n=1 when "disabled")
     sampling_layer = create_sampling_layer(generation_settings)
@@ -234,25 +373,9 @@ def main():
 
         if not server.start_workers(timeout=600):
             print("Failed to start all workers. Exiting.")
-            return
+            return 1
 
-        # Prepare requests
-        requests = []
-        run_config = app_config.run
-        max_examples = run_config.max_examples
-        dataset = runtime.dataset
-        subset_size = len(dataset) if max_examples is None else min(max_examples, len(dataset))
-
-        for i, example in enumerate(dataset):
-            if i >= subset_size:
-                break
-
-            # Use typed request builder
-            inference_request = InferenceRequest.from_example(example, index=i)
-
-            # Pass the typed object directly (no conversion needed)
-            requests.append(inference_request)
-
+        requests = build_inference_requests(runtime, app_config.run.max_examples)
         print(f"Processing {len(requests)} questions...")
         print(f"Generation mode: {get_generation_mode_string(generation_settings)}")
 
@@ -262,36 +385,13 @@ def main():
         end_time = time.time()
 
         print(f"Total time: {end_time - start_time:.2f} seconds")
-        print(f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds")
+        if requests:
+            print(f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds")
 
-        # Collect profiling data from results
-        profiler = get_aggregate_profiler()
-        for result in results:
-            if result.profiling_data:
-                profiler.add_request_profile(
-                    result.profiling_data["total_time"],
-                    result.profiling_data["operation_timings"],
-                    result.profiling_data["num_steps"],
-                )
-
-        # Analyze results
-        analyze_execution_accuracy(results)
-
-        # Write results
-        write_results_to_jsonl(
-            results,
-            model_settings.results_file,
-            generation_settings,
-        )
-
-        # Print sample results
-        print_sample_results(results)
-
+        finalize_results(results, model_settings, generation_settings, run_paths)
         # Demonstrate logging analysis
         demonstrate_logging_analysis(server, results)
-
-        # Print performance profiling summary (already collected above)
-        get_aggregate_profiler().print_summary()
+        return 0
 
     finally:
         # Shutdown will automatically generate summary report
@@ -334,6 +434,9 @@ def analyze_execution_accuracy(results: list[InferenceResult]):
 
         success_cases = sum(1 for acc in execution_accuracies if acc == 1.0)
         print(f"Successful Cases: {success_cases}/{len(execution_accuracies)} ({success_cases / len(execution_accuracies) * 100:.1f}%)")
+        return overall_execution_accuracy
+
+    return 0.0
 
 
 def print_sample_results(results: list[InferenceResult]):
@@ -398,4 +501,4 @@ def demonstrate_logging_analysis(server, results):
 
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
-    main()
+    raise SystemExit(main())

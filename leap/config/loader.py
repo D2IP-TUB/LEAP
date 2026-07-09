@@ -334,7 +334,7 @@ def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any], 
         tensor_parallel_size=hardware_defaults["tensor_parallel_size"],
         gpu_allocation=list(hardware_defaults["gpu_allocation"]),
         max_concurrent_requests=hardware_defaults.get("max_concurrent_requests", 16),
-        max_model_len=hardware_defaults.get("max_model_len", 1024),
+        max_model_len=hardware_defaults.get("max_model_len", HardwareConfig.max_model_len),
     )
 
     # Build tokenizer config

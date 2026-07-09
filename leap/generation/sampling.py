@@ -58,6 +58,7 @@ class SamplingResult:
     total_votes: int
     candidate_actions: list[str] | None = None
     valid_actions: list[str] | None = None
+    fallback_reason: str | None = None
 
 
 class SamplingLayer:
@@ -134,7 +135,7 @@ class SamplingLayer:
         temperature_action: float,
         state_machines,
         prompt_builder,
-    ) -> str:
+    ) -> Optional[str]:
         """
         Generate the action type, optimizing for single-option scenarios.
 
@@ -171,8 +172,9 @@ class SamplingLayer:
 
             action_types = await self.generate_action_types(worker, action_prompt, 1, request_id, step, temperature_action, state_machines)
 
-            # Take the generated action type (fallback to "end" if generation failed)
-            action_type = action_types[0] if action_types else "end"
+            # Empty/invalid action type generation is handled by the caller so
+            # it can be reported as an error-driven fallback.
+            action_type = action_types[0] if action_types else None
 
         if self.config.debug:
             print(f"[SAMPLING DEBUG] Selected action type: {action_type}")
@@ -259,6 +261,9 @@ class SamplingLayer:
         if action is None:
             action = Action("end", [])
             winner_votes = 0
+            fallback_reason = "no_valid_candidates"
+        else:
+            fallback_reason = None
 
         return SamplingResult(
             action=action,
@@ -269,6 +274,7 @@ class SamplingLayer:
             total_votes=len(valid_candidates),
             candidate_actions=[c.to_string() for c in candidates],
             valid_actions=[c.to_string() for c in valid_candidates],
+            fallback_reason=fallback_reason,
         )
 
     async def sample_action_two_phase(
@@ -305,6 +311,19 @@ class SamplingLayer:
             state_machines=state_machines,
             prompt_builder=prompt_builder,
         )
+
+        if action_type is None:
+            return SamplingResult(
+                action=Action("end", []),
+                n_requested=1,
+                n_generated=0,
+                n_valid=0,
+                winner_votes=0,
+                total_votes=0,
+                candidate_actions=[],
+                valid_actions=[],
+                fallback_reason="action_type_generation_failed",
+            )
 
         # Check if this action requires arguments
         # Some actions like 'end' don't need argument generation
@@ -372,6 +391,9 @@ class SamplingLayer:
         if action is None:
             action = Action("end", [])
             winner_votes = 0
+            fallback_reason = "no_valid_candidates"
+        else:
+            fallback_reason = None
 
         return SamplingResult(
             action=action,
@@ -382,6 +404,7 @@ class SamplingLayer:
             total_votes=len(valid_candidates),
             candidate_actions=[c.to_string() for c in args_candidates],
             valid_actions=[c.to_string() for c in valid_candidates],
+            fallback_reason=fallback_reason,
         )
 
     async def generate_candidates(

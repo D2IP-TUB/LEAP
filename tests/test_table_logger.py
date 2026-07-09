@@ -139,6 +139,55 @@ def test_create_summary_report_metrics(tmp_path):
     assert any(change["request_id"] == rid_a for change in summary["table_size_changes"])
 
 
+def test_create_summary_report_includes_error_summary_from_results(tmp_path):
+    logger = TableLogger(log_dir=str(tmp_path / "logs_errors"))
+    table = _sample_table()
+    logger.log_table_state("R", 0, "initial", table)
+    logger.log_table_state("R", 1, "validity_failed:action_generation_failed", table, success=False, failure_type="validity_failure")
+
+    sampling_result = SamplingResult(
+        action=Action("end", []),
+        n_requested=4,
+        n_generated=3,
+        n_valid=0,
+        winner_votes=0,
+        total_votes=0,
+        candidate_actions=["select_row([99])", "select_column(['missing'])", "select_row([-1])"],
+        valid_actions=[],
+        fallback_reason="no_valid_candidates",
+    )
+    result = InferenceResult(
+        action_history=["end()", "direct_query()"],
+        final_table=table,
+        execution_metrics=ExecutionMetrics(
+            execution_accuracy=0.0,
+            answer_found_in_final=False,
+            answer_found_in_original=False,
+            terminated_properly=True,
+            matched_answers_final=[],
+            matched_answers_original=[],
+            num_actions=1,
+            execution_error="answer generation failed",
+        ),
+        request_id="R",
+        question="q",
+        ground_truth_answers=["a"],
+        sampling_metadata=[sampling_result],
+    )
+    logger.record_inference_result(result)
+
+    summary = logger.create_summary_report()
+    error_summary = summary["error_summary"]
+    assert error_summary["invalid_generation_end_count"] == 1
+    assert error_summary["invalid_generation_end_rate"] == pytest.approx(1.0)
+    assert error_summary["invalid_candidate_count"] == 3
+    assert error_summary["missing_generation_count"] == 1
+    assert error_summary["logged_failure_count"] == 1
+    assert error_summary["execution_error_count"] == 1
+    assert error_summary["total_error_count"] == 6
+    assert error_summary["fallback_reason_counts"]["no_valid_candidates"] == 1
+
+
 def test_write_summary_report_creates_file_and_prints(tmp_path, capsys):
     logger = TableLogger(log_dir=str(tmp_path / "logs_print"))
     table = _sample_table()
@@ -194,7 +243,7 @@ def test_parallel_results_jsonl_created_with_expected_entries(tmp_path, capsys):
     generation_config = GenerationSettings(
         use_constraints=True,
         use_global_constraints=True,
-        use_chain_of_table=True,
+        strategy="cot",
         sampling=SamplingConfig(
             enabled=True,
             n_samples=8,
@@ -222,7 +271,7 @@ def test_parallel_results_jsonl_created_with_expected_entries(tmp_path, capsys):
 
     results = InferenceResult(
         action_history=[
-            "select_row([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])",
+            "select_row([row 0, row 1])",
             "select_column(names=['A','B'])",
             "end()",
         ],
@@ -259,6 +308,7 @@ def test_parallel_results_jsonl_created_with_expected_entries(tmp_path, capsys):
 
     assert isinstance(obj["actions"], list) and len(obj["actions"]) == 3
     assert obj["actions"][0]["action"] == "select_row"
+    assert obj["actions"][0]["args"] == [0, 1]
     assert obj["actions"][1]["action"] == "select_column"
     assert obj["actions"][2]["action"] == "end"
 
@@ -282,6 +332,7 @@ def test_parallel_results_jsonl_created_with_expected_entries(tmp_path, capsys):
     assert m0["n_valid"] == sampling_result.n_valid
     assert m0["winner_votes"] == sampling_result.winner_votes
     assert m0["total_votes"] == sampling_result.total_votes
+    assert m0["fallback_reason"] is None
     assert m0["winner"]["action"] == "select_row"
     assert m0["winner"]["args"] == list(winner_action.arguments)
 

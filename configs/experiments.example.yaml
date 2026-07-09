@@ -1,0 +1,16 @@
+base_config: configs/default.yaml
+models:
+  - Qwen/Qwen2.5-7B-Instruct
+  - Qwen/Qwen2.5-32B-Instruct
+  - meta-llama/Llama-4-Scout-17B-16E-Instruct
+  - mistralai/Mistral-7B-Instruct-v0.2
+modes:
+  - direct_query
+  - constrained_cot
+  - cot
+repeats: 3
+max_examples: 500
+output_root: results/experiments
+continue_on_error: true
+# Optional. Defaults to .venv/bin/python when present, otherwise the current Python.
+# python_executable: .venv/bin/python

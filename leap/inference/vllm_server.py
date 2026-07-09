@@ -666,25 +666,33 @@ class ProcessParallelVLLM:
                 print(f"Timeout waiting for results (completed {completed}/{total_requests})")
                 break
 
-        # Return results in original order, with default error results for missing ones
-        default_error = InferenceResult(
-            action_history=[],
-            final_table=Table(columns=[], rows=[]),
-            execution_metrics=ExecutionMetrics(
-                execution_accuracy=0.0,
-                answer_found_in_final=False,
-                answer_found_in_original=False,
-                terminated_properly=False,
-                matched_answers_final=[],
-                matched_answers_original=[],
-                num_actions=0,
-                execution_error="Request not completed",
-            ),
-            request_id="",
-            question="",
-            ground_truth_answers=[],
-        )
-        return [results.get(req_id, default_error) for req_id in request_ids]
+        # Return results in original order, with per-request error results for missing ones.
+        ordered_results = []
+        for req_id in request_ids:
+            result = results.get(req_id)
+            if result is None:
+                result = InferenceResult(
+                    action_history=[],
+                    final_table=Table(columns=[], rows=[]),
+                    execution_metrics=ExecutionMetrics(
+                        execution_accuracy=0.0,
+                        answer_found_in_final=False,
+                        answer_found_in_original=False,
+                        terminated_properly=False,
+                        matched_answers_final=[],
+                        matched_answers_original=[],
+                        num_actions=0,
+                        execution_error="Request not completed",
+                    ),
+                    request_id=req_id,
+                    question="",
+                    ground_truth_answers=[],
+                )
+            if self.main_logger:
+                self.main_logger.record_inference_result(result)
+            ordered_results.append(result)
+
+        return ordered_results
 
     def create_summary_report(self, generation_mode: str = None) -> Dict[str, Any]:
         """Create summary report using main logger"""
