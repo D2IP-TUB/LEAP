@@ -81,6 +81,7 @@ class AppConfig:
     run: RunConfig
     generation: GenerationConfig
     logging: LoggingConfig
+    extractors: tuple[str, ...] = ("direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender")
 
 
 def get_model_id(config_path: Path) -> str:
@@ -152,6 +153,7 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
     )
 
     generation_config = _build_generation_config(generation_section, enabled_actions, sampling_config)
+    extractors = _build_extractor_config(raw_config.get("extractors", ["direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"]))
 
     return AppConfig(
         model=model_config,
@@ -159,6 +161,7 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
         run=run_config,
         generation=generation_config,
         logging=logging_config,
+        extractors=extractors,
     )
 
 
@@ -213,6 +216,7 @@ def load_runtime_config_tool(config_path: Path, tokenizer) -> AppConfig:
     )
 
     generation_config = _build_generation_config(generation_section, enabled_actions, sampling_config)
+    extractors = _build_extractor_config(raw_config.get("extractors", ["direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"]))
 
     return AppConfig(
         model=model_config,
@@ -220,6 +224,7 @@ def load_runtime_config_tool(config_path: Path, tokenizer) -> AppConfig:
         run=run_config,
         generation=generation_config,
         logging=logging_config,
+        extractors=extractors,
     )
 
 
@@ -231,7 +236,21 @@ def update_runtime_config_dataset_tool(app_config: AppConfig, dataset_path: Path
         run=app_config.run,
         generation=app_config.generation,
         logging=app_config.logging,
+        extractors=app_config.extractors,
     )
+
+
+def _build_extractor_config(raw_extractors: Any) -> tuple[str, ...]:
+    available = {"direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"}
+    if not isinstance(raw_extractors, list) or not raw_extractors or not all(isinstance(name, str) for name in raw_extractors):
+        raise ValueError("'extractors' must be a non-empty list of extractor names")
+    duplicates = sorted({name for name in raw_extractors if raw_extractors.count(name) > 1})
+    if duplicates:
+        raise ValueError(f"Duplicate extractors are not allowed: {duplicates}")
+    unknown = sorted(set(raw_extractors) - available)
+    if unknown:
+        raise ValueError(f"Unknown extractors {unknown}. Available extractors: {sorted(available)}")
+    return tuple(raw_extractors)
 
 
 def _load_app_config(config_path: Path) -> Dict[str, Any]:

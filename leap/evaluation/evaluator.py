@@ -82,7 +82,7 @@ def calculate_execution_accuracy_with_dataset_answers(
             final_table_size = final_table.get_size()
 
             # If we have generated answers from Query(T,Q), use those instead of table values
-            if generated_answers and "direct_query()" in action_history:
+            if generated_answers is not None and "direct_query()" in action_history:
                 print(f"[EVAL] Using generated answers for evaluation: {generated_answers}")
                 # Use LLM-generated answers for evaluation
                 final_predicted_values = to_value_list(generated_answers)

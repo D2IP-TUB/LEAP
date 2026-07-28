@@ -9,7 +9,7 @@ import statistics
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -67,6 +67,8 @@ class JobResult:
     missing_generation_count: int
     total_error_count: int
     error: str | None = None
+    average_extractor_accuracy: float | None = None
+    method_accuracies: dict[str, float] = field(default_factory=dict)
 
 
 def load_experiment_spec(spec_path: Path) -> ExperimentSpec:
@@ -217,7 +219,10 @@ def run_job(job: ExperimentJob, *, experiment_dir: Path, project_root: Path, pyt
     metrics = collect_run_metrics(run_dir) if run_dir else {}
     examples = metrics.get("examples", 0)
     accuracy = metrics.get("accuracy")
-    status = "ok" if return_code == 0 and run_dir and examples > 0 and accuracy is not None else "failed"
+    primary_accuracy = metrics.get("average_extractor_accuracy")
+    if primary_accuracy is None:
+        primary_accuracy = accuracy
+    status = "ok" if return_code == 0 and run_dir and examples > 0 and primary_accuracy is not None else "failed"
     error = None
     if return_code != 0:
         error = _format_process_error(return_code, stderr_log, stdout_log)
@@ -225,7 +230,7 @@ def run_job(job: ExperimentJob, *, experiment_dir: Path, project_root: Path, pyt
         error = "No run_config.json was produced"
     elif examples == 0:
         error = "Run completed without results.jsonl entries"
-    elif accuracy is None:
+    elif primary_accuracy is None:
         error = "Run completed without an accuracy metric"
 
     return JobResult(
@@ -251,12 +256,15 @@ def run_job(job: ExperimentJob, *, experiment_dir: Path, project_root: Path, pyt
         missing_generation_count=metrics.get("missing_generation_count", 0),
         total_error_count=metrics.get("total_error_count", 0),
         error=error,
+        average_extractor_accuracy=metrics.get("average_extractor_accuracy"),
+        method_accuracies=metrics.get("method_accuracies", {}),
     )
 
 
 def collect_run_metrics(run_dir: Path) -> dict[str, Any]:
     results_file = run_dir / "results.jsonl"
     accuracy_file = run_dir / "end_to_end_accuracy.json"
+    extractor_accuracy_file = run_dir / "extractor_accuracy.json"
     rows = _read_jsonl(results_file)
     examples = len(rows)
 
@@ -266,6 +274,30 @@ def collect_run_metrics(run_dir: Path) -> dict[str, Any]:
     if accuracy is None and examples:
         accuracy = _mean(row.get("execution_accuracy", 0.0) for row in rows)
 
+    method_accuracies: dict[str, float] = {}
+    average_extractor_accuracy = None
+    if extractor_accuracy_file.exists():
+        try:
+            extractor_report = json.loads(extractor_accuracy_file.read_text(encoding="utf-8"))
+            method_accuracies = {str(method): float(value) for method, value in extractor_report.get("method_accuracies", {}).items()}
+            raw_average = extractor_report.get("average_accuracy")
+            average_extractor_accuracy = float(raw_average) if raw_average is not None else None
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            method_accuracies = {}
+    elif examples and any(row.get("extractor_results") for row in rows):
+        methods = {extractor.get("method") for row in rows for extractor in row.get("extractor_results", []) if extractor.get("method")}
+        method_accuracies = {
+            method: _mean(
+                next(
+                    (float(item.get("accuracy", 0.0)) for item in row.get("extractor_results", []) if item.get("method") == method),
+                    0.0,
+                )
+                for row in rows
+            )
+            for method in sorted(methods)
+        }
+        average_extractor_accuracy = _mean(method_accuracies.values())
+
     successful_examples = sum(1 for row in rows if float(row.get("execution_accuracy", 0.0)) == 1.0)
     answer_found_rate = _mean(1.0 if row.get("execution_metrics", {}).get("answer_found_in_final") else 0.0 for row in rows)
     termination_rate = _mean(1.0 if row.get("execution_metrics", {}).get("terminated_properly") else 0.0 for row in rows)
@@ -274,6 +306,8 @@ def collect_run_metrics(run_dir: Path) -> dict[str, Any]:
 
     return {
         "accuracy": accuracy,
+        "average_extractor_accuracy": average_extractor_accuracy,
+        "method_accuracies": method_accuracies,
         "examples": examples,
         "successful_examples": successful_examples,
         "answer_found_rate": answer_found_rate,
@@ -568,7 +602,11 @@ def _summarize(results: list[JobResult], keys: tuple[str, ...]) -> list[dict[str
     rows = []
     for group_key, group_results in sorted(grouped.items()):
         ok_results = [result for result in group_results if result.status == "ok"]
-        accuracies = [result.accuracy for result in ok_results if result.accuracy is not None]
+        accuracies = [
+            result.average_extractor_accuracy if result.average_extractor_accuracy is not None else result.accuracy
+            for result in ok_results
+            if result.average_extractor_accuracy is not None or result.accuracy is not None
+        ]
         row = {key: value for key, value in zip(keys, group_key)}
         row.update(
             {

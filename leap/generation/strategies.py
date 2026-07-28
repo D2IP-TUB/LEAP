@@ -1,10 +1,10 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Optional
-
-from vllm import SamplingParams
 
 from leap.core import Action, InferenceRequest, InferenceResult, Table
 from leap.evaluation.evaluator import calculate_execution_accuracy_with_dataset_answers
+from leap.evaluation.metrics import check_denotation, to_value_list
+from leap.extractors import ExtractionContext, run_extractors
 from leap.generation.prompt_builder import PromptBuilder
 from leap.utils.profiler import RequestProfiler
 
@@ -36,12 +36,43 @@ class BaseGenerationStrategy:
         max_failures: int = 3,
         max_validity_failures: int = 3,
         max_steps: int = 10,
+        extractors=(),
     ) -> None:
         self.max_failures = max_failures
         self.max_validity_failures = max_validity_failures
         self.max_steps = max_steps
         self.prompt_builder = prompt_builder
         self.sampling_layer = sampling_layer
+        self.extractors = tuple(extractors)
+
+    async def _run_answer_extractors(
+        self,
+        *,
+        worker,
+        question: str,
+        final_table: Table,
+        action_history: List[str],
+        request_id: str,
+        ground_truth_answers: List[str],
+    ):
+        context = ExtractionContext(
+            question=question,
+            table=final_table,
+            request_id=request_id,
+            action_history=tuple(action_history),
+            worker=worker,
+        )
+        raw_results = await run_extractors(self.extractors, context)
+        targets = to_value_list(ground_truth_answers)
+        scored_results = []
+        for result in raw_results:
+            accuracy = 0.0
+            if not result.error and result.answers:
+                accuracy = float(check_denotation(targets, to_value_list(result.answers)))
+            scored = replace(result, accuracy=accuracy)
+            scored_results.append(scored)
+            print(f"[EXTRACTOR {scored.method}] accuracy={scored.accuracy:.1f} answers={scored.answers} error={scored.error}")
+        return scored_results
 
     async def generate_action_step(
         self,
@@ -227,30 +258,19 @@ class BaseGenerationStrategy:
                     print(f"Critical error detected: {exc}. Stopping generation for this instance.")
                     break
 
-        # Generate answers if direct_query() is in action history
-        generated_answers = None
-        if "direct_query()" in action_history:
-            with profiler.time_operation("answer_generation"):
-                generated_answers = await self._generate_answers(
-                    worker=worker,
-                    question=question,
-                    final_table=current_table,
-                    action_history=action_history,
-                    request_id=request_id,
-                    original_table=original_table,
-                )
-            if generated_answers:
-                original_table_str = self.prompt_builder._format_table(original_table, 5000)
-                print(f"\n[ORIGINAL TABLE | {request_id}]\n{'=' * 80}\n{original_table_str}\nQuestion: {question}\n{'=' * 80}\n")
-                print(f"Generated answers: {generated_answers}")
-                if ground_truth_answers:
-                    print(f"Expected answers:  {ground_truth_answers}")
-                    # Check if any generated answer matches any ground truth answer
-                    matches = [ans for ans in generated_answers if ans in ground_truth_answers]
-                    if matches:
-                        print(f"✓ Match found: {matches}")
-                    else:
-                        print("✗ No match")
+        with profiler.time_operation("answer_extraction"):
+            extractor_results = await self._run_answer_extractors(
+                worker=worker,
+                question=question,
+                final_table=current_table,
+                action_history=action_history,
+                request_id=request_id,
+                ground_truth_answers=ground_truth_answers,
+            )
+        direct_result = next((result for result in extractor_results if result.method == "direct_query"), None)
+        # Legacy execution_accuracy is defined by direct_query only; do not fall back
+        # to matching arbitrary final-table cells when that extractor is disabled.
+        generated_answers = direct_result.answers if direct_result else []
 
         with profiler.time_operation("evaluation"):
             accuracy_metrics = calculate_execution_accuracy_with_dataset_answers(
@@ -286,112 +306,8 @@ class BaseGenerationStrategy:
             profiling_data=profiling_data,
             sampling_metadata=sampling_metadata_list if sampling_metadata_list else None,
             generated_answers=generated_answers,
+            extractor_results=extractor_results,
         )
-
-    async def _generate_answers(
-        self,
-        worker,
-        question: str,
-        final_table: Table,
-        action_history: List[str],
-        request_id: str,
-        original_table: Optional[Table] = None,
-    ) -> Optional[List[str]]:
-        """
-        Generate answers using Query(T,Q).
-
-        Args:
-            worker: Worker with LLM access
-            question: Original question
-            final_table: Final table after all transformations
-            action_history: History of actions taken
-            request_id: Request identifier
-            original_table: Original table before any transformations (for debugging)
-
-        Returns:
-            List of generated answer strings, or None if generation fails
-        """
-        try:
-            # Build Query(T,Q) prompt using prompt builder
-            query_prompt = self.prompt_builder.build_query_prompt(
-                question=question,
-                table=final_table,
-                action_history=action_history,
-                worker=worker,
-            )
-
-            # Print prompt for direct_query (similar to other actions)
-            # print(f"\n{'=' * 80}\n[DIRECT QUERY PROMPT | {request_id}]\n{'=' * 80}\n{query_prompt}\n{'=' * 80}\n")
-
-            # Generate answer from LLM using worker.generate_text()
-            # Use temperature=0.0 for deterministic answer generation
-            sampling_params = SamplingParams(
-                temperature=0.0,
-                max_tokens=200,  # Reasonable limit for answer length
-                stop_token_ids=[worker.tokenizer.eos_token_id],
-                stop=["\n", "\n\n"],  # Stop at double newline or explanation markers
-            )
-
-            response = await worker.generate_text(
-                query_prompt,
-                f"{request_id}_query",
-                sampling_params,
-            )
-
-            # Print response for direct_query (similar to other actions)
-            print(f"\n[DIRECT QUERY RESPONSE | {request_id}]\n{'=' * 80}\n{response if response else '(empty response)'}\n{'=' * 80}\n")
-
-            if not response or not response.strip():
-                print(f"Warning: Empty response from Query(T,Q) for {request_id}")
-                return None
-
-            # Parse and clean the answer(s)
-            answers = self._parse_and_clean_answers(response)
-            return answers if answers else None
-
-        except Exception as e:
-            print(f"Error in answer generation for {request_id}: {str(e)}")
-            return None
-
-    def _parse_and_clean_answers(self, response: str) -> List[str]:
-        """
-        Parse answer(s) from LLM response.
-
-        Expected format: Python list of strings like ["Italy"] or ["Italy", "Spain", "France"]
-
-        Args:
-            response: Raw LLM response
-
-        Returns:
-            List of answer strings
-        """
-        import ast
-
-        response = response.strip()
-
-        # Try to parse as Python list using ast.literal_eval (safe evaluation)
-        try:
-            parsed = ast.literal_eval(response)
-            if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
-                return [answer.strip() for answer in parsed if answer.strip()]
-        except (ValueError, SyntaxError):
-            pass
-
-        # Fallback: if response looks like it might be a list but has minor formatting issues
-        # Try to extract content between [ and ]
-        if response.startswith("[") and response.endswith("]"):
-            try:
-                # Try to fix common issues like single quotes vs double quotes
-                fixed_response = response.replace("'", '"')
-                parsed = ast.literal_eval(fixed_response)
-                if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
-                    return [answer.strip() for answer in parsed if answer.strip()]
-            except (ValueError, SyntaxError):
-                pass
-
-        # Fallback: treat entire response as single answer
-        print(f"Warning: Could not parse response as list, treating as single answer: {response}")
-        return [response]
 
 
 class IterativeGenerationStrategy(BaseGenerationStrategy):
@@ -531,29 +447,17 @@ class DirectQueryGenerationStrategy(BaseGenerationStrategy):
             logging_callback(request_id, 0, "initial", original_table, generation_mode=generation_mode)
             logging_callback(request_id, 1, "end()", original_table, generation_mode=generation_mode)
 
-        # Generate answer directly from original table
-        generated_answers = None
-        with profiler.time_operation("answer_generation"):
-            generated_answers = await self._generate_answers(
+        with profiler.time_operation("answer_extraction"):
+            extractor_results = await self._run_answer_extractors(
                 worker=worker,
                 question=question,
                 final_table=original_table,
                 action_history=action_history,
                 request_id=request_id,
-                original_table=original_table,
+                ground_truth_answers=ground_truth_answers,
             )
-
-        if generated_answers:
-            original_table_str = self.prompt_builder._format_table(original_table, 5000)
-            print(f"\n[ORIGINAL TABLE | {request_id}]\n{'=' * 80}\n{original_table_str}\nQuestion: {question}\n{'=' * 80}\n")
-            print(f"Generated answers: {generated_answers}")
-            if ground_truth_answers:
-                print(f"Expected answers:  {ground_truth_answers}")
-                matches = [ans for ans in generated_answers if ans in ground_truth_answers]
-                if matches:
-                    print(f"✓ Match found: {matches}")
-                else:
-                    print("✗ No match")
+        direct_result = next((result for result in extractor_results if result.method == "direct_query"), None)
+        generated_answers = direct_result.answers if direct_result else []
 
         # Evaluate results
         with profiler.time_operation("evaluation"):
@@ -590,4 +494,5 @@ class DirectQueryGenerationStrategy(BaseGenerationStrategy):
             profiling_data=profiling_data,
             sampling_metadata=None,  # No sampling for this strategy
             generated_answers=generated_answers,
+            extractor_results=extractor_results,
         )

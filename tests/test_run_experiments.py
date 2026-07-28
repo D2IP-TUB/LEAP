@@ -125,6 +125,40 @@ def test_collect_run_metrics_from_results(tmp_path):
     assert metrics["total_error_count"] == 5
 
 
+def test_collect_run_metrics_reads_extractor_report(tmp_path):
+    run_dir = tmp_path / "run"
+    _write_result(
+        run_dir,
+        accuracy=0.25,
+        rows=[
+            {
+                "execution_accuracy": 0.0,
+                "execution_metrics": {"answer_found_in_final": False, "terminated_properly": True, "num_actions": 2},
+                "extractor_results": [
+                    {"method": "direct_query", "accuracy": 0.0},
+                    {"method": "nl2sql", "accuracy": 1.0},
+                ],
+            }
+        ],
+    )
+    (run_dir / "extractor_accuracy.json").write_text(
+        json.dumps(
+            {
+                "method_accuracies": {"direct_query": 0.25, "nl2sql": 0.75},
+                "average_accuracy": 0.5,
+                "examples": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    metrics = collect_run_metrics(run_dir)
+
+    assert metrics["accuracy"] == 0.25
+    assert metrics["method_accuracies"] == {"direct_query": 0.25, "nl2sql": 0.75}
+    assert metrics["average_extractor_accuracy"] == 0.5
+
+
 def test_collect_run_metrics_prefers_summary_report_errors(tmp_path):
     run_dir = tmp_path / "run"
     _write_result(
