@@ -4,7 +4,8 @@ from transformers import AutoTokenizer
 from leap.config.loader import TokenizerConfig
 from leap.core import Table
 from leap.core.actions import REGISTRY
-from leap.inference.constraints import (
+from leap.inference.legacy.constraints import (
+    ArgumentsOnlyConstraintStateMachine,
     ConstraintStateMachine,
 )
 
@@ -240,3 +241,25 @@ def test_add_column_bypasses_full_action_state_machine(gpt2_tokenizer, tokenizer
 
     assert machine.current_action == "add_column"
     assert machine.bypass_constraints is True
+
+
+def test_arguments_only_sort_by_order_uses_token_prefix(gpt2_tokenizer, tokenizer_config):
+    table = make_table(columns=["foo"])
+    machine = ArgumentsOnlyConstraintStateMachine(table, gpt2_tokenizer, tokenizer_config, "sort_by")
+
+    for token in machine.param_token_map["foo"]:
+        assert token in machine.allowed_tokens()
+        machine.update_state(token)
+
+    assert machine.tokenizer_config.comma_id in machine.allowed_tokens()
+    machine.update_state(machine.tokenizer_config.comma_id)
+
+    order_tokens = machine.param_token_map["asc"]
+    for position, token in enumerate(order_tokens):
+        assert token in machine.allowed_tokens()
+        machine.update_state(token)
+        if position + 1 < len(order_tokens):
+            assert order_tokens[position + 1] in machine.allowed_tokens()
+
+    assert machine.finished
+    assert machine.allowed_tokens() == [gpt2_tokenizer.eos_token_id]

@@ -223,7 +223,7 @@ class TestCoTPromptFiltering:
         )
 
         # Should contain instruction for select_column
-        assert "f_select_column()" in prompt
+        assert "table column selector" in prompt
 
         # Should contain the table and question
         assert "Table:" in prompt
@@ -484,7 +484,7 @@ class TestCoTActionHistory:
         )
 
         # Should contain instruction and table content
-        assert "f_select_column()" in prompt
+        assert "table column selector" in prompt
         assert "Table:" in prompt
 
     def test_print_cot_first_action_example(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry, capsys):

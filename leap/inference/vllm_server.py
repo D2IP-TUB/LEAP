@@ -6,6 +6,8 @@ vLLM inference across multiple GPUs with comprehensive table logging support.
 """
 
 import asyncio
+import gc
+import inspect
 import multiprocessing as mp
 import os
 import queue
@@ -81,6 +83,7 @@ class VLLMWorkerProcess(mp.Process):
         self.use_constraints = generation_config.use_constraints
         self.use_cot = generation_config.strategy == "cot"
         self.use_global_constraints = generation_config.use_global_constraints
+        self.constraint_backend = generation_config.constraint_backend
 
         # vLLM components (will be set after engine initialization)
         self.engine = None
@@ -124,6 +127,8 @@ class VLLMWorkerProcess(mp.Process):
         except Exception as e:
             print(f"Worker {self.worker_id} failed: {e}")
             self.output_queue.put(("error", self.worker_id, str(e)))
+        finally:
+            self._cleanup_engine()
 
     def _get_generation_mode_string(self) -> str:
         """Get descriptive string for generation mode"""
@@ -155,13 +160,82 @@ class VLLMWorkerProcess(mp.Process):
         )
 
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
-        tokenizer_group = self.engine.engine.tokenizer
-        self.tokenizer = tokenizer_group.tokenizer
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.max_model_len = self.engine.engine.model_config.max_model_len
+        self.tokenizer = self._resolve_engine_tokenizer()
+        if getattr(self.tokenizer, "pad_token", None) is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.max_model_len = self._resolve_engine_max_model_len()
 
         load_time = time.time() - start_time
         print(f"Worker {self.worker_id}: Model loaded in {load_time:.2f} seconds, max_model_len={self.max_model_len}")
+
+    def _resolve_engine_tokenizer(self):
+        """Return the tokenizer across vLLM engine API versions."""
+        if hasattr(self.engine, "get_tokenizer"):
+            tokenizer = self.engine.get_tokenizer()
+            if inspect.isawaitable(tokenizer):
+                tokenizer = asyncio.run(tokenizer)
+            return tokenizer
+
+        tokenizer_owner = getattr(self.engine, "engine", None)
+        if tokenizer_owner is not None and hasattr(tokenizer_owner, "tokenizer"):
+            tokenizer_group = tokenizer_owner.tokenizer
+            return getattr(tokenizer_group, "tokenizer", tokenizer_group)
+
+        tokenizer = getattr(self.engine, "tokenizer", None)
+        if tokenizer is not None:
+            return tokenizer
+
+        raise AttributeError("Unable to resolve tokenizer from vLLM engine.")
+
+    def _resolve_engine_max_model_len(self) -> int:
+        """Return max model length across vLLM engine API versions."""
+        engine_core = getattr(self.engine, "engine", None)
+        model_config = getattr(engine_core, "model_config", None)
+        max_model_len = getattr(model_config, "max_model_len", None)
+        if max_model_len is not None:
+            return max_model_len
+
+        vllm_config = getattr(self.engine, "vllm_config", None)
+        model_config = getattr(vllm_config, "model_config", None)
+        max_model_len = getattr(model_config, "max_model_len", None)
+        if max_model_len is not None:
+            return max_model_len
+
+        return self.configured_max_model_len
+
+    def _cleanup_engine(self):
+        """Release vLLM and CUDA resources before the worker process exits."""
+        engine = self.engine
+        self.engine = None
+        self.tokenizer = None
+
+        if engine is not None:
+            shutdown = getattr(engine, "shutdown", None)
+            if shutdown is not None:
+                try:
+                    result = shutdown()
+                    if inspect.isawaitable(result):
+                        asyncio.run(result)
+                except Exception as e:
+                    print(f"Worker {self.worker_id}: vLLM engine shutdown failed: {e}")
+
+        try:
+            from vllm.distributed.parallel_state import cleanup_dist_env_and_memory
+
+            cleanup_dist_env_and_memory()
+        except Exception as e:
+            print(f"Worker {self.worker_id}: vLLM distributed cleanup failed: {e}")
+
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception as e:
+            print(f"Worker {self.worker_id}: CUDA cache cleanup failed: {e}")
+
+        gc.collect()
 
     async def _process_requests(self):
         """Process incoming requests with concurrent batching support"""
@@ -720,11 +794,12 @@ class ProcessParallelVLLM:
         print("Shutting down workers...")
 
         # Send shutdown signals
-        for _ in self.workers:
+        started_workers = [worker for worker in self.workers if worker.pid is not None]
+        for _ in started_workers:
             self.input_queue.put(None)
 
         # Wait for workers to finish
-        for worker in self.workers:
+        for worker in started_workers:
             worker.join(timeout=30)
             if worker.is_alive():
                 print(f"Force terminating worker {worker.worker_id}")
@@ -738,6 +813,17 @@ class ProcessParallelVLLM:
             print("\nGenerating final summary report...")
             generation_mode = self._get_generation_mode_description()
             self.write_summary_report(generation_mode)
+
+        self._close_queues()
+
+    def _close_queues(self):
+        """Close multiprocessing queues after workers have stopped."""
+        for process_queue in (self.input_queue, self.output_queue):
+            try:
+                process_queue.close()
+                process_queue.join_thread()
+            except Exception:
+                pass
 
     def is_ready(self) -> bool:
         """Check if all workers are ready"""

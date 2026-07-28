@@ -208,6 +208,21 @@ class TestProcessParallelVLLM:
 class TestVLLMWorkerProcess:
     """Test VLLMWorkerProcess initialization"""
 
+    def _worker(self):
+        return VLLMWorkerProcess(
+            worker_id=0,
+            gpu_ids=[0],
+            model_id="gpt2",
+            input_queue=mp.Queue(),
+            output_queue=mp.Queue(),
+            generation_config=create_test_generation_config(),
+            tokenizer_config=create_test_tokenizer_config(),
+            logging_config=create_test_logging_config(),
+            generation_functions={},
+            tensor_parallel_size=1,
+            max_model_len=1234,
+        )
+
     def test_worker_initialization(self):
         """Test worker process initialization"""
         input_queue = mp.Queue()
@@ -232,6 +247,126 @@ class TestVLLMWorkerProcess:
         assert worker.model_id == "gpt2"
         assert worker.use_constraints is True
         assert worker.use_cot is False
+
+    def test_worker_resolves_vllm_012_tokenizer_and_config(self):
+        """Test worker engine access for vLLM 0.12 AsyncLLM shape."""
+
+        class Tokenizer:
+            pad_token = None
+            eos_token = "<eos>"
+
+        class ModelConfig:
+            max_model_len = 4096
+
+        class VLLMConfig:
+            model_config = ModelConfig()
+
+        class Engine:
+            vllm_config = VLLMConfig()
+
+            def __init__(self):
+                self.tokenizer = Tokenizer()
+
+            def get_tokenizer(self):
+                return self.tokenizer
+
+        worker = self._worker()
+        worker.engine = Engine()
+
+        assert worker._resolve_engine_tokenizer() is worker.engine.tokenizer
+        assert worker._resolve_engine_max_model_len() == 4096
+
+    def test_worker_resolves_async_vllm_012_tokenizer(self):
+        """Test worker engine access when vLLM exposes async get_tokenizer."""
+
+        class Tokenizer:
+            pad_token = None
+            eos_token = "<eos>"
+
+        class Engine:
+            def __init__(self):
+                self.tokenizer = Tokenizer()
+
+            async def get_tokenizer(self):
+                return self.tokenizer
+
+        worker = self._worker()
+        worker.engine = Engine()
+
+        assert worker._resolve_engine_tokenizer() is worker.engine.tokenizer
+
+    def test_worker_resolves_legacy_engine_tokenizer_and_config(self):
+        """Test worker engine access for older AsyncLLMEngine shape."""
+
+        class Tokenizer:
+            pad_token = None
+            eos_token = "<eos>"
+
+        class TokenizerGroup:
+            tokenizer = Tokenizer()
+
+        class ModelConfig:
+            max_model_len = 2048
+
+        class InnerEngine:
+            tokenizer = TokenizerGroup()
+            model_config = ModelConfig()
+
+        class Engine:
+            engine = InnerEngine()
+
+        worker = self._worker()
+        worker.engine = Engine()
+
+        assert worker._resolve_engine_tokenizer() is worker.engine.engine.tokenizer.tokenizer
+        assert worker._resolve_engine_max_model_len() == 2048
+
+    def test_worker_cleanup_shuts_down_engine_and_cuda(self, monkeypatch):
+        """Test worker teardown releases vLLM and CUDA resources."""
+        calls = []
+
+        class Engine:
+            def shutdown(self):
+                calls.append("engine_shutdown")
+
+        worker = self._worker()
+        worker.engine = Engine()
+        worker.tokenizer = object()
+
+        monkeypatch.setattr(
+            "vllm.distributed.parallel_state.cleanup_dist_env_and_memory",
+            lambda: calls.append("dist_cleanup"),
+        )
+        monkeypatch.setattr("torch.cuda.is_available", lambda: True)
+        monkeypatch.setattr("torch.cuda.empty_cache", lambda: calls.append("empty_cache"))
+        monkeypatch.setattr("torch.cuda.ipc_collect", lambda: calls.append("ipc_collect"))
+
+        worker._cleanup_engine()
+
+        assert worker.engine is None
+        assert worker.tokenizer is None
+        assert calls == ["engine_shutdown", "dist_cleanup", "empty_cache", "ipc_collect"]
+
+    def test_worker_cleanup_supports_async_engine_shutdown(self, monkeypatch):
+        """Test worker teardown handles awaitable vLLM shutdown results."""
+        calls = []
+
+        class Engine:
+            async def shutdown(self):
+                calls.append("engine_shutdown")
+
+        worker = self._worker()
+        worker.engine = Engine()
+
+        monkeypatch.setattr(
+            "vllm.distributed.parallel_state.cleanup_dist_env_and_memory",
+            lambda: calls.append("dist_cleanup"),
+        )
+        monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+
+        worker._cleanup_engine()
+
+        assert calls == ["engine_shutdown", "dist_cleanup"]
 
     def test_worker_generation_mode_constrained(self):
         """Test generation mode string for constrained mode"""

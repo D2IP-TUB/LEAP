@@ -1,7 +1,7 @@
 model:
   # id: "meta-llama/Llama-4-Scout-17B-16E-Instruct"
-  id: "mistralai/Mistral-7B-Instruct-v0.2"
-  # id: Qwen/Qwen2.5-32B-Instruct
+  # id: "mistralai/Mistral-7B-Instruct-v0.2"
+  id: Qwen/Qwen2.5-32B-Instruct
   # id: "gpt2"
   presets_path: "configs/models.yaml"
   # possible alternatives:
@@ -24,11 +24,13 @@ dataset:
   path: null
 
 run:
-  max_examples: 30
+  max_examples: 300
 
 generation:
   use_constraints: true
   use_global_constraints: false
+  constraint_backend: "xgrammar"
+  # constraint_backend: "legacy_state_machine"
 
   # Generation strategy: "iterative", "cot", or "direct_query"
   # - "iterative": single-phase iterative generation
@@ -39,7 +41,6 @@ generation:
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:
     - select_row
-    - add_column
     - select_column
     - group_by
     - sort_by
@@ -50,14 +51,13 @@ generation:
     enabled: true
     n_samples: 8
     per_action_samples:
-      add_column: 1  # Generative action - fewer samples needed
       select_row: 8
       select_column: 8
       group_by: 1  # Deterministic action - fewer samples needed
       sort_by: 1   # Deterministic action - fewer samples needed
       end: 1
       # Note: direct_query doesn't need sampling config (applied automatically)
-    debug: true
+    debug: false
     shuffle_invariant: false  # Enable shuffle-invariant sampling for robustness 
 
 logging:
@@ -67,4 +67,3 @@ logging:
   compress_logs: false
   log_format: "readable"
   max_table_chars: 10000
-

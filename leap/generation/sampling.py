@@ -18,7 +18,13 @@ from vllm import SamplingParams
 from leap.core import Action, Table
 from leap.core.actions import REGISTRY
 from leap.generation.prompt_builder import PromptBuilder
-from leap.inference.constraints import (
+from leap.inference.action_grammar import (
+    ActionGrammarBuilder,
+    StructuredActionParser,
+    StructuredSamplingParamsFactory,
+    uses_xgrammar,
+)
+from leap.inference.legacy.constraints import (
     create_action_only_constraint_processor,
     create_arguments_only_constraint_processor,
     create_constraint_logits_processor,
@@ -74,6 +80,7 @@ class SamplingLayer:
 
     def __init__(self, config: SamplingConfig):
         self.config = config
+        self.grammar_builder = ActionGrammarBuilder()
 
     def transform_context(self, table: Table, action_history: List[str], sample_idx: int) -> tuple[Table, List[str]]:
         """
@@ -98,7 +105,7 @@ class SamplingLayer:
         """
         return table, action_history
 
-    def _get_available_actions(self, action_history: List[str]) -> List[str]:
+    def _get_available_actions(self, action_history: List[str], worker=None) -> List[str]:
         """
         Get available actions based on action history.
 
@@ -111,6 +118,11 @@ class SamplingLayer:
         Returns:
             List of available action names
         """
+        if worker is not None and uses_xgrammar(worker):
+            from leap.inference.action_grammar import available_actions as grammar_available_actions
+
+            return grammar_available_actions(action_history, use_global_constraints=worker.use_global_constraints)
+
         available_actions = REGISTRY.get_enabled_names()
 
         if action_history:
@@ -157,7 +169,7 @@ class SamplingLayer:
             The action type name (e.g., "select_row", "end")
         """
         # Optimization: If only one action is available, skip LLM call (matches official implementation)
-        available_actions = self._get_available_actions(action_history)
+        available_actions = self._get_available_actions(action_history, worker)
 
         if len(available_actions) == 1:
             # Only one action available - skip LLM call and return it directly
@@ -170,7 +182,17 @@ class SamplingLayer:
                 question=question, table=table, action_history=action_history, worker=worker
             )
 
-            action_types = await self.generate_action_types(worker, action_prompt, 1, request_id, step, temperature_action, state_machines)
+            action_types = await self.generate_action_types(
+                worker,
+                action_prompt,
+                1,
+                request_id,
+                step,
+                temperature_action,
+                state_machines,
+                table,
+                action_history,
+            )
 
             # Empty/invalid action type generation is handled by the caller so
             # it can be reported as an error-driven fallback.
@@ -195,7 +217,7 @@ class SamplingLayer:
         """Generate and vote on action candidates."""
 
         # Optimization: If only one action is available, skip LLM call (matches official implementation)
-        available_actions = self._get_available_actions(action_history)
+        available_actions = self._get_available_actions(action_history, worker)
 
         if len(available_actions) == 1:
             # Only one action available - skip LLM call and return it directly
@@ -448,7 +470,22 @@ class SamplingLayer:
                 )
 
                 # Generate single action with this prompt
-                if worker.use_constraints:
+                if uses_xgrammar(worker):
+                    spec = self.grammar_builder.build_spec(
+                        table=modified_table,
+                        action_history=modified_history,
+                        use_global_constraints=worker.use_global_constraints,
+                        phase="single_step",
+                    )
+                    grammar = self.grammar_builder.build_single_step_grammar(spec)
+                    sampling_params = SamplingParams(
+                        temperature=0.7,
+                        max_tokens=300,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        n=1,
+                        **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
+                    )
+                elif worker.use_constraints:
                     constraint_processor = create_constraint_logits_processor(
                         modified_table,
                         worker.tokenizer,
@@ -486,7 +523,11 @@ class SamplingLayer:
                     response_text = final_result.outputs[0].text.strip()
                     # DEBUG: Print response
                     print(f"\n[RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
-                    action = Action.parse(response_text)
+                    action = (
+                        StructuredActionParser.parse_single_step(response_text, modified_table)
+                        if uses_xgrammar(worker)
+                        else Action.parse(response_text)
+                    )
                     return action
                 return None
             except Exception as e:
@@ -505,12 +546,36 @@ class SamplingLayer:
         return candidates
 
     async def generate_action_types(
-        self, worker, prompt: str, n: int, request_id: str, step: int, temperature: float, state_machines
+        self,
+        worker,
+        prompt: str,
+        n: int,
+        request_id: str,
+        step: int,
+        temperature: float,
+        state_machines,
+        table: Table,
+        action_history: List[str],
     ) -> List[str]:
         """Generate N action types for two-phase sampling."""
         step_id = f"{request_id}_action_step{step}"
 
-        if worker.use_constraints:
+        if uses_xgrammar(worker):
+            spec = self.grammar_builder.build_spec(
+                table=table,
+                action_history=action_history,
+                use_global_constraints=worker.use_global_constraints,
+                phase="action",
+            )
+            grammar = self.grammar_builder.build_action_grammar(spec)
+            sampling_params = SamplingParams(
+                temperature=temperature,
+                max_tokens=60,
+                stop_token_ids=[worker.tokenizer.eos_token_id],
+                n=n,
+                **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
+            )
+        elif worker.use_constraints:
             constraint_processor = create_action_only_constraint_processor(worker.tokenizer, step_id, state_machines)
             sampling_params = SamplingParams(
                 temperature=temperature,
@@ -541,7 +606,11 @@ class SamplingLayer:
                 response_text = output.text.strip()
                 # DEBUG: Print Phase 1 response
                 # print(f"\n[PHASE 1 RESPONSE | {request_id} step={step}]\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
-                action_name = Action.parse_name_only(response_text)
+                action_name = (
+                    StructuredActionParser.parse_action_name(response_text)
+                    if uses_xgrammar(worker)
+                    else Action.parse_name_only(response_text)
+                )
                 if action_name:
                     action_types.append(action_name)
 
@@ -589,7 +658,23 @@ class SamplingLayer:
                 step_id = f"{request_id}_args_step{step}_sample{sample_idx}"
 
                 # Generate single argument set
-                if worker.use_constraints and action_name != "add_column":
+                if uses_xgrammar(worker):
+                    spec = self.grammar_builder.build_spec(
+                        table=modified_table,
+                        action_history=modified_history,
+                        use_global_constraints=worker.use_global_constraints,
+                        phase="arguments",
+                        selected_action=action_name,
+                    )
+                    grammar = self.grammar_builder.build_arguments_grammar(spec)
+                    sampling_params = SamplingParams(
+                        temperature=temperature,
+                        max_tokens=300,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        n=1,
+                        **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
+                    )
+                elif worker.use_constraints and action_name != "add_column":
                     # Use arguments-only constraint processor for two-phase generation
                     # This prevents the model from generating the action name again
                     constraint_processor = create_arguments_only_constraint_processor(
@@ -630,6 +715,9 @@ class SamplingLayer:
                     args_text = final_result.outputs[0].text.strip()
 
                     print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_text}\n{'=' * 80}\n")  # noqa: E501
+
+                    if uses_xgrammar(worker):
+                        return StructuredActionParser.parse_arguments(args_text, action_name, modified_table)
 
                     if not worker.use_constraints or action_name == "add_column":
                         args_text = self._clean_argument_text(args_text, action_name)

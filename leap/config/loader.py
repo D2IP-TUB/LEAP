@@ -54,6 +54,7 @@ class GenerationConfig:
     use_constraints: bool
     use_global_constraints: bool
     strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
+    constraint_backend: str = "xgrammar"  # "xgrammar" or "legacy_state_machine"
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
     enabled_actions: tuple = None  # Tuple of enabled action names (immutable for frozen dataclass)
 
@@ -150,13 +151,7 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
         shuffle_invariant=sampling_section.get("shuffle_invariant", False),
     )
 
-    generation_config = GenerationConfig(
-        use_constraints=generation_section.get("use_constraints", False),
-        use_global_constraints=generation_section.get("use_global_constraints", False),
-        strategy=generation_section.get("strategy", "cot"),
-        sampling=sampling_config,
-        enabled_actions=tuple(enabled_actions) if enabled_actions else None,
-    )
+    generation_config = _build_generation_config(generation_section, enabled_actions, sampling_config)
 
     return AppConfig(
         model=model_config,
@@ -217,12 +212,7 @@ def load_runtime_config_tool(config_path: Path, tokenizer) -> AppConfig:
         shuffle_invariant=sampling_section.get("shuffle_invariant", False),
     )
 
-    generation_config = GenerationConfig(
-        use_constraints=generation_section.get("use_constraints", False),
-        use_global_constraints=generation_section.get("use_global_constraints", False),
-        strategy=generation_section.get("strategy", "cot"),
-        sampling=sampling_config,
-    )
+    generation_config = _build_generation_config(generation_section, enabled_actions, sampling_config)
 
     return AppConfig(
         model=model_config,
@@ -250,6 +240,27 @@ def _load_app_config(config_path: Path) -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Configuration file {config_path} must contain a mapping.")
     return data
+
+
+def _build_generation_config(generation_section: Dict[str, Any], enabled_actions, sampling_config) -> GenerationConfig:
+    use_constraints = generation_section.get("use_constraints", False)
+    constraint_backend = generation_section.get("constraint_backend", "xgrammar")
+
+    if constraint_backend not in {"xgrammar", "legacy_state_machine"}:
+        raise ValueError("generation.constraint_backend must be either 'xgrammar' or 'legacy_state_machine'.")
+
+    enabled_actions_tuple = tuple(enabled_actions) if enabled_actions else None
+    if use_constraints and constraint_backend == "xgrammar" and enabled_actions_tuple and "add_column" in enabled_actions_tuple:
+        raise ValueError("add_column is not supported when generation.constraint_backend is 'xgrammar'.")
+
+    return GenerationConfig(
+        use_constraints=use_constraints,
+        use_global_constraints=generation_section.get("use_global_constraints", False),
+        strategy=generation_section.get("strategy", "cot"),
+        constraint_backend=constraint_backend,
+        sampling=sampling_config,
+        enabled_actions=enabled_actions_tuple,
+    )
 
 
 def _load_model_presets(presets_path: Path) -> Dict[str, Any]:
