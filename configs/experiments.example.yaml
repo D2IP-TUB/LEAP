@@ -1,4 +1,7 @@
 base_config: configs/default.yaml
+# All jobs inherit generation.constraint_backend from base_config. That setting
+# automatically selects either the vLLM 0.10.0/V0 legacy environment or the
+# vLLM 0.12/V1 xgrammar environment for the complete experiment.
 models:
   - Qwen/Qwen2.5-7B-Instruct
   - Qwen/Qwen2.5-32B-Instruct

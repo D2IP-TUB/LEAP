@@ -193,8 +193,10 @@ class StructuredSamplingParamsFactory:
             from vllm.sampling_params import StructuredOutputsParams
 
             return {"structured_outputs": StructuredOutputsParams(grammar=grammar)}
-        except Exception:
-            return {"guided_grammar": grammar}
+        except ImportError:
+            from vllm.sampling_params import GuidedDecodingParams
+
+            return {"guided_decoding": GuidedDecodingParams.from_optional(grammar=grammar)}
 
 
 class StructuredActionParser:

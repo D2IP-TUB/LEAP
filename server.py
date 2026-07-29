@@ -1,3 +1,14 @@
+# ruff: noqa: I001  # Runtime bootstrap must execute before imports that load vLLM.
+if __name__ == "__main__":
+    import os as _bootstrap_os
+    import sys as _bootstrap_sys
+    from pathlib import Path as _BootstrapPath
+
+    from leap.vllm_runtime import ensure_vllm_runtime, runtime_for_config
+
+    _bootstrap_config = _BootstrapPath(_bootstrap_os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
+    ensure_vllm_runtime(runtime_for_config(_bootstrap_config), argv=_bootstrap_sys.argv)
+
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -31,14 +42,12 @@ from leap.generation.strategies import (
     IterativeGenerationStrategy,
 )
 from leap.inference.vllm_server import ProcessParallelVLLM
+from leap.vllm_runtime import validate_installed_runtime
 from leap.utils.apply_action import apply_single_action
 
 # shut off llm logging in case not important
 logging.getLogger("vllm").setLevel(logging.ERROR)
 logging.getLogger("transformers").setLevel(logging.ERROR)
-
-os.environ["VLLM_USE_V1"] = "0"
-os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 
 CONFIG_PATH = Path(os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
 SECRET_TOKEN = "Leap_tool_secret_token"
@@ -68,6 +77,10 @@ def build_runtime_tool(config_path: Path = CONFIG_PATH) -> RuntimeContext:
     model_id = get_model_id(config_path)
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     app_config: AppConfig = load_runtime_config_tool(config_path, tokenizer)
+    validate_installed_runtime(
+        use_constraints=app_config.generation.use_constraints,
+        constraint_backend=app_config.generation.constraint_backend,
+    )
 
     prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=app_config.model.instruct)
     return RuntimeContext(

@@ -8,9 +8,12 @@ dependencies = [
     "datasets>=4.4.1",
     "tqdm>=4.0",
     "transformers>=4.53.2,<5",
-    "vllm>=0.12,<0.13",
     "PyYAML>=6.0",
 ]
+
+[project.optional-dependencies]
+vllm-legacy = ["vllm==0.10.0"]
+vllm-modern = ["vllm>=0.12,<0.13"]
 
 [dependency-groups]
 dev = [
@@ -25,3 +28,11 @@ fix = true   # formatter/linter auto-fixes
 
 [tool.ruff.lint]
 select = ["E", "F", "I"] # E=pycodestyle, F=pyflakes, I=import sorting
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "vllm-legacy" },
+        { extra = "vllm-modern" },
+    ],
+]

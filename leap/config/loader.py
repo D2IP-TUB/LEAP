@@ -54,7 +54,7 @@ class GenerationConfig:
     use_constraints: bool
     use_global_constraints: bool
     strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
-    constraint_backend: str = "xgrammar"  # "xgrammar" or "legacy_state_machine"
+    constraint_backend: str = "legacy_state_machine"  # "xgrammar" or "legacy_state_machine"
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
     enabled_actions: tuple = None  # Tuple of enabled action names (immutable for frozen dataclass)
 
@@ -244,7 +244,7 @@ def _load_app_config(config_path: Path) -> Dict[str, Any]:
 
 def _build_generation_config(generation_section: Dict[str, Any], enabled_actions, sampling_config) -> GenerationConfig:
     use_constraints = generation_section.get("use_constraints", False)
-    constraint_backend = generation_section.get("constraint_backend", "xgrammar")
+    constraint_backend = generation_section.get("constraint_backend", "legacy_state_machine")
 
     if constraint_backend not in {"xgrammar", "legacy_state_machine"}:
         raise ValueError("generation.constraint_backend must be either 'xgrammar' or 'legacy_state_machine'.")

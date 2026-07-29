@@ -202,6 +202,8 @@ def test_experiment_report_includes_error_columns(tmp_path):
     markdown = render_markdown_report(report)
 
     assert report["jobs"][0]["error_rate"] == 0.5
+    assert "vllm_runtime" in report
+    assert "vLLM runtime:" in markdown
     assert report["summary_by_mode"][0]["invalid_generation_end_count"] == 1
     assert "Error Rate" in markdown
     assert "Invalid->End" in markdown

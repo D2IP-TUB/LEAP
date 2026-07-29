@@ -1,6 +1,8 @@
 __pycache__
 .cursor/
 .venv/
+.venv-vllm-legacy/
+.venv-vllm-modern/
 .vscode
 .claude
 .ruff_cache

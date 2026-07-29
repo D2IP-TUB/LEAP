@@ -1,3 +1,14 @@
+# ruff: noqa: I001  # Runtime bootstrap must execute before imports that load vLLM.
+if __name__ == "__main__":
+    import os as _bootstrap_os
+    import sys as _bootstrap_sys
+    from pathlib import Path as _BootstrapPath
+
+    from leap.vllm_runtime import ensure_vllm_runtime, runtime_for_config
+
+    _bootstrap_config = _BootstrapPath(_bootstrap_os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
+    ensure_vllm_runtime(runtime_for_config(_bootstrap_config), argv=_bootstrap_sys.argv)
+
 import json
 import logging
 import multiprocessing as mp
@@ -32,14 +43,13 @@ from leap.generation.strategies import (
     IterativeGenerationStrategy,
 )
 from leap.inference.vllm_server import ProcessParallelVLLM
+from leap.vllm_runtime import runtime_metadata, validate_installed_runtime
 from leap.utils.profiler import get_aggregate_profiler
 
 # shut off llm logging in case not important
 logging.getLogger("vllm").setLevel(logging.ERROR)
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
-os.environ["VLLM_USE_V1"] = "0"
-os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 CONFIG_PATH = Path(os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
 RESULTS_ROOT = Path(os.environ.get("LEAP_RESULTS_ROOT", "results"))
 
@@ -101,6 +111,10 @@ def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
 
     # Now load the full config with tokenizer
     app_config: AppConfig = load_runtime_config(config_path, tokenizer)
+    validate_installed_runtime(
+        use_constraints=app_config.generation.use_constraints,
+        constraint_backend=app_config.generation.constraint_backend,
+    )
 
     prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=app_config.model.instruct)
     dataset = load_dataset_from_config(app_config.dataset)
@@ -188,6 +202,10 @@ def write_run_manifest(app_config: AppConfig, paths: RunOutputPaths, config_path
         "run": _json_safe(app_config.run),
         "generation": _json_safe(app_config.generation),
         "logging": _json_safe(app_config.logging),
+        "vllm_runtime": runtime_metadata(
+            app_config.generation.constraint_backend,
+            use_constraints=app_config.generation.use_constraints,
+        ),
     }
     paths.manifest_file.parent.mkdir(parents=True, exist_ok=True)
     with open(paths.manifest_file, "w", encoding="utf-8") as f:

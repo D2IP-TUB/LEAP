@@ -29,8 +29,14 @@ run:
 generation:
   use_constraints: true
   use_global_constraints: false
-  constraint_backend: "xgrammar"
-  # constraint_backend: "legacy_state_machine"
+
+  # Unconstrained generation always uses vLLM >=0.12,<0.13 with the V1 engine.
+  # When constraints are enabled, "xgrammar" also uses V1, while
+  # "legacy_state_machine" uses vLLM 0.10.0/V0 for historical reproduction.
+  # If this setting is omitted, constrained runs select legacy_state_machine
+  # for backward compatibility. add_column is not supported by xgrammar.
+  # constraint_backend: "xgrammar"
+  constraint_backend: "legacy_state_machine"
 
   # Generation strategy: "iterative", "cot", or "direct_query"
   # - "iterative": single-phase iterative generation

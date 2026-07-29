@@ -17,6 +17,8 @@ from typing import Any
 import yaml
 from tqdm.auto import tqdm
 
+from leap.vllm_runtime import BOOTSTRAPPED_ENV_VAR, ensure_vllm_runtime, runtime_for_experiment, runtime_metadata
+
 VALID_MODES = {"cot", "constrained_cot", "direct_query"}
 DEFAULT_SPEC_PATH = Path("configs/experiments.example.yaml")
 LOGGER = logging.getLogger("leap.experiments")
@@ -203,6 +205,9 @@ def run_job(job: ExperimentJob, *, experiment_dir: Path, project_root: Path, pyt
     env["LEAP_CONFIG_PATH"] = str(job.config_path)
     env["LEAP_RESULTS_ROOT"] = str(job.results_root)
     env["PYTHONUNBUFFERED"] = "1"
+    # Each generated job config selects its own runtime. Do not let the
+    # experiment runner's bootstrap prevent a child from switching V0/V1.
+    env.pop(BOOTSTRAPPED_ENV_VAR, None)
 
     return_code, runtime_seconds = _run_child_process(
         [str(python_executable), "main.py"],
@@ -347,6 +352,7 @@ def build_report(spec: ExperimentSpec, experiment_id: str, experiment_dir: Path,
         "repeats": spec.repeats,
         "max_examples": spec.max_examples,
         "python_executable": str(spec.python_executable),
+        "vllm_runtime": runtime_metadata(),
         "jobs": serial_jobs,
         "summary_by_mode": _summarize(job_results, ("mode",)),
         "summary_by_model_and_mode": _summarize(job_results, ("model", "mode")),
@@ -369,6 +375,9 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         f"Max examples: {report['max_examples']}",
         f"Repeats: {report['repeats']}",
         f"Python: {report['python_executable']}",
+        f"vLLM runtime: {report['vllm_runtime']['runtime']}",
+        f"vLLM version: {report['vllm_runtime']['vllm_version']}",
+        f"vLLM engine: {report['vllm_runtime']['engine']}",
         "",
         "## Summary By Mode",
         "",
@@ -665,9 +674,6 @@ def _resolve_path(value, base_dir: Path, project_root: Path) -> Path:
 
 
 def _default_python_executable() -> str:
-    venv_python = Path.cwd() / ".venv" / "bin" / "python"
-    if venv_python.exists():
-        return str(venv_python)
     return sys.executable
 
 
@@ -698,4 +704,9 @@ def _configure_logging(log_level: str) -> None:
 
 
 if __name__ == "__main__":
+    bootstrap_parser = argparse.ArgumentParser(add_help=False)
+    bootstrap_parser.add_argument("spec", nargs="?", type=Path, default=DEFAULT_SPEC_PATH)
+    bootstrap_parser.add_argument("--log-level")
+    bootstrap_args, _ = bootstrap_parser.parse_known_args()
+    ensure_vllm_runtime(runtime_for_experiment(bootstrap_args.spec), argv=sys.argv)
     raise SystemExit(main())

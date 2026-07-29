@@ -23,14 +23,14 @@ def make_table(num_rows=3):
     return Table(columns=["Name", "Points"], rows=[[f"name {idx}", str(idx)] for idx in range(num_rows)])
 
 
-def test_default_generation_config_uses_xgrammar_backend():
+def test_default_generation_config_uses_legacy_backend_for_old_configs():
     config = _build_generation_config(
         {"use_constraints": True, "use_global_constraints": False},
         ["select_row", "end"],
         SamplingConfig(),
     )
 
-    assert config.constraint_backend == "xgrammar"
+    assert config.constraint_backend == "legacy_state_machine"
 
 
 def test_generation_config_rejects_add_column_for_xgrammar():
@@ -142,4 +142,4 @@ def test_structured_params_factory_uses_grammar():
     if params is not None:
         assert params.grammar == 'root ::= "f_end"\n'
     else:
-        assert kwargs == {"guided_grammar": 'root ::= "f_end"\n'}
+        assert kwargs["guided_decoding"].grammar == 'root ::= "f_end"\n'
