@@ -168,7 +168,6 @@ class PromptBuilder:
             prompt += "None\n"
         prompt += "\n"
         prompt += f"Available actions: {example_actions_text}\n"
-        # prompt += "What actions should be performed next?"
         return prompt
 
     def build_cot_action_prompt(
@@ -182,7 +181,6 @@ class PromptBuilder:
         """Prompt for CoT action selection (dynamic plan)."""
         table_str = self._format_table(table, self.cot_settings.action_table_chars)
         available_label = "Available actions"
-        # question_suffix = "What actions should be performed next?"
         question_suffix = ""
         instruction_prompt = self._build_action_selection_body(table_str, question, action_history, available_label, question_suffix)
 
@@ -190,7 +188,6 @@ class PromptBuilder:
         if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
             table_str = self._format_table(table, self.cot_settings.action_fallback_table_chars, True)
             available_label = "The next operation must be one of the following"
-            # question_suffix = "What actions should be performed next?"
             question_suffix = ""
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
             instruction_prompt = self._build_action_selection_body(
@@ -257,7 +254,8 @@ class PromptBuilder:
             table_str = self._format_table(table, self.cot_settings.action_fallback_table_chars, True)
 
         final_prompt = f"{table_str}\n\n"
-        final_prompt += f"Question: {question}\n"
+        final_prompt += f"Question: {question}\n\n"
+        # final_prompt += f"Arguments only for f_{action_name}:"
 
         messages.append({"role": "user", "content": final_prompt})
 

@@ -234,6 +234,8 @@ class ActionPromptTemplate:
             example_parts.append(example.format_table_for_prompt())
             example_parts.append("")
             example_parts.append(f"Question: {example.question}")
+            # example_parts.append("")
+            # example_parts.append(f"Arguments only for f_{self.action_name}:")
 
             examples.append("\n".join(example_parts))
             answers.append(example.answer)

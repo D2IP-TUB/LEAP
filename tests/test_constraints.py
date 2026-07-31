@@ -145,6 +145,49 @@ def test_select_row_multiple_parameters(gpt2_tokenizer, tokenizer_config):
     assert machine.selected_params == {"row 0", "row 1", "row 2"}
 
 
+def test_full_action_select_row_wildcard_is_exclusive(gpt2_tokenizer, tokenizer_config):
+    machine = ConstraintStateMachine(make_table(), gpt2_tokenizer, tokenizer_config)
+
+    for token in machine.tokenizer_config.action_tokens["select_row"]:
+        machine.update_state(token)
+    machine.update_state(machine.tokenizer_config.paren_open_id)
+    machine.update_state(machine.tokenizer_config.list_open_id)
+
+    assert machine.wildcard_tokens[0] in machine.allowed_tokens()
+    for token in machine.wildcard_tokens:
+        assert token in machine.allowed_tokens()
+        machine.update_state(token)
+
+    assert machine.allowed_tokens() == [machine.tokenizer_config.list_close_id]
+    machine.update_state(machine.tokenizer_config.list_close_id)
+    assert machine.allowed_tokens() == [machine.tokenizer_config.paren_close_id]
+    machine.update_state(machine.tokenizer_config.paren_close_id)
+    assert machine.finished
+
+
+def test_arguments_only_select_row_wildcard_is_exclusive(gpt2_tokenizer, tokenizer_config):
+    machine = ArgumentsOnlyConstraintStateMachine(make_table(), gpt2_tokenizer, tokenizer_config, "select_row")
+
+    machine.update_state(machine.tokenizer_config.list_open_id)
+    assert machine.wildcard_tokens[0] in machine.allowed_tokens()
+    for token in machine.wildcard_tokens:
+        assert token in machine.allowed_tokens()
+        machine.update_state(token)
+
+    assert machine.allowed_tokens() == [machine.tokenizer_config.list_close_id]
+    machine.update_state(machine.tokenizer_config.list_close_id)
+    assert machine.finished
+    assert machine.allowed_tokens() == [gpt2_tokenizer.eos_token_id]
+
+
+def test_select_row_wildcard_is_not_offered_for_empty_tables(gpt2_tokenizer, tokenizer_config):
+    machine = ArgumentsOnlyConstraintStateMachine(make_table(num_rows=0), gpt2_tokenizer, tokenizer_config, "select_row")
+
+    machine.update_state(machine.tokenizer_config.list_open_id)
+    assert machine.wildcard_enabled is False
+    assert machine.wildcard_tokens[0] not in machine.allowed_tokens()
+
+
 def test_select_column_multiple_parameters(gpt2_tokenizer, tokenizer_config):
     table = make_table(columns=["foo", "bar", "baz"])
     machine = ConstraintStateMachine(table, gpt2_tokenizer, tokenizer_config)

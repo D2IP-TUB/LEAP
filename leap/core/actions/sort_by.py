@@ -83,12 +83,26 @@ class SortByAction(ActionDefinition):
         if not args_str or args_str == "[]":
             return None
 
-        parts = args_str.split(",")
-        if len(parts) < 2:
-            return None
+        column_name = None
+        order_str = None
+        try:
+            import ast
 
-        column_name = parts[0].strip().strip('"').strip("'")
-        order_str = parts[1].strip().strip('"').strip("'").lower()
+            parsed = ast.literal_eval(f"({args_str})")
+            if isinstance(parsed, tuple) and len(parsed) == 2:
+                column_name, order_str = parsed
+        except (SyntaxError, ValueError):
+            pass
+
+        # Retain the existing permissive parser for unquoted legacy output.
+        if not isinstance(column_name, str) or not isinstance(order_str, str):
+            parts = args_str.split(",")
+            if len(parts) < 2:
+                return None
+            column_name = parts[0].strip().strip('"').strip("'")
+            order_str = parts[1].strip().strip('"').strip("'")
+
+        order_str = order_str.lower()
 
         order = self._normalize_order(order_str)
         if order is None:

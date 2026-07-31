@@ -74,6 +74,17 @@ class GroupByAction(ActionDefinition):
         if not args_str or args_str == "[]":
             return None
 
+        # Preserve separators that are part of a quoted column name.
+        if len(args_str) >= 2 and args_str[0] in {"'", '"'} and args_str[-1] == args_str[0]:
+            try:
+                import ast
+
+                column_name = ast.literal_eval(args_str)
+                if isinstance(column_name, str):
+                    return column_name
+            except (SyntaxError, ValueError):
+                pass
+
         column_name = args_str.strip('"').strip("'").strip()
         # Stop at comma or semicolon (model may add extra prose), but NOT space (column names can have spaces)
         for sep in [",", ";"]:

@@ -20,6 +20,8 @@ class ConstraintStateMachine:
         self.table = table
         self.use_global_constraints = use_global_constraints
         self.tokenizer_config = tokenizer_config
+        self.wildcard_tokens = tokenizer.encode("*", add_special_tokens=False)
+        self.wildcard_enabled = bool(table.rows and self.wildcard_tokens)
 
         # Parse action history to determine previously used action types (only if global constraints are enabled)
         if self.use_global_constraints:
@@ -77,6 +79,8 @@ class ConstraintStateMachine:
         self.current_param = []
         self.param_complete = False
         self.expecting_parameter = False
+        self.wildcard_prefix = []
+        self.wildcard_selected = False
 
         # Apply constraints based on configuration
         if self.use_global_constraints:
@@ -201,6 +205,21 @@ class ConstraintStateMachine:
             self.expecting_parameter = True
 
     def _handle_params(self, token):
+        if self.current_action == "select_row" and self.wildcard_enabled:
+            if self.wildcard_selected:
+                if token == self.tokenizer_config.list_close_id:
+                    self.state = "in_paren_close"
+                return
+
+            if self.wildcard_prefix or (not self.current_param and self.expecting_parameter and token == self.wildcard_tokens[0]):
+                candidate = self.wildcard_prefix + [token]
+                if self.wildcard_tokens[: len(candidate)] == candidate:
+                    self.wildcard_prefix = candidate
+                    if self.wildcard_prefix == self.wildcard_tokens:
+                        self.wildcard_selected = True
+                        self.expecting_parameter = False
+                    return
+
         if not self.current_param and self.expecting_parameter:
             if token == self.tokenizer_config.quote_id:
                 self.current_param.append(token)
@@ -274,6 +293,12 @@ class ConstraintStateMachine:
             return [self.tokenizer_config.list_open_id]
 
         elif self.state == "in_params":
+            if self.wildcard_selected:
+                return [self.tokenizer_config.list_close_id]
+
+            if self.wildcard_prefix:
+                return [self.wildcard_tokens[len(self.wildcard_prefix)]]
+
             if self.selected_params and self.current_action == "group_by":
                 return [self.tokenizer_config.list_close_id]
 
@@ -285,6 +310,8 @@ class ConstraintStateMachine:
             if not self.current_param and self.expecting_parameter:
                 if remaining_params:
                     allowed.add(self.tokenizer_config.quote_id)
+                if self.current_action == "select_row" and self.wildcard_enabled:
+                    allowed.add(self.wildcard_tokens[0])
             elif self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
                 for param in remaining_params:
                     full_seq = token_map[param]
@@ -512,6 +539,8 @@ class ArgumentsOnlyConstraintStateMachine:
         self.tokenizer_config = tokenizer_config
         self.action_name = action_name
         self.table = table
+        self.wildcard_tokens = tokenizer.encode("*", add_special_tokens=False)
+        self.wildcard_enabled = bool(action_name == "select_row" and table.rows and self.wildcard_tokens)
         self.reset()
 
         self.non_list_action_names = ["group_by", "sort_by"]
@@ -543,6 +572,8 @@ class ArgumentsOnlyConstraintStateMachine:
         self.current_param = []
         self.param_complete = False
         self.expecting_parameter = False
+        self.wildcard_prefix = []
+        self.wildcard_selected = False
 
     def update_state(self, token):
         if self.finished:
@@ -576,6 +607,22 @@ class ArgumentsOnlyConstraintStateMachine:
             self.expecting_parameter = True
 
     def _handle_params(self, token):
+        if self.wildcard_enabled:
+            if self.wildcard_selected:
+                if token == self.tokenizer_config.list_close_id:
+                    self.state = "finish"
+                    self.finished = True
+                return
+
+            if self.wildcard_prefix or (not self.current_param and self.expecting_parameter and token == self.wildcard_tokens[0]):
+                candidate = self.wildcard_prefix + [token]
+                if self.wildcard_tokens[: len(candidate)] == candidate:
+                    self.wildcard_prefix = candidate
+                    if self.wildcard_prefix == self.wildcard_tokens:
+                        self.wildcard_selected = True
+                        self.expecting_parameter = False
+                    return
+
         if not self.current_param and self.expecting_parameter:
             if token == self.tokenizer_config.quote_id:
                 self.current_param.append(token)
@@ -644,12 +691,20 @@ class ArgumentsOnlyConstraintStateMachine:
             return [self.tokenizer_config.list_open_id]
 
         elif self.state == "in_params":
+            if self.wildcard_selected:
+                return [self.tokenizer_config.list_close_id]
+
+            if self.wildcard_prefix:
+                return [self.wildcard_tokens[len(self.wildcard_prefix)]]
+
             allowed = set()
             remaining_params = set(self.valid_params) - self.selected_params
 
             if not self.current_param and self.expecting_parameter:
                 if remaining_params:
                     allowed.add(self.tokenizer_config.quote_id)
+                if self.wildcard_enabled:
+                    allowed.add(self.wildcard_tokens[0])
             elif self.current_param and self.current_param[0] == self.tokenizer_config.quote_id:
                 for param in remaining_params:
                     full_seq = self.param_token_map[param]

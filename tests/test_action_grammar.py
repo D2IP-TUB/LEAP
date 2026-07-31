@@ -91,6 +91,7 @@ def test_argument_grammars_for_supported_actions():
     )
     row_grammar = builder.build_arguments_grammar(row_spec)
     assert "root ::= row_list" in row_grammar
+    assert '"[*]"' in row_grammar
     assert '"\\"row 0\\""' in row_grammar
     assert '"\\"row 2\\""' in row_grammar
 
@@ -106,6 +107,35 @@ def test_argument_grammars_for_supported_actions():
     assert '"\\"Name\\""' in sort_grammar
     assert '"\\"asc\\""' in sort_grammar
     assert '"\\"desc\\""' in sort_grammar
+
+
+def test_select_row_wildcard_is_supported_only_for_non_empty_tables():
+    builder = ActionGrammarBuilder()
+    argument_spec = builder.build_spec(
+        table=make_table(),
+        action_history=[],
+        use_global_constraints=False,
+        phase="arguments",
+        selected_action="select_row",
+    )
+    assert '"[*]"' in builder.build_arguments_grammar(argument_spec)
+
+    single_step_spec = builder.build_spec(
+        table=make_table(),
+        action_history=[],
+        use_global_constraints=False,
+        phase="single_step",
+    )
+    assert '"[*]"' in builder.build_single_step_grammar(single_step_spec)
+
+    empty_spec = builder.build_spec(
+        table=make_table(num_rows=0),
+        action_history=[],
+        use_global_constraints=False,
+        phase="arguments",
+        selected_action="select_row",
+    )
+    assert '"[*]"' not in builder.build_arguments_grammar(empty_spec)
 
 
 def test_action_selection_grammar_outputs_old_action_names():
@@ -127,13 +157,24 @@ def test_structured_parser_uses_code_style_actions():
     table = make_table()
 
     row_action = StructuredActionParser.parse_arguments('["row 0", "row 2"]', "select_row", table)
-    assert row_action.to_string() == "select_row(0, 2)"
+    assert row_action.to_string() == "select_row([row 0, row 2])"
 
     column_action = StructuredActionParser.parse_single_step('f_select_column(["Name"])', table)
     assert column_action.to_string() == "select_column('Name')"
 
     invalid = StructuredActionParser.parse_arguments('["row 999"]', "select_row", table)
     assert invalid is None
+
+
+def test_structured_parser_validates_select_row_wildcard():
+    table = make_table()
+    wildcard = StructuredActionParser.parse_arguments("[*]", "select_row", table)
+
+    assert wildcard is not None
+    assert wildcard.arguments == ("*",)
+    assert wildcard.apply_to_table(table) == table
+    assert StructuredActionParser.parse_arguments('[*, "row 0"]', "select_row", table) is None
+    assert StructuredActionParser.parse_arguments("[*]", "select_row", make_table(num_rows=0)) is None
 
 
 def test_structured_params_factory_uses_grammar():

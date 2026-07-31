@@ -27,8 +27,8 @@ run:
   max_examples: 300
 
 generation:
-  use_constraints: true
-  use_global_constraints: false
+  use_constraints: false
+  use_global_constraints: true
 
   # Unconstrained generation always uses vLLM >=0.12,<0.13 with the V1 engine.
   # When constraints are enabled, "xgrammar" also uses V1, while
@@ -36,7 +36,7 @@ generation:
   # If this setting is omitted, constrained runs select legacy_state_machine
   # for backward compatibility. add_column is not supported by xgrammar.
   # constraint_backend: "xgrammar"
-  constraint_backend: "legacy_state_machine"
+  constraint_backend: "xgrammar"
 
   # Generation strategy: "iterative", "cot", or "direct_query"
   # - "iterative": single-phase iterative generation
@@ -50,6 +50,7 @@ generation:
     - select_column
     - group_by
     - sort_by
+    # - add_column
     - end
     # Note: direct_query is automatically applied after end(), not a separate action
 

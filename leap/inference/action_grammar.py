@@ -153,8 +153,12 @@ class ActionGrammarBuilder:
         raise ValueError(f"Action '{action}' is not supported by the xgrammar backend.")
 
     def _row_rules(self, rows: tuple[str, ...]) -> list[str]:
+        explicit_rows = self._literal("[") + " row (" + self._literal(", ") + " row)* " + self._literal("]")
+        row_list_choices = [explicit_rows]
+        if rows:
+            row_list_choices.insert(0, self._literal("[*]"))
         return [
-            "row_list ::= " + self._literal("[") + " row (" + self._literal(", ") + " row)* " + self._literal("]"),
+            "row_list ::= " + self._choice(row_list_choices),
             "row ::= " + self._quoted_value_choices(rows),
         ]
 

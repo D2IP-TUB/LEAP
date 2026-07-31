@@ -872,6 +872,12 @@ class SamplingLayer:
         """
         import re
 
+        def strip_trailing_prompt_punctuation(text: str) -> str:
+            cleaned_text = text.strip().rstrip(".")
+            if len(cleaned_text) >= 2 and cleaned_text[0] in {"'", '"'} and cleaned_text[-1] == cleaned_text[0]:
+                return cleaned_text
+            return cleaned_text.rstrip("'\"")
+
         # Remove action name prefix (with optional space and opening paren)
         # Patterns to clean:
         # - "select_column ([ "Team" ]" -> "[ "Team" ]"
@@ -890,8 +896,16 @@ class SamplingLayer:
                 after_marker = after_marker[: last_paren + 1]
             args_text = after_marker
 
-        # Normalize backslashes only for regex matching — do NOT use this for the returned value
-        normalized_args_text = args_text.replace("\\", "")
+        # Normalize backslashes only for regex matching while retaining a map
+        # back to the original offsets used for the returned value.
+        normalized_chars = []
+        normalized_to_original = []
+        for original_idx, char in enumerate(args_text):
+            if char == "\\":
+                continue
+            normalized_chars.append(char)
+            normalized_to_original.append(original_idx)
+        normalized_args_text = "".join(normalized_chars)
 
         # Try to extract just the args from f_action_name(args) or action_name(args)
         # Try f_-prefixed version first (LLM generates f_sort_by(...) etc.)
@@ -911,11 +925,13 @@ class SamplingLayer:
                     pos += 1
                 if depth == 0:
                     close_pos = pos - 1  # position of closing ')'
-                    # Use match offsets on the original args_text (offsets are same since we only stripped backslashes)
-                    return args_text[open_pos:close_pos].strip().rstrip(".'\"")
+                    original_open_pos = normalized_to_original[open_pos - 1] + 1
+                    original_close_pos = normalized_to_original[close_pos]
+                    return strip_trailing_prompt_punctuation(args_text[original_open_pos:original_close_pos])
 
-        # Fallback: strip action name prefix (with or without f_) then everything after closing paren
+        # Fallback: strip only the action name prefix (with or without f_).
+        # Preserve parentheses in the remaining arguments because they may be
+        # part of a valid column name, e.g. "Population (2005)".
         pattern = rf"^\s*(?:f_)?{re.escape(action_name)}\s*\(?\s*"
         cleaned = re.sub(pattern, "", args_text, count=1)
-        cleaned = cleaned.replace(")", "")
-        return cleaned.strip().rstrip(".'\"")  # Strip trailing punctuation from prompt format
+        return strip_trailing_prompt_punctuation(cleaned)
