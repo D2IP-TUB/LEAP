@@ -116,9 +116,14 @@ def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
     validate_installed_runtime(
         use_constraints=app_config.generation.use_constraints,
         constraint_backend=app_config.generation.constraint_backend,
+        output_format=app_config.generation.output_format,
     )
 
-    prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=app_config.model.instruct)
+    prompt_builder = PromptBuilder(
+        tokenizer=tokenizer,
+        is_instruct=app_config.model.instruct,
+        output_format=app_config.generation.output_format,
+    )
     dataset = load_dataset_from_config(app_config.dataset)
     return RuntimeContext(
         config=app_config,
@@ -210,6 +215,7 @@ def write_run_manifest(app_config: AppConfig, paths: RunOutputPaths, config_path
         "vllm_runtime": runtime_metadata(
             app_config.generation.constraint_backend,
             use_constraints=app_config.generation.use_constraints,
+            output_format=app_config.generation.output_format,
         ),
         "extractors": list(app_config.extractors),
     }
@@ -268,18 +274,19 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
 
 def get_generation_mode_string(generation_config: GenerationSettings):
     """Get a descriptive string for the current generation mode"""
+    format_prefix = "json_" if generation_config.output_format == "json" else ""
     if generation_config.strategy == "direct_query":
         return "direct_query"
     elif generation_config.strategy == "cot":
         constraint_desc = "with_constraints" if generation_config.use_constraints else "without_constraints"
-        return f"chain_of_table_{constraint_desc}"
+        return f"{format_prefix}chain_of_table_{constraint_desc}"
     elif generation_config.use_constraints:
         if generation_config.use_global_constraints:
-            return "constrained_with_global"
+            return f"{format_prefix}constrained_with_global"
         else:
-            return "constrained_local_only"
+            return f"{format_prefix}constrained_local_only"
     else:
-        return "unconstrained_with_postprocessing"
+        return f"{format_prefix}unconstrained_with_postprocessing"
 
 
 def create_sampling_layer(generation_settings: GenerationSettings) -> SamplingLayer:

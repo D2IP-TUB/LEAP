@@ -88,6 +88,24 @@ def test_main_writes_report_file_with_sample_table(tmp_path):
     assert "## Tutorial: Options That Affect The Grammar" in report
 
 
+def test_report_renders_json_schemas_for_json_mode(tmp_path):
+    config_path = _config(tmp_path)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["generation"]["output_format"] = "json"
+    _write_yaml(config_path, config)
+
+    report = build_engine_grammar_report(
+        config_path=config_path,
+        table_source="sample",
+        columns=["City", "Score"],
+        row_count=2,
+    )
+    assert report.startswith("# LEAP Engine JSON Schema Report")
+    assert '"single_step"' in report
+    assert '"additionalProperties": false' in report
+    assert '"City"' in report
+
+
 def test_report_rejects_add_column_for_active_xgrammar(tmp_path):
     config_path = _config(tmp_path)
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))

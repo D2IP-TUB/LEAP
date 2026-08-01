@@ -361,7 +361,7 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
 
     def get_generation_mode_string(self, worker) -> str:
         """Override to return CoT mode string."""
-        return "CoT"
+        return "JSON CoT" if getattr(worker, "output_format", "function") == "json" else "CoT"
 
     async def generate_action_step(
         self,

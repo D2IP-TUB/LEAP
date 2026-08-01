@@ -1,3 +1,5 @@
+"""Function-call operation grammar and parsing state for constrained decoding."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -27,7 +29,11 @@ def get_constraint_backend(worker) -> str:
 
 
 def uses_xgrammar(worker) -> bool:
-    return getattr(worker, "use_constraints", False) and get_constraint_backend(worker) == "xgrammar"
+    return (
+        getattr(worker, "output_format", "function") == "function"
+        and getattr(worker, "use_constraints", False)
+        and get_constraint_backend(worker) == "xgrammar"
+    )
 
 
 def available_actions(action_history: list[str] | tuple[str, ...] | None, *, use_global_constraints: bool) -> list[str]:

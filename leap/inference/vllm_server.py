@@ -84,6 +84,7 @@ class VLLMWorkerProcess(mp.Process):
         self.use_cot = generation_config.strategy == "cot"
         self.use_global_constraints = generation_config.use_global_constraints
         self.constraint_backend = generation_config.constraint_backend
+        self.output_format = generation_config.output_format
 
         # vLLM components (will be set after engine initialization)
         self.engine = None
@@ -132,13 +133,14 @@ class VLLMWorkerProcess(mp.Process):
 
     def _get_generation_mode_string(self) -> str:
         """Get descriptive string for generation mode"""
+        format_prefix = "json_" if self.output_format == "json" else ""
         if self.use_cot:
             constraint_desc = "with_constraints" if self.use_constraints else "without_constraints"
-            return f"chain_of_table_{constraint_desc}"
+            return f"{format_prefix}chain_of_table_{constraint_desc}"
         elif self.use_constraints:
-            return "constrained"
+            return f"{format_prefix}constrained"
         else:
-            return "unconstrained_with_postprocessing"
+            return f"{format_prefix}unconstrained_with_postprocessing"
 
     def _init_engine(self):
         """Initialize the vLLM engine"""

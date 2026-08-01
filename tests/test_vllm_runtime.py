@@ -63,6 +63,23 @@ def test_unconstrained_generation_selects_modern_runtime(backend):
     assert runtime_for_generation(use_constraints=False, constraint_backend=backend).name == "modern"
 
 
+def test_configured_legacy_backend_forces_function_format_before_runtime_selection(tmp_path):
+    config = tmp_path / "legacy-json.yaml"
+    _write_yaml(
+        config,
+        {"generation": {"use_constraints": True, "constraint_backend": LEGACY_BACKEND, "output_format": "json"}},
+    )
+    assert runtime_for_config(config).name == "legacy"
+    assert (
+        runtime_for_generation(
+            use_constraints=True,
+            constraint_backend=LEGACY_BACKEND,
+            output_format="json",
+        ).name
+        == "legacy"
+    )
+
+
 def test_experiment_resolves_base_config_from_project_root(tmp_path):
     config = tmp_path / "configs" / "default.yaml"
     spec = tmp_path / "specs" / "experiment.yaml"

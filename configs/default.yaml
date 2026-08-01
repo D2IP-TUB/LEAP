@@ -29,22 +29,30 @@ run:
 # Answer extraction methods run independently on every strategy's final table.
 extractors:
   - direct_query
-  - nl2sql
-  - nl2code
-  - end2ender
-  - cot_end2ender
+  # - nl2sql
+  # - nl2code
+  # - end2ender
+  # - cot_end2ender
 
 generation:
-  use_constraints: false
-  use_global_constraints: true
+  use_constraints: true
+  use_global_constraints: false
+
+  # Operation protocol: "function" preserves f_action(...); "json" uses
+  # named JSON objects and JSON Schema for constrained decoding.
+  # legacy_state_machine always forces this setting to "function".
+  output_format: "function"
 
   # Unconstrained generation always uses vLLM >=0.12,<0.13 with the V1 engine.
   # When constraints are enabled, "xgrammar" also uses V1, while
   # "legacy_state_machine" uses vLLM 0.10.0/V0 for historical reproduction.
   # If this setting is omitted, constrained runs select legacy_state_machine
-  # for backward compatibility. add_column is not supported by xgrammar.
+  # for backward compatibility. Selecting legacy_state_machine forces the
+  # function operation format and the legacy runtime when constraints are on.
+  # add_column is unsupported by function-format xgrammar, but supported by
+  # constrained JSON mode.
   # constraint_backend: "xgrammar"
-  constraint_backend: "xgrammar"
+  constraint_backend: "legacy_state_machine"
 
   # Generation strategy: "iterative", "cot", or "direct_query"
   # - "iterative": single-phase iterative generation

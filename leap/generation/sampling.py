@@ -18,11 +18,19 @@ from vllm import SamplingParams
 from leap.core import Action, Table
 from leap.core.actions import REGISTRY
 from leap.generation.prompt_builder import PromptBuilder
-from leap.inference.action_grammar import (
+from leap.inference.function_constraints import (
     ActionGrammarBuilder,
     StructuredActionParser,
     StructuredSamplingParamsFactory,
     uses_xgrammar,
+)
+from leap.inference.json_constraints import (
+    JsonActionCodec,
+    JsonActionSchemaBuilder,
+    JsonSchemaSamplingParamsFactory,
+    available_json_actions,
+    uses_json_operations,
+    uses_json_schema,
 )
 from leap.inference.legacy.constraints import (
     create_action_only_constraint_processor,
@@ -81,6 +89,7 @@ class SamplingLayer:
     def __init__(self, config: SamplingConfig):
         self.config = config
         self.grammar_builder = ActionGrammarBuilder()
+        self.json_schema_builder = JsonActionSchemaBuilder()
 
     def transform_context(self, table: Table, action_history: List[str], sample_idx: int) -> tuple[Table, List[str]]:
         """
@@ -118,8 +127,11 @@ class SamplingLayer:
         Returns:
             List of available action names
         """
+        if worker is not None and uses_json_operations(worker):
+            return available_json_actions(action_history, use_global_constraints=worker.use_global_constraints)
+
         if worker is not None and uses_xgrammar(worker):
-            from leap.inference.action_grammar import available_actions as grammar_available_actions
+            from leap.inference.function_constraints import available_actions as grammar_available_actions
 
             return grammar_available_actions(action_history, use_global_constraints=worker.use_global_constraints)
 
@@ -297,8 +309,8 @@ class SamplingLayer:
             n_valid=len(valid_candidates),
             winner_votes=winner_votes,
             total_votes=len(valid_candidates),
-            candidate_actions=[c.to_string() for c in candidates],
-            valid_actions=[c.to_string() for c in valid_candidates],
+            candidate_actions=[JsonActionCodec.dumps(c) if uses_json_operations(worker) else c.to_string() for c in candidates],
+            valid_actions=[JsonActionCodec.dumps(c) if uses_json_operations(worker) else c.to_string() for c in valid_candidates],
             fallback_reason=fallback_reason,
         )
 
@@ -427,8 +439,8 @@ class SamplingLayer:
             n_valid=len(valid_candidates),
             winner_votes=winner_votes,
             total_votes=len(valid_candidates),
-            candidate_actions=[c.to_string() for c in args_candidates],
-            valid_actions=[c.to_string() for c in valid_candidates],
+            candidate_actions=[JsonActionCodec.dumps(c) if uses_json_operations(worker) else c.to_string() for c in args_candidates],
+            valid_actions=[JsonActionCodec.dumps(c) if uses_json_operations(worker) else c.to_string() for c in valid_candidates],
             fallback_reason=fallback_reason,
         )
 
@@ -473,7 +485,22 @@ class SamplingLayer:
                 )
 
                 # Generate single action with this prompt
-                if uses_xgrammar(worker):
+                if uses_json_schema(worker):
+                    spec = self.json_schema_builder.build_spec(
+                        table=modified_table,
+                        action_history=modified_history,
+                        use_global_constraints=worker.use_global_constraints,
+                        phase="single_step",
+                    )
+                    schema = self.json_schema_builder.build_single_step_schema(spec)
+                    sampling_params = SamplingParams(
+                        temperature=0.7,
+                        max_tokens=300,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        n=1,
+                        **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
+                    )
+                elif uses_xgrammar(worker):
                     spec = self.grammar_builder.build_spec(
                         table=modified_table,
                         action_history=modified_history,
@@ -526,11 +553,12 @@ class SamplingLayer:
                     response_text = final_result.outputs[0].text.strip()
                     # DEBUG: Print response
                     print(f"\n[RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
-                    action = (
-                        StructuredActionParser.parse_single_step(response_text, modified_table)
-                        if uses_xgrammar(worker)
-                        else Action.parse(response_text)
-                    )
+                    if uses_json_operations(worker):
+                        action = JsonActionCodec.parse_single_step(response_text, modified_table)
+                    elif uses_xgrammar(worker):
+                        action = StructuredActionParser.parse_single_step(response_text, modified_table)
+                    else:
+                        action = Action.parse(response_text)
                     return action
                 return None
             except Exception as e:
@@ -563,7 +591,22 @@ class SamplingLayer:
         """Generate N action types for two-phase sampling."""
         step_id = f"{request_id}_action_step{step}"
 
-        if uses_xgrammar(worker):
+        if uses_json_schema(worker):
+            spec = self.json_schema_builder.build_spec(
+                table=table,
+                action_history=action_history,
+                use_global_constraints=worker.use_global_constraints,
+                phase="action",
+            )
+            schema = self.json_schema_builder.build_action_schema(spec)
+            sampling_params = SamplingParams(
+                temperature=temperature,
+                max_tokens=60,
+                stop_token_ids=[worker.tokenizer.eos_token_id],
+                n=n,
+                **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
+            )
+        elif uses_xgrammar(worker):
             spec = self.grammar_builder.build_spec(
                 table=table,
                 action_history=action_history,
@@ -615,11 +658,13 @@ class SamplingLayer:
                 response_text = output.text.strip()
                 # DEBUG: Print Phase 1 response
                 # print(f"\n[PHASE 1 RESPONSE | {request_id} step={step}]\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
-                action_name = (
-                    StructuredActionParser.parse_action_name(response_text)
-                    if uses_xgrammar(worker)
-                    else Action.parse_name_only(response_text)
-                )
+                if uses_json_operations(worker):
+                    allowed = self._get_available_actions(action_history, worker)
+                    action_name = JsonActionCodec.parse_action_name(response_text, allowed_actions=allowed)
+                elif uses_xgrammar(worker):
+                    action_name = StructuredActionParser.parse_action_name(response_text)
+                else:
+                    action_name = Action.parse_name_only(response_text)
                 if action_name:
                     action_types.append(action_name)
 
@@ -667,7 +712,23 @@ class SamplingLayer:
                 step_id = f"{request_id}_args_step{step}_sample{sample_idx}"
 
                 # Generate single argument set
-                if uses_xgrammar(worker):
+                if uses_json_schema(worker):
+                    spec = self.json_schema_builder.build_spec(
+                        table=modified_table,
+                        action_history=modified_history,
+                        use_global_constraints=worker.use_global_constraints,
+                        phase="arguments",
+                        selected_action=action_name,
+                    )
+                    schema = self.json_schema_builder.build_arguments_schema(spec)
+                    sampling_params = SamplingParams(
+                        temperature=temperature,
+                        max_tokens=300,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        n=1,
+                        **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
+                    )
+                elif uses_xgrammar(worker):
                     spec = self.grammar_builder.build_spec(
                         table=modified_table,
                         action_history=modified_history,
@@ -724,6 +785,22 @@ class SamplingLayer:
                     args_text = final_result.outputs[0].text.strip()
 
                     print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_text}\n{'=' * 80}\n")  # noqa: E501
+
+                    if uses_json_operations(worker):
+                        validation_table = None if action_name == "add_column" else modified_table
+                        action = JsonActionCodec.parse_arguments(args_text, action_name, validation_table)
+                        if action and action.name == "add_column":
+                            action = await self._extend_add_column_per_row(
+                                action=action,
+                                table=modified_table,
+                                prompt_builder=prompt_builder,
+                                worker=worker,
+                                step_id=step_id,
+                                request_id=request_id,
+                                step=step,
+                                explanation=args_text,
+                            )
+                        return action
 
                     if uses_xgrammar(worker):
                         return StructuredActionParser.parse_arguments(args_text, action_name, modified_table)

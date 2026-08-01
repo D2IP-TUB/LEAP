@@ -69,6 +69,23 @@ def test_build_job_config_uses_existing_generation_strategy_flag(tmp_path):
     assert direct["generation"]["use_constraints"] is False
 
 
+@pytest.mark.parametrize(
+    ("mode", "strategy", "constrained"),
+    [
+        ("json_iterative", "iterative", False),
+        ("constrained_json_iterative", "iterative", True),
+        ("json_cot", "cot", False),
+        ("constrained_json_cot", "cot", True),
+    ],
+)
+def test_build_job_config_supports_json_modes(tmp_path, mode, strategy, constrained):
+    _, base_config = _base_config(tmp_path)
+    config = build_job_config(base_config, model="model/b", mode=mode, max_examples=10)
+    assert config["generation"]["output_format"] == "json"
+    assert config["generation"]["strategy"] == strategy
+    assert config["generation"]["use_constraints"] is constrained
+
+
 def test_load_experiment_spec_rejects_unknown_mode(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     base_path, _ = _base_config(tmp_path)

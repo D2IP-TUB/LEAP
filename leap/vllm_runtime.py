@@ -77,6 +77,17 @@ def load_generation_runtime_settings(config_path: Path) -> tuple[bool, str]:
     return use_constraints, load_constraint_backend(config_path)
 
 
+def load_output_format(config_path: Path) -> str:
+    config = _load_yaml(config_path)
+    generation = config.get("generation") or {}
+    output_format = generation.get("output_format", "function")
+    if output_format not in {"function", "json"}:
+        raise ValueError(f"{config_path}: generation.output_format must be 'function' or 'json'.")
+    if load_constraint_backend(config_path) == LEGACY_BACKEND:
+        return "function"
+    return output_format
+
+
 def resolve_experiment_base_config(spec_path: Path, project_root: Path | None = None) -> Path:
     """Resolve an experiment specification's base config like the runner does."""
     project_root = (project_root or Path.cwd()).resolve()
@@ -92,17 +103,25 @@ def resolve_experiment_base_config(spec_path: Path, project_root: Path | None = 
     return (project_root / path).resolve()
 
 
-def runtime_for_generation(*, use_constraints: bool, constraint_backend: str) -> VLLMRuntime:
+def runtime_for_generation(*, use_constraints: bool, constraint_backend: str, output_format: str = "function") -> VLLMRuntime:
     """Select V0 only when the legacy logits processor will actually be used."""
     if constraint_backend not in SUPPORTED_BACKENDS:
         raise ValueError(f"Unsupported constraint backend: {constraint_backend!r}")
-    backend = LEGACY_BACKEND if use_constraints and constraint_backend == LEGACY_BACKEND else MODERN_BACKEND
+    if output_format not in {"function", "json"}:
+        raise ValueError(f"Unsupported output format: {output_format!r}")
+    if constraint_backend == LEGACY_BACKEND:
+        output_format = "function"
+    backend = LEGACY_BACKEND if output_format == "function" and use_constraints and constraint_backend == LEGACY_BACKEND else MODERN_BACKEND
     return RUNTIMES[backend]
 
 
 def runtime_for_config(config_path: Path) -> VLLMRuntime:
     use_constraints, constraint_backend = load_generation_runtime_settings(config_path)
-    return runtime_for_generation(use_constraints=use_constraints, constraint_backend=constraint_backend)
+    return runtime_for_generation(
+        use_constraints=use_constraints,
+        constraint_backend=constraint_backend,
+        output_format=load_output_format(config_path),
+    )
 
 
 def runtime_for_experiment(spec_path: Path, project_root: Path | None = None) -> VLLMRuntime:
@@ -168,9 +187,9 @@ def ensure_vllm_runtime(runtime: VLLMRuntime, argv: list[str] | None = None, pro
     os.execvpe(uv, command, child_env)
 
 
-def validate_installed_runtime(*, use_constraints: bool, constraint_backend: str) -> VLLMRuntime:
+def validate_installed_runtime(*, use_constraints: bool, constraint_backend: str, output_format: str = "function") -> VLLMRuntime:
     """Fail early when application configuration and installed vLLM disagree."""
-    runtime = runtime_for_generation(use_constraints=use_constraints, constraint_backend=constraint_backend)
+    runtime = runtime_for_generation(use_constraints=use_constraints, constraint_backend=constraint_backend, output_format=output_format)
     installed = installed_vllm_version()
     if not version_matches(runtime, installed) or os.environ.get("VLLM_USE_V1") != runtime.use_v1:
         raise RuntimeError(
@@ -182,11 +201,20 @@ def validate_installed_runtime(*, use_constraints: bool, constraint_backend: str
     return runtime
 
 
-def runtime_metadata(constraint_backend: str | None = None, *, use_constraints: bool | None = None) -> dict[str, Any]:
+def runtime_metadata(
+    constraint_backend: str | None = None,
+    *,
+    use_constraints: bool | None = None,
+    output_format: str = "function",
+) -> dict[str, Any]:
     """Return reproducibility metadata without requiring vLLM to be importable."""
     runtime = None
     if constraint_backend is not None and use_constraints is not None:
-        runtime = runtime_for_generation(use_constraints=use_constraints, constraint_backend=constraint_backend)
+        runtime = runtime_for_generation(
+            use_constraints=use_constraints,
+            constraint_backend=constraint_backend,
+            output_format=output_format,
+        )
     if runtime is None:
         runtime_name = os.environ.get(RUNTIME_ENV_VAR)
         runtime = next((candidate for candidate in RUNTIMES.values() if candidate.name == runtime_name), None)
@@ -194,6 +222,7 @@ def runtime_metadata(constraint_backend: str | None = None, *, use_constraints: 
         "runtime": runtime.name if runtime else os.environ.get(RUNTIME_ENV_VAR, "unknown"),
         "constraint_backend": constraint_backend,
         "use_constraints": use_constraints,
+        "output_format": output_format,
         "vllm_version": installed_vllm_version(),
         "vllm_version_spec": runtime.version_spec if runtime else None,
         "engine": runtime.engine if runtime else None,

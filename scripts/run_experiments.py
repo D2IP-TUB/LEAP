@@ -19,7 +19,15 @@ from tqdm.auto import tqdm
 
 from leap.vllm_runtime import BOOTSTRAPPED_ENV_VAR, ensure_vllm_runtime, runtime_for_experiment, runtime_metadata
 
-VALID_MODES = {"cot", "constrained_cot", "direct_query"}
+VALID_MODES = {
+    "cot",
+    "constrained_cot",
+    "direct_query",
+    "json_iterative",
+    "constrained_json_iterative",
+    "json_cot",
+    "constrained_json_cot",
+}
 DEFAULT_SPEC_PATH = Path("configs/experiments.example.yaml")
 LOGGER = logging.getLogger("leap.experiments")
 
@@ -181,14 +189,22 @@ def build_job_config(base_config: dict[str, Any], *, model: str, mode: str, max_
         generation["strategy"] = "cot"
         generation["use_constraints"] = False
         generation["use_global_constraints"] = False
+        generation["output_format"] = "function"
     elif mode == "constrained_cot":
         generation["strategy"] = "cot"
         generation["use_constraints"] = True
         generation["use_global_constraints"] = False
+        generation["output_format"] = "function"
     elif mode == "direct_query":
         generation["strategy"] = "direct_query"
         generation["use_constraints"] = False
         generation["use_global_constraints"] = False
+        generation["output_format"] = "function"
+    elif mode in {"json_iterative", "constrained_json_iterative", "json_cot", "constrained_json_cot"}:
+        generation["strategy"] = "iterative" if mode.endswith("json_iterative") else "cot"
+        generation["use_constraints"] = mode.startswith("constrained_")
+        generation["use_global_constraints"] = False
+        generation["output_format"] = "json"
     else:
         raise ValueError(f"Unknown experiment mode: {mode}")
 

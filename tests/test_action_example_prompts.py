@@ -184,7 +184,9 @@ def test_prompt_assets_are_split_by_workflow():
     prompt_dir = Path(__file__).parents[1] / "configs" / "prompts"
     assert {path.name for path in prompt_dir.glob("*.yaml")} == {
         "iterative.yaml",
+        "iterative_json.yaml",
         "cot.yaml",
+        "cot_json.yaml",
         "direct_query.yaml",
     }
     assert not (prompt_dir.parent / "action_examples.yaml").exists()

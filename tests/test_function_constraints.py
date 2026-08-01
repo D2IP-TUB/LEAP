@@ -4,7 +4,7 @@ from leap.config.loader import _build_generation_config
 from leap.core import Table
 from leap.core.actions import REGISTRY
 from leap.generation.sampling import SamplingConfig
-from leap.inference.action_grammar import (
+from leap.inference.function_constraints import (
     ActionGrammarBuilder,
     StructuredActionParser,
     StructuredSamplingParamsFactory,
@@ -31,6 +31,35 @@ def test_default_generation_config_uses_legacy_backend_for_old_configs():
     )
 
     assert config.constraint_backend == "legacy_state_machine"
+    assert config.output_format == "function"
+
+
+def test_generation_config_accepts_constrained_json_add_column():
+    config = _build_generation_config(
+        {"use_constraints": True, "constraint_backend": "xgrammar", "output_format": "json"},
+        ["select_row", "add_column", "end"],
+        SamplingConfig(),
+    )
+    assert config.output_format == "json"
+
+
+@pytest.mark.parametrize("use_constraints", [False, True])
+def test_legacy_backend_forces_function_output_format(use_constraints):
+    config = _build_generation_config(
+        {
+            "use_constraints": use_constraints,
+            "constraint_backend": "legacy_state_machine",
+            "output_format": "json",
+        },
+        ["select_row", "end"],
+        SamplingConfig(),
+    )
+    assert config.output_format == "function"
+
+
+def test_generation_config_rejects_unknown_output_format():
+    with pytest.raises(ValueError, match="output_format"):
+        _build_generation_config({"output_format": "xml"}, ["end"], SamplingConfig())
 
 
 def test_generation_config_rejects_add_column_for_xgrammar():

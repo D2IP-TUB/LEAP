@@ -11,6 +11,11 @@ modes:
   - direct_query
   - constrained_cot
   - cot
+  # JSON variants also available:
+  # - json_iterative
+  # - constrained_json_iterative
+  # - json_cot
+  # - constrained_json_cot
 repeats: 3
 max_examples: 500
 output_root: results/experiments

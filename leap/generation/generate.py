@@ -1,11 +1,19 @@
 from vllm import SamplingParams
 
 from leap.core import Action, Table
-from leap.inference.action_grammar import (
+from leap.inference.function_constraints import (
     ActionGrammarBuilder,
     StructuredActionParser,
     StructuredSamplingParamsFactory,
     uses_xgrammar,
+)
+from leap.inference.json_constraints import (
+    JsonActionCodec,
+    JsonActionSchemaBuilder,
+    JsonSchemaSamplingParamsFactory,
+    available_json_actions,
+    uses_json_operations,
+    uses_json_schema,
 )
 from leap.inference.legacy.constraints import (
     create_action_only_constraint_processor,
@@ -30,7 +38,22 @@ async def generate_single_action(worker, prompt, table: Table, request_id, state
             # Get global constraints setting from worker's generation config
             use_global_constraints = worker.use_global_constraints
 
-            if uses_xgrammar(worker):
+            if uses_json_schema(worker):
+                builder = JsonActionSchemaBuilder()
+                spec = builder.build_spec(
+                    table=table,
+                    action_history=action_history,
+                    use_global_constraints=use_global_constraints,
+                    phase="single_step",
+                )
+                schema = builder.build_single_step_schema(spec)
+                sampling_params = SamplingParams(
+                    temperature=0.7,
+                    max_tokens=300,
+                    stop_token_ids=[worker.tokenizer.eos_token_id],
+                    **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
+                )
+            elif uses_xgrammar(worker):
                 builder = ActionGrammarBuilder()
                 spec = builder.build_spec(
                     table=table,
@@ -99,7 +122,22 @@ async def generate_action_selection(
     )
 
     try:
-        if uses_xgrammar(worker):
+        if uses_json_schema(worker):
+            builder = JsonActionSchemaBuilder()
+            spec = builder.build_spec(
+                table=table,
+                action_history=action_history,
+                use_global_constraints=worker.use_global_constraints,
+                phase="action",
+            )
+            schema = builder.build_action_schema(spec)
+            sampling_params = SamplingParams(
+                temperature=temperature,
+                max_tokens=60,
+                stop_token_ids=[worker.tokenizer.eos_token_id],
+                **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
+            )
+        elif uses_xgrammar(worker):
             builder = ActionGrammarBuilder()
             spec = builder.build_spec(
                 table=table,
@@ -137,6 +175,9 @@ async def generate_action_selection(
             )
 
         action_text = await worker.generate_text(prompt, step_id, sampling_params)
+        if uses_json_operations(worker):
+            allowed = available_json_actions(action_history, use_global_constraints=worker.use_global_constraints)
+            return JsonActionCodec.parse_action_name(action_text, allowed_actions=allowed)
         return StructuredActionParser.parse_action_name(action_text) if uses_xgrammar(worker) else Action.parse_name_only(action_text)
 
     except Exception as e:
@@ -177,7 +218,23 @@ async def generate_action_arguments(
             stop_token_ids=[worker.tokenizer.eos_token_id],
             stop=["\n", "Next", "Step"],
         )
-        if uses_xgrammar(worker):
+        if uses_json_schema(worker):
+            builder = JsonActionSchemaBuilder()
+            spec = builder.build_spec(
+                table=table,
+                action_history=action_history,
+                use_global_constraints=worker.use_global_constraints,
+                phase="arguments",
+                selected_action=action_name,
+            )
+            schema = builder.build_arguments_schema(spec)
+            sampling_params = SamplingParams(
+                temperature=temperature,
+                max_tokens=300,
+                stop_token_ids=[worker.tokenizer.eos_token_id],
+                **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
+            )
+        elif uses_xgrammar(worker):
             builder = ActionGrammarBuilder()
             spec = builder.build_spec(
                 table=table,
@@ -195,6 +252,9 @@ async def generate_action_arguments(
             )
 
         args_text = await worker.generate_text(prompt, step_id, sampling_params)
+        if uses_json_operations(worker):
+            action = JsonActionCodec.parse_arguments(args_text, action_name, table)
+            return list(action.arguments) if action else None
         if uses_xgrammar(worker):
             action = StructuredActionParser.parse_arguments(args_text, action_name, table)
             return list(action.arguments) if action else None

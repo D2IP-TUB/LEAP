@@ -1,0 +1,15 @@
+action_instruction: |
+  Return only a JSON object containing the selected action, for example {"action":"select_row"}. Do not include arguments or explanation.
+argument_instructions:
+  select_row: 'Return only a JSON object such as {"rows":["row 0","row 2"]}. Use {"rows":["*"]} to select all rows.'
+  select_column: 'Return only a JSON object such as {"columns":["Name","Points"]}.'
+  add_column: 'Return only a JSON object such as {"column":"Country","values":["ESP","ITA"]}.'
+  group_by: 'Return only a JSON object such as {"column":"Country"}.'
+  sort_by: 'Return only a JSON object such as {"column":"Year","order":"desc"}. Order must be "asc" or "desc".'
+operation_shapes:
+  select_row: '{"action":"select_row","rows":["row 0","row 2"]}'
+  select_column: '{"action":"select_column","columns":["Name","Points"]}'
+  add_column: '{"action":"add_column","column":"Country","values":["ESP","ITA"]}'
+  group_by: '{"action":"group_by","column":"Country"}'
+  sort_by: '{"action":"sort_by","column":"Year","order":"desc"}'
+  end: '{"action":"end"}'

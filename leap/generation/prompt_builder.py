@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
-from leap.core import Table
+from leap.core import Action, Table
 from leap.core.actions import REGISTRY
 from leap.generation.action_examples import ActionPromptBuilder, PromptCatalog
+from leap.inference.json_constraints import JsonActionCodec, available_json_actions
 
 
 @dataclass
@@ -40,11 +43,15 @@ class PromptBuilder:
         cot_settings: CotPromptSettings | None = None,
         use_action_examples: bool = True,
         prompt_catalog: PromptCatalog | None = None,
+        output_format: str = "function",
     ):
         self.tokenizer = tokenizer
         self.is_instruct = is_instruct
         self.iterative_settings = iterative_settings or IterativePromptSettings()
         self.cot_settings = cot_settings or CotPromptSettings()
+        if output_format not in {"function", "json"}:
+            raise ValueError("output_format must be 'function' or 'json'")
+        self.output_format = output_format
 
         self.prompt_catalog = prompt_catalog or PromptCatalog()
 
@@ -127,11 +134,16 @@ class PromptBuilder:
             excluded_actions=excluded_actions,
             use_global_constraints=use_global_constraints,
         )
+        if self.output_format == "json":
+            available_names = available_json_actions(action_history, use_global_constraints=use_global_constraints)
+            available_names = [name for name in available_names if name not in excluded_actions]
+            action_descriptions = "\n".join(f"- {name}: {REGISTRY.get(name).get_description()}" for name in available_names)
+            actions_text = "\n".join(self.prompt_catalog.iterative_json["operation_shapes"][name] for name in available_names)
 
         messages = [
             {
                 "role": "system",
-                "content": self.prompt_catalog.iterative_system(add_column_available=add_column_available),
+                "content": self._format_system_for_output(self.prompt_catalog.iterative_system(add_column_available=add_column_available)),
             }
         ]
         if self.action_examples is not None:
@@ -148,15 +160,30 @@ class PromptBuilder:
                     }
                 )
                 answer = example.answer if add_column_available else example.answer_without_add_column
+                if self.output_format == "json":
+                    answer = self._chain_to_json(answer)
                 messages.append({"role": "assistant", "content": answer})
 
-        history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
+        if self.output_format == "json":
+            history = JsonActionCodec.history_json(action_history) if action_history else "[]"
+        else:
+            history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
         available_operations = f"{action_descriptions}\n{actions_text}".strip()
+        current_template = self.prompt_catalog.iterative_template("current_turn")
+        if self.output_format == "json":
+            marker = (
+                "Return only the single next operation, including all arguments. "
+                "Do not return an operation chain or an explanation.\nNext operation:"
+            )
+            current_template = current_template.replace(
+                marker,
+                self.prompt_catalog.iterative_json["instruction"] + "\nNext JSON operation:",
+            )
         messages.append(
             {
                 "role": "user",
                 "content": self.prompt_catalog.render(
-                    self.prompt_catalog.iterative_template("current_turn"),
+                    current_template,
                     table=table_str,
                     question=question,
                     action_history=history,
@@ -195,9 +222,44 @@ class PromptBuilder:
         if not REGISTRY.is_enabled("add_column"):
             return False
         return not (
-            getattr(worker, "use_constraints", False) is True
+            getattr(worker, "output_format", "function") != "json"
+            and getattr(worker, "use_constraints", False) is True
             and getattr(worker, "constraint_backend", "legacy_state_machine") == "xgrammar"
         )
+
+    def _format_system_for_output(self, text: str) -> str:
+        if self.output_format != "json":
+            return text
+
+        def replace_call(match: re.Match[str]) -> str:
+            action = Action.parse(match.group(0))
+            if action:
+                return JsonActionCodec.dumps(action)
+            name = match.group(0).split("(", 1)[0].removeprefix("f_")
+            return self.prompt_catalog.cot_json["operation_shapes"].get(name, match.group(0))
+
+        text = re.sub(r"f_[a-z_]+\([^\n]*\)", replace_call, text)
+        for name, shape in self.prompt_catalog.cot_json["operation_shapes"].items():
+            text = text.replace(f"f_{name}", shape)
+        return (
+            text.replace("complete function call", "complete JSON operation object")
+            .replace("function name or outer parentheses", "action field")
+            .replace("function name", "action field")
+        )
+
+    @staticmethod
+    def _chain_to_json(answer: str) -> str:
+        actions = [Action.parse(part.strip()) for part in answer.split("->")]
+        if not actions or any(action is None for action in actions):
+            raise ValueError(f"Invalid function-chain prompt example: {answer!r}")
+        return json.dumps([JsonActionCodec.to_dict(action) for action in actions], ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _argument_answer_to_json(action_name: str, answer: str) -> str:
+        action = Action.parse(f"{action_name}({answer})")
+        if action is None:
+            raise ValueError(f"Invalid {action_name} prompt example: {answer!r}")
+        return JsonActionCodec.dumps(action, include_action=False)
 
     @classmethod
     def _excluded_actions(cls, worker) -> set[str]:
@@ -226,13 +288,19 @@ class PromptBuilder:
         use_global_constraints: bool,
     ) -> str:
         """Build the user-message body for an action-selection turn."""
-        history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
-        actions_text = REGISTRY.get_prompt_text_cot(
-            action_history,
-            exclude_terminating_on_first=True,
-            excluded_actions=excluded_actions,
-            use_global_constraints=use_global_constraints,
-        )
+        if self.output_format == "json":
+            history = JsonActionCodec.history_json(action_history) if action_history else "[]"
+            names = available_json_actions(action_history, use_global_constraints=use_global_constraints)
+            actions_text = ", ".join(json.dumps({"action": name}, separators=(",", ":")) for name in names if name not in excluded_actions)
+            question_suffix = self.prompt_catalog.cot_json["action_instruction"]
+        else:
+            history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
+            actions_text = REGISTRY.get_prompt_text_cot(
+                action_history,
+                exclude_terminating_on_first=True,
+                excluded_actions=excluded_actions,
+                use_global_constraints=use_global_constraints,
+            )
         return self.prompt_catalog.render(
             self.prompt_catalog.cot_template("action_selection_turn"),
             table=table_str,
@@ -246,13 +314,22 @@ class PromptBuilder:
     def _build_action_selection_example_message(self, example, excluded_actions: set[str], use_global_constraints: bool) -> str:
         """Build the user-message content for a single few-shot action-selection example."""
         action_history = example.action_history or []
-        example_actions_text = REGISTRY.get_prompt_text_cot(
-            action_history,
-            exclude_terminating_on_first=True,
-            excluded_actions=excluded_actions,
-            use_global_constraints=use_global_constraints,
-        )
-        history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
+        if self.output_format == "json":
+            names = available_json_actions(action_history, use_global_constraints=use_global_constraints)
+            example_actions_text = ", ".join(
+                json.dumps({"action": name}, separators=(",", ":")) for name in names if name not in excluded_actions
+            )
+            history = JsonActionCodec.history_json(action_history) if action_history else "[]"
+            question_suffix = self.prompt_catalog.cot_json["action_instruction"]
+        else:
+            example_actions_text = REGISTRY.get_prompt_text_cot(
+                action_history,
+                exclude_terminating_on_first=True,
+                excluded_actions=excluded_actions,
+                use_global_constraints=use_global_constraints,
+            )
+            history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
+            question_suffix = ""
         return self.prompt_catalog.render(
             self.prompt_catalog.cot_template("action_selection_turn"),
             table=example.format_table_for_prompt(),
@@ -260,7 +337,7 @@ class PromptBuilder:
             action_history=history,
             available_label="Available actions",
             available_actions=example_actions_text,
-            question_suffix="",
+            question_suffix=question_suffix,
         )
 
     def build_cot_action_prompt(
@@ -314,12 +391,19 @@ class PromptBuilder:
         add_column_available = not excluded_actions
         if not add_column_available:
             system = self._remove_add_column_rule(system)
+        if self.output_format == "json":
+            system = self._format_system_for_output(system) + "\n\n" + self.prompt_catalog.cot_json["action_instruction"]
         messages = [{"role": "system", "content": system}]
 
         for example in examples:
             answer = example.answer if add_column_available else example.answer_without_add_column
             if not answer:
                 continue
+            if self.output_format == "json":
+                first_action = Action.parse(answer.split("->", 1)[0].strip())
+                if first_action is None:
+                    raise ValueError(f"Invalid action-selection prompt example: {answer!r}")
+                answer = json.dumps({"action": first_action.name}, separators=(",", ":"))
             messages.append(
                 {
                     "role": "user",
@@ -357,6 +441,10 @@ class PromptBuilder:
         instruction = self.prompt_catalog.cot_examples_manager.get_system_rules(action_name)
         examples = self.prompt_catalog.cot_examples_manager.get_examples(action_name)
 
+        if self.output_format == "json":
+            instruction = self._format_system_for_output(instruction or "")
+            instruction += "\n\n" + self.prompt_catalog.cot_json["argument_instructions"][action_name]
+
         if instruction:
             messages.append({"role": "system", "content": instruction})
 
@@ -367,7 +455,10 @@ class PromptBuilder:
                 question=example.question,
             )
             messages.append({"role": "user", "content": example_prompt})
-            messages.append({"role": "assistant", "content": example.answer})
+            example_answer = example.answer
+            if self.output_format == "json":
+                example_answer = self._argument_answer_to_json(action_name, example_answer)
+            messages.append({"role": "assistant", "content": example_answer})
 
         if action_name == "add_column" and len(table.rows) > 3:
             table = Table(columns=list(table.columns), rows=[list(r) for r in table.rows[:3]])

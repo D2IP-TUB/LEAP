@@ -55,6 +55,7 @@ class GenerationConfig:
     use_global_constraints: bool
     strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
     constraint_backend: str = "legacy_state_machine"  # "xgrammar" or "legacy_state_machine"
+    output_format: str = "function"  # "function" or "json"
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
     enabled_actions: tuple = None  # Tuple of enabled action names (immutable for frozen dataclass)
 
@@ -264,12 +265,23 @@ def _load_app_config(config_path: Path) -> Dict[str, Any]:
 def _build_generation_config(generation_section: Dict[str, Any], enabled_actions, sampling_config) -> GenerationConfig:
     use_constraints = generation_section.get("use_constraints", False)
     constraint_backend = generation_section.get("constraint_backend", "legacy_state_machine")
+    output_format = generation_section.get("output_format", "function")
 
     if constraint_backend not in {"xgrammar", "legacy_state_machine"}:
         raise ValueError("generation.constraint_backend must be either 'xgrammar' or 'legacy_state_machine'.")
+    if output_format not in {"function", "json"}:
+        raise ValueError("generation.output_format must be either 'function' or 'json'.")
+    if constraint_backend == "legacy_state_machine":
+        output_format = "function"
 
     enabled_actions_tuple = tuple(enabled_actions) if enabled_actions else None
-    if use_constraints and constraint_backend == "xgrammar" and enabled_actions_tuple and "add_column" in enabled_actions_tuple:
+    if (
+        output_format == "function"
+        and use_constraints
+        and constraint_backend == "xgrammar"
+        and enabled_actions_tuple
+        and "add_column" in enabled_actions_tuple
+    ):
         raise ValueError("add_column is not supported when generation.constraint_backend is 'xgrammar'.")
 
     return GenerationConfig(
@@ -277,6 +289,7 @@ def _build_generation_config(generation_section: Dict[str, Any], enabled_actions
         use_global_constraints=generation_section.get("use_global_constraints", False),
         strategy=generation_section.get("strategy", "cot"),
         constraint_backend=constraint_backend,
+        output_format=output_format,
         sampling=sampling_config,
         enabled_actions=enabled_actions_tuple,
     )

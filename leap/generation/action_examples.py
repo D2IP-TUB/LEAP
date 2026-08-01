@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv as csv_module
 import io
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
@@ -25,6 +26,8 @@ PROMPTS_DIR = Path(__file__).parent.parent.parent / "configs" / "prompts"
 COT_PROMPT_PATH = PROMPTS_DIR / "cot.yaml"
 ITERATIVE_PROMPT_PATH = PROMPTS_DIR / "iterative.yaml"
 DIRECT_QUERY_PROMPT_PATH = PROMPTS_DIR / "direct_query.yaml"
+ITERATIVE_JSON_PROMPT_PATH = PROMPTS_DIR / "iterative_json.yaml"
+COT_JSON_PROMPT_PATH = PROMPTS_DIR / "cot_json.yaml"
 
 
 @dataclass(frozen=True)
@@ -337,14 +340,20 @@ class PromptCatalog:
         cot_path: Path = COT_PROMPT_PATH,
         iterative_path: Path = ITERATIVE_PROMPT_PATH,
         direct_query_path: Path = DIRECT_QUERY_PROMPT_PATH,
+        iterative_json_path: Path = ITERATIVE_JSON_PROMPT_PATH,
+        cot_json_path: Path = COT_JSON_PROMPT_PATH,
     ) -> None:
         self.cot_path = cot_path
         self.iterative_path = iterative_path
         self.direct_query_path = direct_query_path
+        self.iterative_json_path = iterative_json_path
+        self.cot_json_path = cot_json_path
 
         self.cot = self._load_yaml(cot_path)
         self.iterative = self._load_yaml(iterative_path)
         self.direct_query = self._load_yaml(direct_query_path)
+        self.iterative_json = self._load_yaml(iterative_json_path)
+        self.cot_json = self._load_yaml(cot_json_path)
         self._validate()
 
         self.cot_examples_manager = ActionExamplesManager(cot_path, examples_data=self.cot)
@@ -368,6 +377,27 @@ class PromptCatalog:
             raise ValueError(f"Missing prompt keys in {location}: {sorted(missing)}")
 
     def _validate(self) -> None:
+        self._require_keys(
+            self.iterative_json,
+            {"instruction", "operation_shapes"},
+            location=str(self.iterative_json_path),
+        )
+        self._require_keys(
+            self.cot_json,
+            {"action_instruction", "argument_instructions", "operation_shapes"},
+            location=str(self.cot_json_path),
+        )
+        for location, shapes in (
+            (self.iterative_json_path, self.iterative_json["operation_shapes"]),
+            (self.cot_json_path, self.cot_json["operation_shapes"]),
+        ):
+            for action_name, shape in shapes.items():
+                try:
+                    payload = json.loads(shape)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"Invalid JSON operation shape in {location}: {action_name}") from exc
+                if not isinstance(payload, dict) or payload.get("action") != action_name:
+                    raise ValueError(f"JSON operation shape for {action_name} in {location} has the wrong action field")
         self._require_keys(self.cot, {"templates", "examples"}, location=str(self.cot_path))
         self._require_keys(self.cot["templates"], self._COT_TEMPLATES, location=f"{self.cot_path}:templates")
         self._require_keys(

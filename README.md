@@ -31,6 +31,21 @@ The first run for each runtime downloads and installs its vLLM and PyTorch stack
 
 The backend/version pairing is strict. If LEAP reports a mismatch, update the lockfile with `uv lock` and retry. If an environment was interrupted or corrupted during installation, remove only the named generated environment from the error message and rerun the command. The `xgrammar` backend does not support the `add_column` action.
 
+## JSON operation mode
+
+Iterative and Chain-of-Table generation can use named JSON operation objects instead of the original `f_action(...)` protocol:
+
+```yaml
+generation:
+  strategy: cot       # or iterative
+  output_format: json
+  use_constraints: true
+```
+
+With constraints enabled, JSON mode uses vLLM JSON Schema structured outputs on the modern V1 runtime. Selecting `constraint_backend: legacy_state_machine` automatically forces `output_format: function`; JSON operation mode therefore requires the modern `xgrammar` backend setting. With constraints disabled, the same JSON prompts and strict JSON parser are used without structured decoding when `constraint_backend` is modern. The default remains `output_format: function` for backward compatibility.
+
+JSON operations use named fields, for example `{"action":"select_row","rows":["row 0"]}` and `{"action":"sort_by","column":"Year","order":"desc"}`. CoT remains two-phase: action selection emits only the `action` field, followed by a selected-action argument object.
+
 ## Developer Setup
 
 If you plan to contribute to the codebase, install the development dependencies and enable the pre-commit hooks:
