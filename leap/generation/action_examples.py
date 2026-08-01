@@ -14,11 +14,17 @@ import csv as csv_module
 import io
 from dataclasses import dataclass
 from pathlib import Path
+from string import Template
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
 from leap.core import Table
+
+PROMPTS_DIR = Path(__file__).parent.parent.parent / "configs" / "prompts"
+COT_PROMPT_PATH = PROMPTS_DIR / "cot.yaml"
+ITERATIVE_PROMPT_PATH = PROMPTS_DIR / "iterative.yaml"
+DIRECT_QUERY_PROMPT_PATH = PROMPTS_DIR / "direct_query.yaml"
 
 
 @dataclass(frozen=True)
@@ -114,19 +120,22 @@ class ActionExamplesManager:
     - Provides easy access by action name
     """
 
-    def __init__(self, examples_path: Optional[Path] = None):
+    def __init__(self, examples_path: Optional[Path] = None, examples_data: Optional[Dict[str, Any]] = None):
         """
         Initialize the examples manager.
 
         Args:
             examples_path: Path to YAML file with examples.
-                          If None, uses default: configs/action_examples.yaml
+                          If None, uses default: configs/prompts/cot.yaml
+            examples_data: Optional already-loaded YAML mapping. Used by PromptCatalog
+                           so each workflow file is read only once.
         """
         if examples_path is None:
             # Default path relative to project root
-            examples_path = Path(__file__).parent.parent.parent / "configs" / "action_examples.yaml"
+            examples_path = COT_PROMPT_PATH
 
         self.examples_path = examples_path
+        self._examples_data = examples_data
         self._examples_cache: Optional[Dict[str, List[ActionExample]]] = None
         self._system_rules_cache: Optional[Dict[str, str]] = None
         self._action_descriptions_cache: Optional[List[Dict[str, str]]] = None
@@ -173,11 +182,13 @@ class ActionExamplesManager:
         - Bare list (legacy): action_name: [example, ...]
         - Dict with optional system key: action_name: {system: "...", examples: [...]}
         """
-        if not self.examples_path.exists():
-            raise FileNotFoundError(f"Action examples file not found: {self.examples_path}")
-
-        with open(self.examples_path) as f:
-            data = yaml.safe_load(f)
+        if self._examples_data is None:
+            if not self.examples_path.exists():
+                raise FileNotFoundError(f"Action examples file not found: {self.examples_path}")
+            with open(self.examples_path) as examples_file:
+                data = yaml.safe_load(examples_file)
+        else:
+            data = self._examples_data
 
         self._examples_cache = {}
         self._system_rules_cache = {}
@@ -236,8 +247,6 @@ class ActionPromptTemplate:
             example_parts.append(example.format_table_for_prompt())
             example_parts.append("")
             example_parts.append(f"Question: {example.question}")
-            # example_parts.append("")
-            # example_parts.append(f"Arguments only for f_{self.action_name}:")
 
             examples.append("\n".join(example_parts))
             answers.append(example.answer)
@@ -273,7 +282,7 @@ class ActionPromptBuilder:
     def _build_all_templates(self):
         """Build templates for all actions (called once during init).
 
-        Instructions are sourced entirely from the "system" field in action_examples.yaml.
+        Instructions are sourced entirely from the "system" fields in cot.yaml.
         """
         for action_name in ("select_row", "select_column", "add_column", "group_by", "sort_by", "action_selection"):
             examples = self.examples_manager.get_examples(action_name)
@@ -308,3 +317,160 @@ class ActionPromptBuilder:
     def has_prompt(self, action_name: str) -> bool:
         """Check if a prompt template exists for this action."""
         return action_name in self._templates
+
+
+class PromptCatalog:
+    """Load and validate prompt assets grouped by generation workflow."""
+
+    _ITERATIVE_TEMPLATES = {"example_turn", "current_turn"}
+    _COT_TEMPLATES = {
+        "action_selection_turn",
+        "argument_turn",
+        "add_column_row_system",
+        "add_column_row_turn",
+    }
+    _DIRECT_QUERY_TEMPLATES = {"turn"}
+
+    def __init__(
+        self,
+        *,
+        cot_path: Path = COT_PROMPT_PATH,
+        iterative_path: Path = ITERATIVE_PROMPT_PATH,
+        direct_query_path: Path = DIRECT_QUERY_PROMPT_PATH,
+    ) -> None:
+        self.cot_path = cot_path
+        self.iterative_path = iterative_path
+        self.direct_query_path = direct_query_path
+
+        self.cot = self._load_yaml(cot_path)
+        self.iterative = self._load_yaml(iterative_path)
+        self.direct_query = self._load_yaml(direct_query_path)
+        self._validate()
+
+        self.cot_examples_manager = ActionExamplesManager(cot_path, examples_data=self.cot)
+        self.iterative_examples = [ActionExample.from_dict(item) for item in self.iterative["examples"]]
+        self.direct_query_examples = [ActionExample.from_dict(item) for item in self.direct_query["examples"]]
+
+    @staticmethod
+    def _load_yaml(path: Path) -> Dict[str, Any]:
+        if not path.exists():
+            raise FileNotFoundError(f"Prompt file not found: {path}")
+        with open(path) as prompt_file:
+            data = yaml.safe_load(prompt_file)
+        if not isinstance(data, dict):
+            raise ValueError(f"Prompt file must contain a mapping: {path}")
+        return data
+
+    @staticmethod
+    def _require_keys(data: Dict[str, Any], keys: set[str], *, location: str) -> None:
+        missing = keys - set(data)
+        if missing:
+            raise ValueError(f"Missing prompt keys in {location}: {sorted(missing)}")
+
+    def _validate(self) -> None:
+        self._require_keys(self.cot, {"templates", "examples"}, location=str(self.cot_path))
+        self._require_keys(self.cot["templates"], self._COT_TEMPLATES, location=f"{self.cot_path}:templates")
+        self._require_keys(
+            self.cot["examples"],
+            {"select_row", "select_column", "add_column", "group_by", "sort_by", "action_selection"},
+            location=f"{self.cot_path}:examples",
+        )
+        for section_name, section in self.cot["examples"].items():
+            self._require_keys(section, {"system", "examples"}, location=f"{self.cot_path}:{section_name}")
+            for idx, example in enumerate(section["examples"]):
+                required = {"table", "question", "answer"}
+                if section_name == "action_selection":
+                    required.add("answer_without_add_column")
+                self._require_keys(example, required, location=f"{self.cot_path}:{section_name}[{idx}]")
+
+        self._require_keys(
+            self.iterative,
+            {"templates", "variants", "examples"},
+            location=str(self.iterative_path),
+        )
+        self._require_keys(
+            self.iterative["templates"],
+            self._ITERATIVE_TEMPLATES,
+            location=f"{self.iterative_path}:templates",
+        )
+        self._require_keys(
+            self.iterative["variants"],
+            {"with_add_column", "without_add_column"},
+            location=f"{self.iterative_path}:variants",
+        )
+        for variant_name, variant in self.iterative["variants"].items():
+            self._require_keys(variant, {"system"}, location=f"{self.iterative_path}:{variant_name}")
+        for idx, example in enumerate(self.iterative["examples"]):
+            self._require_keys(
+                example,
+                {"table", "question", "answer", "answer_without_add_column"},
+                location=f"{self.iterative_path}:examples[{idx}]",
+            )
+
+        self._require_keys(
+            self.direct_query,
+            {"templates", "system", "examples"},
+            location=str(self.direct_query_path),
+        )
+        self._require_keys(
+            self.direct_query["templates"],
+            self._DIRECT_QUERY_TEMPLATES,
+            location=f"{self.direct_query_path}:templates",
+        )
+        for idx, example in enumerate(self.direct_query["examples"]):
+            self._require_keys(
+                example,
+                {"table", "question", "answer"},
+                location=f"{self.direct_query_path}:examples[{idx}]",
+            )
+
+        template_specs = (
+            (
+                self.cot_path,
+                self.cot["templates"],
+                "action_selection_turn",
+                {"table", "question", "action_history", "available_label", "available_actions", "question_suffix"},
+            ),
+            (self.cot_path, self.cot["templates"], "argument_turn", {"table", "question"}),
+            (self.cot_path, self.cot["templates"], "add_column_row_system", {"column_name"}),
+            (self.cot_path, self.cot["templates"], "add_column_row_turn", {"task_description", "row", "column_name"}),
+            (self.iterative_path, self.iterative["templates"], "example_turn", {"table", "question"}),
+            (
+                self.iterative_path,
+                self.iterative["templates"],
+                "current_turn",
+                {"table", "question", "action_history", "available_operations"},
+            ),
+            (self.direct_query_path, self.direct_query["templates"], "turn", {"table", "question"}),
+        )
+        for path, templates, name, expected in template_specs:
+            actual = self._template_identifiers(templates[name])
+            if actual != expected:
+                raise ValueError(f"Prompt template placeholders in {path}:{name} must be {sorted(expected)}, got {sorted(actual)}")
+
+    @staticmethod
+    def _template_identifiers(template: str) -> set[str]:
+        identifiers = set()
+        for match in Template.pattern.finditer(template):
+            identifier = match.group("named") or match.group("braced")
+            if identifier:
+                identifiers.add(identifier)
+        return identifiers
+
+    @staticmethod
+    def render(template: str, **values: Any) -> str:
+        """Render a strict ``string.Template`` prompt and normalize its trailing whitespace."""
+        return Template(template).substitute({key: str(value) for key, value in values.items()}).rstrip()
+
+    def cot_template(self, name: str) -> str:
+        return self.cot["templates"][name]
+
+    def iterative_template(self, name: str) -> str:
+        return self.iterative["templates"][name]
+
+    def iterative_system(self, *, add_column_available: bool) -> str:
+        variant = "with_add_column" if add_column_available else "without_add_column"
+        return self.iterative["variants"][variant]["system"].rstrip()
+
+    def direct_query_template(self, name: str) -> str:
+        return self.direct_query["templates"][name]

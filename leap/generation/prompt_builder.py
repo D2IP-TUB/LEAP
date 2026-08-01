@@ -5,7 +5,7 @@ from typing import Optional, Sequence
 
 from leap.core import Table
 from leap.core.actions import REGISTRY
-from leap.generation.action_examples import ActionPromptBuilder
+from leap.generation.action_examples import ActionPromptBuilder, PromptCatalog
 
 
 @dataclass
@@ -39,20 +39,19 @@ class PromptBuilder:
         iterative_settings: IterativePromptSettings | None = None,
         cot_settings: CotPromptSettings | None = None,
         use_action_examples: bool = True,
+        prompt_catalog: PromptCatalog | None = None,
     ):
         self.tokenizer = tokenizer
         self.is_instruct = is_instruct
         self.iterative_settings = iterative_settings or IterativePromptSettings()
         self.cot_settings = cot_settings or CotPromptSettings()
 
-        # Initialize action examples system (builds templates once)
+        self.prompt_catalog = prompt_catalog or PromptCatalog()
+
+        # Initialize CoT action examples system (builds templates once)
         self.action_examples: Optional[ActionPromptBuilder] = None
         if use_action_examples:
-            try:
-                self.action_examples = ActionPromptBuilder()
-            except FileNotFoundError:
-                # If examples file doesn't exist, fall back to old behavior
-                self.action_examples = None
+            self.action_examples = ActionPromptBuilder(self.prompt_catalog.cot_examples_manager)
 
     @staticmethod
     def _format_table(table: Table, max_chars: int, crop: bool = False) -> str:
@@ -81,31 +80,41 @@ class PromptBuilder:
         worker,
         step: int,
     ) -> str:
-        """Create a constraint-aware prompt for iterative generation."""
+        """Create a single-phase prompt with operation guidance and chain examples."""
         max_chars = self.iterative_settings.initial_table_chars if step == 0 else self.iterative_settings.step_table_chars
         table_str = self._format_table(table, max_chars)
 
-        step_prompt = f"{table_str}\n\nQuestion: {question}\n"
-        # if action_history:
-        #     step_prompt += "Actions taken so far:\n"
-        #     for idx, action in enumerate(action_history):
-        #         step_prompt += f"{idx + 1}. {action}\n"
-        #     step_prompt += "\n"
+        prompt = self._compose_iterative_prompt(
+            question=question,
+            table_str=table_str,
+            action_history=action_history,
+            worker=worker,
+        )
 
-        instruction_prompt = self._build_iterative_instruction(worker, action_history)
-
-        estimated_length = len(step_prompt) // 4
+        estimated_length = len(prompt) // 4
         if estimated_length > worker.max_model_len - self.iterative_settings.safety_margin_tokens:
             table_str = self._format_table(table, self.iterative_settings.fallback_table_chars, True)
             question_short = self._truncate_text(question, self.iterative_settings.question_truncation)
-            step_prompt = f"{table_str}\n\nQuestion: {question_short}\n"
-            instruction_prompt = self._build_iterative_instruction(worker, action_history, fallback=True)
+            prompt = self._compose_iterative_prompt(
+                question=question_short,
+                table_str=table_str,
+                action_history=action_history,
+                worker=worker,
+            )
 
-        return self._append_instruction(step_prompt, instruction_prompt)
+        return prompt
 
-    def _build_iterative_instruction(self, worker, action_history: Sequence[str] = None, fallback: bool = False) -> str:
-        """Instruction text for iterative generation."""
+    def _compose_iterative_prompt(
+        self,
+        *,
+        question: str,
+        table_str: str,
+        action_history: Sequence[str],
+        worker,
+    ) -> str:
+        """Render the complete iterative prompt for one current table state."""
         excluded_actions = self._excluded_actions(worker)
+        add_column_available = not excluded_actions
         use_global_constraints = getattr(worker, "use_global_constraints", False) is True
         action_descriptions = REGISTRY.get_action_descriptions(
             action_history,
@@ -113,19 +122,57 @@ class PromptBuilder:
             excluded_actions=excluded_actions,
             use_global_constraints=use_global_constraints,
         )
-
-        if worker.use_constraints:
-            return f"{action_descriptions}\n\nNext action: "
-
         actions_text = REGISTRY.get_prompt_text_iterative(
             action_history,
             excluded_actions=excluded_actions,
             use_global_constraints=use_global_constraints,
         )
 
-        question_prefix = "What should be the next action? " if fallback else "What should be the next action to answer this question? "
-        base = f"{action_descriptions}\n\n{question_prefix}Choose from: {actions_text}.\nNext action: "
-        return base
+        messages = [
+            {
+                "role": "system",
+                "content": self.prompt_catalog.iterative_system(add_column_available=add_column_available),
+            }
+        ]
+        if self.action_examples is not None:
+            example_template = self.prompt_catalog.iterative_template("example_turn")
+            for example in self.prompt_catalog.iterative_examples:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": self.prompt_catalog.render(
+                            example_template,
+                            table=example.format_table_for_prompt(),
+                            question=example.question,
+                        ),
+                    }
+                )
+                answer = example.answer if add_column_available else example.answer_without_add_column
+                messages.append({"role": "assistant", "content": answer})
+
+        history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
+        available_operations = f"{action_descriptions}\n{actions_text}".strip()
+        messages.append(
+            {
+                "role": "user",
+                "content": self.prompt_catalog.render(
+                    self.prompt_catalog.iterative_template("current_turn"),
+                    table=table_str,
+                    question=question,
+                    action_history=history,
+                    available_operations=available_operations,
+                ),
+            }
+        )
+        return self._serialize_messages(messages)
+
+    def _serialize_messages(self, messages) -> str:
+        if self.is_instruct:
+            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        result = ""
+        for message in messages:
+            result += message["content"] + "\n" if message["role"] == "user" else message["content"] + "\n\n"
+        return result
 
     @staticmethod
     def _append_instruction(step_prompt: str, instruction_prompt: str) -> str:
@@ -179,24 +226,22 @@ class PromptBuilder:
         use_global_constraints: bool,
     ) -> str:
         """Build the user-message body for an action-selection turn."""
-        prompt = f"{table_str}\n\n"
-        prompt += f"Question: {question}\n\n"
-        prompt += "Actions taken so far:\n"
-        if action_history:
-            for idx, action in enumerate(action_history):
-                prompt += f"{idx + 1}. {self._to_display_action(action)}\n"
-        else:
-            prompt += "None\n"
-        prompt += "\n"
+        history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
         actions_text = REGISTRY.get_prompt_text_cot(
             action_history,
             exclude_terminating_on_first=True,
             excluded_actions=excluded_actions,
             use_global_constraints=use_global_constraints,
         )
-        prompt += f"{available_label}: {actions_text}\n"
-        prompt += question_suffix
-        return prompt
+        return self.prompt_catalog.render(
+            self.prompt_catalog.cot_template("action_selection_turn"),
+            table=table_str,
+            question=question,
+            action_history=history,
+            available_label=available_label,
+            available_actions=actions_text,
+            question_suffix=question_suffix,
+        )
 
     def _build_action_selection_example_message(self, example, excluded_actions: set[str], use_global_constraints: bool) -> str:
         """Build the user-message content for a single few-shot action-selection example."""
@@ -207,17 +252,16 @@ class PromptBuilder:
             excluded_actions=excluded_actions,
             use_global_constraints=use_global_constraints,
         )
-        prompt = f"{example.format_table_for_prompt()}\n\n"
-        prompt += f"Question: {example.question}\n\n"
-        prompt += "Actions taken so far:\n"
-        if action_history:
-            for idx, action in enumerate(action_history):
-                prompt += f"{idx + 1}. {self._to_display_action(action)}\n"
-        else:
-            prompt += "None\n"
-        prompt += "\n"
-        prompt += f"Available actions: {example_actions_text}\n"
-        return prompt
+        history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
+        return self.prompt_catalog.render(
+            self.prompt_catalog.cot_template("action_selection_turn"),
+            table=example.format_table_for_prompt(),
+            question=example.question,
+            action_history=history,
+            available_label="Available actions",
+            available_actions=example_actions_text,
+            question_suffix="",
+        )
 
     def build_cot_action_prompt(
         self,
@@ -266,10 +310,7 @@ class PromptBuilder:
         if not (examples and self.is_instruct):
             return self._append_instruction("", instruction_prompt)
 
-        system = (
-            self.action_examples.examples_manager.get_system_rules("action_selection")
-            or "You are a helpful table question answering assistant"
-        )
+        system = self.action_examples.examples_manager.get_system_rules("action_selection")
         add_column_available = not excluded_actions
         if not add_column_available:
             system = self._remove_add_column_rule(system)
@@ -313,15 +354,20 @@ class PromptBuilder:
 
         messages = []
 
-        instruction = self.action_examples.get_instruction(action_name)
-        examples, example_answers = self.action_examples.get_examples(action_name)
+        instruction = self.prompt_catalog.cot_examples_manager.get_system_rules(action_name)
+        examples = self.prompt_catalog.cot_examples_manager.get_examples(action_name)
 
         if instruction:
             messages.append({"role": "system", "content": instruction})
 
-        for example, example_answer in zip(examples, example_answers):
-            messages.append({"role": "user", "content": example})
-            messages.append({"role": "assistant", "content": example_answer})
+        for example in examples:
+            example_prompt = self.prompt_catalog.render(
+                self.prompt_catalog.cot_template("argument_turn"),
+                table=example.format_table_for_prompt(),
+                question=example.question,
+            )
+            messages.append({"role": "user", "content": example_prompt})
+            messages.append({"role": "assistant", "content": example.answer})
 
         if action_name == "add_column" and len(table.rows) > 3:
             table = Table(columns=list(table.columns), rows=[list(r) for r in table.rows[:3]])
@@ -332,9 +378,11 @@ class PromptBuilder:
         if estimated_length > worker.max_model_len - self.cot_settings.args_table_chars:
             table_str = self._format_table(table, self.cot_settings.action_fallback_table_chars, True)
 
-        final_prompt = f"{table_str}\n\n"
-        final_prompt += f"Question: {question}\n\n"
-        # final_prompt += f"Arguments only for f_{action_name}:"
+        final_prompt = self.prompt_catalog.render(
+            self.prompt_catalog.cot_template("argument_turn"),
+            table=table_str,
+            question=question,
+        )
 
         messages.append({"role": "user", "content": final_prompt})
 
@@ -380,18 +428,15 @@ class PromptBuilder:
         else:
             task_description = explanation.strip()
 
-        prompt_line = f"We need to determine the value for column '{column_name}'. The value:"
-
         messages = []
 
         if self.is_instruct:
             messages.append(
                 {
                     "role": "system",
-                    "content": (
-                        f"Output only the cell value for the '{column_name}' column. "
-                        "Reply with a single word, number, or short phrase only. "
-                        "No explanation, no sentences, no punctuation at the end."
+                    "content": self.prompt_catalog.render(
+                        self.prompt_catalog.cot_template("add_column_row_system"),
+                        column_name=column_name,
                     ),
                 }
             )
@@ -399,12 +444,32 @@ class PromptBuilder:
         # One user/assistant shot per seed row
         for i, (row, value) in enumerate(zip(table.rows[:3], seed_values[:3])):
             row_csv = self._format_row_csv(table, row, i)
-            messages.append({"role": "user", "content": f"{task_description}\n\n{row_csv}\n\n{prompt_line}"})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": self.prompt_catalog.render(
+                        self.prompt_catalog.cot_template("add_column_row_turn"),
+                        task_description=task_description,
+                        row=row_csv,
+                        column_name=column_name,
+                    ),
+                }
+            )
             messages.append({"role": "assistant", "content": str(value)})
 
         # Target row — final user message
         target_csv = self._format_row_csv(table, target_row, target_row_idx)
-        messages.append({"role": "user", "content": f"{task_description}\n\n{target_csv}\n\n{prompt_line}"})
+        messages.append(
+            {
+                "role": "user",
+                "content": self.prompt_catalog.render(
+                    self.prompt_catalog.cot_template("add_column_row_turn"),
+                    task_description=task_description,
+                    row=target_csv,
+                    column_name=column_name,
+                ),
+            }
+        )
 
         if self.is_instruct:
             return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -430,25 +495,25 @@ class PromptBuilder:
         """
         messages = []
 
-        # Load examples and system prompt from YAML
-        query_examples = self.action_examples.examples_manager.get_examples("query_answer")
-        system_prompt = (
-            self.action_examples.examples_manager.get_system_rules("query_answer")
-            or "Here is the table to answer this question. Please understand the table and answer the question:"
-        )
-        messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "system", "content": self.prompt_catalog.direct_query["system"].rstrip()})
 
-        for example in query_examples:
-            example_instruction = f"{example.format_table_for_prompt()}\n\nQuestion: {example.question}\n"
+        for example in self.prompt_catalog.direct_query_examples:
+            example_instruction = self.prompt_catalog.render(
+                self.prompt_catalog.direct_query_template("turn"),
+                table=example.format_table_for_prompt(),
+                question=example.question,
+            )
             messages.append({"role": "user", "content": example_instruction})
-            # messages.append({"role": "assistant", "content": f"Answer:\n{example.answer}"})
-            messages.append({"role": "assistant", "content": f"{example.answer}"})
+            messages.append({"role": "assistant", "content": example.answer})
 
         # Add current query
         table_str = self._format_table(table, 2000)
 
-        current_instruction = f"{table_str}\n\n"
-        current_instruction += f"Question: {question}\n"
+        current_instruction = self.prompt_catalog.render(
+            self.prompt_catalog.direct_query_template("turn"),
+            table=table_str,
+            question=question,
+        )
 
         messages.append({"role": "user", "content": current_instruction})
 
