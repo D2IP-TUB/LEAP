@@ -34,6 +34,7 @@ from leap.config.loader import (
     GenerationConfig as GenerationSettings,
 )
 from leap.core import Action, InferenceRequest, InferenceResult
+from leap.extractors import build_extractors
 from leap.generation.prompt_builder import PromptBuilder
 from leap.generation.sampling import SamplingConfig, SamplingLayer
 from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
@@ -68,6 +69,7 @@ class RunOutputPaths:
     results_file: Path
     table_log_dir: Path
     accuracy_file: Path
+    extractor_accuracy_file: Path
     manifest_file: Path
     config_slug: str
     timestamp: str
@@ -151,6 +153,7 @@ def build_config_slug(app_config: AppConfig) -> str:
         "dataset": app_config.dataset,
         "run": app_config.run,
         "generation": app_config.generation,
+        "extractors": app_config.extractors,
     }
     identity_json = json.dumps(_json_safe(identity), sort_keys=True)
     config_hash = sha1(identity_json.encode("utf-8")).hexdigest()[:8]
@@ -167,6 +170,7 @@ def create_run_output_paths(app_config: AppConfig, results_root: Path | str = "r
         results_file=run_dir / "results.jsonl",
         table_log_dir=run_dir / "table_logs",
         accuracy_file=run_dir / "end_to_end_accuracy.json",
+        extractor_accuracy_file=run_dir / "extractor_accuracy.json",
         manifest_file=run_dir / "run_config.json",
         config_slug=config_slug,
         timestamp=timestamp,
@@ -197,6 +201,7 @@ def write_run_manifest(app_config: AppConfig, paths: RunOutputPaths, config_path
         "results_file": str(paths.results_file),
         "table_log_dir": str(paths.table_log_dir),
         "end_to_end_accuracy_file": str(paths.accuracy_file),
+        "extractor_accuracy_file": str(paths.extractor_accuracy_file),
         "model": _json_safe(app_config.model),
         "dataset": _json_safe(app_config.dataset),
         "run": _json_safe(app_config.run),
@@ -206,6 +211,7 @@ def write_run_manifest(app_config: AppConfig, paths: RunOutputPaths, config_path
             app_config.generation.constraint_backend,
             use_constraints=app_config.generation.use_constraints,
         ),
+        "extractors": list(app_config.extractors),
     }
     paths.manifest_file.parent.mkdir(parents=True, exist_ok=True)
     with open(paths.manifest_file, "w", encoding="utf-8") as f:
@@ -234,6 +240,7 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
                 "actions": actions,
                 "execution_accuracy": result.execution_accuracy,
                 "execution_metrics": result.execution_metrics.to_dict(),  # Use to_dict() method
+                "extractor_results": [extractor.to_dict() for extractor in (result.extractor_results or [])],
                 "sampling_metadata": [
                     {
                         "candidate_actions": m.candidate_actions,
@@ -307,9 +314,48 @@ def build_inference_requests(runtime: RuntimeContext, max_examples: int | None) 
     return requests
 
 
+def calculate_extractor_accuracy_report(results: list[InferenceResult], configured_extractors: tuple[str, ...]) -> dict[str, Any]:
+    method_accuracies = {}
+    for method in configured_extractors:
+        scores_by_request = {
+            result.request_id: extractor.accuracy
+            for result in results
+            for extractor in (result.extractor_results or [])
+            if extractor.method == method
+        }
+        method_accuracies[method] = sum(scores_by_request.values()) / len(results) if results else 0.0
+    average_accuracy = sum(method_accuracies.values()) / len(method_accuracies) if method_accuracies else 0.0
+    return {"method_accuracies": method_accuracies, "average_accuracy": average_accuracy, "examples": len(results)}
+
+
+def write_extractor_accuracy_report(report: dict[str, Any], output_file: Path | str) -> None:
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+
+
+def print_final_extractor_summary(report: dict[str, Any]) -> None:
+    examples = int(report.get("examples", 0))
+    method_accuracies = report.get("method_accuracies", {})
+
+    print(f"\n{'=' * 80}")
+    print("FINAL EXTRACTOR ACCURACY SUMMARY")
+    print(f"{'=' * 80}")
+    for method, accuracy in method_accuracies.items():
+        correct = round(float(accuracy) * examples)
+        print(f"{method}: {float(accuracy):.3f} ({float(accuracy) * 100:.1f}%) | {correct}/{examples} correct")
+    average = float(report.get("average_accuracy", 0.0))
+    print(f"Average across {len(method_accuracies)} extractors: {average:.3f} ({average * 100:.1f}%)")
+
+
 def finalize_results(
-    results: list[InferenceResult], model_settings, generation_settings: GenerationSettings, run_paths: RunOutputPaths
-) -> None:
+    results: list[InferenceResult],
+    model_settings,
+    generation_settings: GenerationSettings,
+    run_paths: RunOutputPaths,
+    app_config: AppConfig,
+) -> dict[str, Any]:
     profiler = get_aggregate_profiler()
     for result in results:
         if result.profiling_data:
@@ -322,8 +368,11 @@ def finalize_results(
     end_to_end_accuracy = analyze_execution_accuracy(results)
     write_results_to_jsonl(results, model_settings.results_file, generation_settings)
     write_end_to_end_accuracy(end_to_end_accuracy, run_paths.accuracy_file)
+    extractor_report = calculate_extractor_accuracy_report(results, app_config.extractors)
+    write_extractor_accuracy_report(extractor_report, run_paths.extractor_accuracy_file)
     print_sample_results(results)
     get_aggregate_profiler().print_summary()
+    return extractor_report
 
 
 def main() -> int:
@@ -344,18 +393,22 @@ def main() -> int:
     # Create sampling layer (always created, with n=1 when "disabled")
     sampling_layer = create_sampling_layer(generation_settings)
 
-    # Create strategies
+    # Create strategies and the configured answer-extractor ensemble.
+    extractors = build_extractors(app_config.extractors, runtime.prompt_builder)
     iterative_strategy = IterativeGenerationStrategy(
         prompt_builder=runtime.prompt_builder,
         sampling_layer=sampling_layer,
+        extractors=extractors,
     )
     cot_strategy = ChainOfTableGenerationStrategy(
         prompt_builder=runtime.prompt_builder,
         sampling_layer=sampling_layer,
+        extractors=extractors,
     )
     direct_query_strategy = DirectQueryGenerationStrategy(
         prompt_builder=runtime.prompt_builder,
         sampling_layer=sampling_layer,
+        extractors=extractors,
     )
 
     # Validate strategy selection
@@ -384,6 +437,7 @@ def main() -> int:
         max_model_len=model_settings.hardware.max_model_len,
     )
 
+    extractor_report = None
     try:
         # Start server
         print(f"Starting server with {num_workers} workers...")
@@ -406,14 +460,17 @@ def main() -> int:
         if requests:
             print(f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds")
 
-        finalize_results(results, model_settings, generation_settings, run_paths)
+        extractor_report = finalize_results(results, model_settings, generation_settings, run_paths, app_config)
         # Demonstrate logging analysis
         demonstrate_logging_analysis(server, results)
-        return 0
 
     finally:
         # Shutdown will automatically generate summary report
         server.shutdown()
+
+    if extractor_report is not None:
+        print_final_extractor_summary(extractor_report)
+    return 0
 
 
 def analyze_execution_accuracy(results: list[InferenceResult]):

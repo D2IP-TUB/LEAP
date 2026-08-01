@@ -26,6 +26,14 @@ dataset:
 run:
   max_examples: 300
 
+# Answer extraction methods run independently on every strategy's final table.
+extractors:
+  - direct_query
+  - nl2sql
+  - nl2code
+  - end2ender
+  - cot_end2ender
+
 generation:
   use_constraints: false
   use_global_constraints: true
