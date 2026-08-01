@@ -170,10 +170,6 @@ class Table:
 
         return unique_values
 
-    def get_summary(self) -> str:
-        """Get dimension summary for logging"""
-        return f"{len(self.rows)} rows × {len(self.columns)} columns"
-
     def get_size(self) -> tuple[int, int]:
         """Get (num_rows, num_columns) tuple"""
         return (len(self.rows), len(self.columns))

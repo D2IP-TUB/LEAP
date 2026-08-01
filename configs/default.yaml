@@ -29,14 +29,16 @@ run:
 # Answer extraction methods run independently on every strategy's final table.
 extractors:
   - direct_query
-  - nl2sql
-  - nl2code
-  - end2ender
-  - cot_end2ender
+  # - nl2sql
+  # - nl2code
+  # - end2ender
+  # - cot_end2ender
 
 generation:
-  use_constraints: false
+  use_constraints: true
   use_global_constraints: true
+  # Include reasoning text before answers in few-shot prompt examples.
+  include_prompt_explanations: true
 
   # Unconstrained generation always uses vLLM >=0.12,<0.13 with the V1 engine.
   # When constraints are enabled, "xgrammar" also uses V1, while

@@ -55,6 +55,7 @@ class GenerationConfig:
     use_global_constraints: bool
     strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
     constraint_backend: str = "legacy_state_machine"  # "xgrammar" or "legacy_state_machine"
+    include_prompt_explanations: bool = False
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
     enabled_actions: tuple = None  # Tuple of enabled action names (immutable for frozen dataclass)
 
@@ -277,6 +278,7 @@ def _build_generation_config(generation_section: Dict[str, Any], enabled_actions
         use_global_constraints=generation_section.get("use_global_constraints", False),
         strategy=generation_section.get("strategy", "cot"),
         constraint_backend=constraint_backend,
+        include_prompt_explanations=generation_section.get("include_prompt_explanations", False),
         sampling=sampling_config,
         enabled_actions=enabled_actions_tuple,
     )

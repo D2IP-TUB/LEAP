@@ -24,9 +24,6 @@ class CotPromptSettings:
     action_question_truncation: int = 80
     action_safety_margin_tokens: int = 50
     args_table_chars: int = 1200
-    args_fallback_table_chars: int = 600
-    args_question_truncation: int = 80
-    args_safety_margin_tokens: int = 100
 
 
 class PromptBuilder:
@@ -148,7 +145,7 @@ class PromptBuilder:
                     }
                 )
                 answer = example.answer if add_column_available else example.answer_without_add_column
-                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "assistant", "content": self._example_answer(example, answer, worker)})
 
         history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
         available_operations = f"{action_descriptions}\n{actions_text}".strip()
@@ -173,6 +170,14 @@ class PromptBuilder:
         for message in messages:
             result += message["content"] + "\n" if message["role"] == "user" else message["content"] + "\n\n"
         return result
+
+    @staticmethod
+    def _example_answer(example, answer: str, worker) -> str:
+        generation_config = getattr(worker, "generation_config", None)
+        include_explanations = getattr(generation_config, "include_prompt_explanations", False) is True
+        if include_explanations and example.explanation:
+            return f"Explanation: {example.explanation}\nAnswer: {answer}"
+        return answer
 
     @staticmethod
     def _append_instruction(step_prompt: str, instruction_prompt: str) -> str:
@@ -326,7 +331,7 @@ class PromptBuilder:
                     "content": self._build_action_selection_example_message(example, excluded_actions, use_global_constraints),
                 }
             )
-            messages.append({"role": "assistant", "content": answer})
+            messages.append({"role": "assistant", "content": self._example_answer(example, answer, worker)})
 
         messages.append({"role": "user", "content": instruction_prompt})
 
@@ -367,7 +372,7 @@ class PromptBuilder:
                 question=example.question,
             )
             messages.append({"role": "user", "content": example_prompt})
-            messages.append({"role": "assistant", "content": example.answer})
+            messages.append({"role": "assistant", "content": self._example_answer(example, example.answer, worker)})
 
         if action_name == "add_column" and len(table.rows) > 3:
             table = Table(columns=list(table.columns), rows=[list(r) for r in table.rows[:3]])
@@ -504,7 +509,7 @@ class PromptBuilder:
                 question=example.question,
             )
             messages.append({"role": "user", "content": example_instruction})
-            messages.append({"role": "assistant", "content": example.answer})
+            messages.append({"role": "assistant", "content": self._example_answer(example, example.answer, worker)})
 
         # Add current query
         table_str = self._format_table(table, 2000)

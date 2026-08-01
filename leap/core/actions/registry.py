@@ -166,10 +166,6 @@ class ActionRegistry:
             return list(self._actions.keys())
         return [name for name in self._actions.keys() if name in self._enabled_actions]
 
-    def get_all_names(self) -> List[str]:
-        """Get all registered action names (regardless of enabled status)."""
-        return list(self._actions.keys())
-
     def is_enabled(self, name: str) -> bool:
         """Check if an action is enabled."""
         if self._enabled_actions is None:

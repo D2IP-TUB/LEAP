@@ -52,6 +52,43 @@ def test_phase_two_few_shot_and_current_turns_keep_table_and_question_shape():
     assert all("Arguments only for" not in content for content in user_messages)
 
 
+def test_prompt_explanations_follow_generation_toggle():
+    table = Table(columns=["Name", "Age"], rows=[["Alice", "25"]])
+
+    disabled_tokenizer = RecordingTokenizer()
+    disabled_builder = PromptBuilder(tokenizer=disabled_tokenizer, is_instruct=True)
+    disabled_worker = SimpleNamespace(
+        max_model_len=4096,
+        generation_config=SimpleNamespace(include_prompt_explanations=False),
+    )
+    disabled_builder.build_cot_arguments_prompt(
+        question="Who is listed?",
+        table=table,
+        action_name="select_row",
+        action_history=[],
+        worker=disabled_worker,
+    )
+    assert all("Explanation:" not in message["content"] for message in disabled_tokenizer.messages)
+
+    enabled_tokenizer = RecordingTokenizer()
+    enabled_builder = PromptBuilder(tokenizer=enabled_tokenizer, is_instruct=True)
+    enabled_worker = SimpleNamespace(
+        max_model_len=4096,
+        generation_config=SimpleNamespace(include_prompt_explanations=True),
+    )
+    enabled_builder.build_cot_arguments_prompt(
+        question="Who is listed?",
+        table=table,
+        action_name="select_row",
+        action_history=[],
+        worker=enabled_worker,
+    )
+    assistant_messages = [message["content"] for message in enabled_tokenizer.messages if message["role"] == "assistant"]
+    assert assistant_messages
+    assert assistant_messages[0].startswith("Explanation: The question asks for the highest away team score.")
+    assert assistant_messages[0].endswith("Answer: [*]")
+
+
 def test_phase_one_few_shot_chains_use_canonical_function_syntax():
     tokenizer = RecordingTokenizer()
     builder = PromptBuilder(tokenizer=tokenizer, is_instruct=True)

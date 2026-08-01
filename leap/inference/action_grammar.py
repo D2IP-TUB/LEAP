@@ -19,7 +19,6 @@ class ActionGrammarSpec:
     selected_action: str | None
     rows: tuple[str, ...]
     columns: tuple[str, ...]
-    row_limit: int = ROW_LIMIT
 
 
 def get_constraint_backend(worker) -> str:

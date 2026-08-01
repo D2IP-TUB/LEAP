@@ -129,8 +129,6 @@ class BaseGenerationStrategy:
             logging_callback(request_id, 0, "initial", current_table, generation_mode=generation_mode)
 
         while failures < self.max_failures and validity_failures < self.max_validity_failures and step < self.max_steps:
-            step_start = profiler.start_step()
-
             try:
                 # Strategy-specific action generation
                 result = await self.generate_action_step(
@@ -162,7 +160,6 @@ class BaseGenerationStrategy:
                             failure_type="validity_failure",
                             generation_mode=generation_mode,
                         )
-                    profiler.end_step(step_start, step, "validity_failed")
                     continue
 
                 if action.name == "end":
@@ -177,7 +174,6 @@ class BaseGenerationStrategy:
                             current_table,
                             generation_mode=generation_mode,
                         )
-                    profiler.end_step(step_start, step, "end")
                     break
 
                 with profiler.time_operation("table_transformation"):
@@ -196,7 +192,6 @@ class BaseGenerationStrategy:
                             failure_type="validity_failure",
                             generation_mode=generation_mode,
                         )
-                    profiler.end_step(step_start, step, "apply_failed")
                     continue
 
                 # If the LLM selects an action type that has already been used, force end
@@ -213,7 +208,6 @@ class BaseGenerationStrategy:
                             current_table,
                             generation_mode=generation_mode,
                         )
-                    profiler.end_step(step_start, step, "end")
                     break
 
                 current_table = new_table
@@ -221,7 +215,6 @@ class BaseGenerationStrategy:
                 failures = 0
                 validity_failures = 0
                 step += 1
-                profiler.end_step(step_start, step - 1, action.name)
                 print(f"Step {step}: Applied {action.to_string()}")
                 print(f"  [DEBUG] Table columns ({len(current_table.columns)}), rows ({len(current_table.rows)}):")
                 for col in current_table.columns:
@@ -250,8 +243,6 @@ class BaseGenerationStrategy:
                         failure_type="generation_error",
                         generation_mode=generation_mode,
                     )
-                profiler.end_step(step_start, step, "error")
-
                 # If this is a critical error (like max_model_len exceeded), break the loop
                 error_str = str(exc).lower()
                 if "max_model_len" in error_str or "maximum model length" in error_str:

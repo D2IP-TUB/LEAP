@@ -253,7 +253,6 @@ class VLLMWorkerProcess(mp.Process):
                 slots_available = max_concurrent - len(active_tasks)
                 if slots_available > 0 and not shutdown_requested:
                     # Try to fill multiple slots at once to reduce queue contention
-                    filled = 0
                     for _ in range(slots_available):
                         try:
                             request = self.input_queue.get_nowait()
@@ -265,15 +264,8 @@ class VLLMWorkerProcess(mp.Process):
                             # Create async task for this request (non-blocking)
                             task = asyncio.create_task(self._process_single_request(request, state_machines))
                             active_tasks[request.request_id] = (task, request.request_id)
-                            filled += 1
-
                         except queue.Empty:
                             break
-
-                    # Only log when we actually filled slots (less verbose)
-                    # Comment this out for even less logging noise
-                    # if filled > 0:
-                    #     print(f"Worker {self.worker_id}: Filled {filled} slots, now {len(active_tasks)}/{max_concurrent} active")
 
                 # If no active tasks and shutdown requested, exit
                 if not active_tasks and shutdown_requested:
@@ -282,7 +274,7 @@ class VLLMWorkerProcess(mp.Process):
                 # If we have active tasks, wait for at least one to complete
                 if active_tasks:
                     # Wait for first completion (or timeout to check for new work)
-                    done, pending = await asyncio.wait(
+                    done, _ = await asyncio.wait(
                         [task for task, _ in active_tasks.values()],
                         return_when=asyncio.FIRST_COMPLETED,
                         timeout=0.05,  # Reduced timeout for faster queue checking

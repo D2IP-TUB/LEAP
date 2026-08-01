@@ -6,7 +6,7 @@ import os
 import re
 import shutil
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
@@ -198,10 +198,6 @@ def runtime_metadata(constraint_backend: str | None = None, *, use_constraints: 
         "vllm_version_spec": runtime.version_spec if runtime else None,
         "engine": runtime.engine if runtime else None,
     }
-
-
-def runtime_asdict(runtime: VLLMRuntime) -> dict[str, str]:
-    return asdict(runtime)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:

@@ -14,7 +14,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from .actions import Action
 from .table import Table
 
 
@@ -272,19 +271,6 @@ class InferenceResult:
             "generated_answers": self.generated_answers,
             "extractor_results": [result.to_dict() for result in (self.extractor_results or [])],
         }
-
-    def get_actions(self) -> List[Action]:
-        """Parse action history into Action objects
-
-        Returns:
-            List of successfully parsed Action objects (invalid actions are skipped)
-        """
-        actions = []
-        for action_str in self.action_history:
-            action = Action.parse(action_str)
-            if action:
-                actions.append(action)
-        return actions
 
     @property
     def num_steps(self) -> int:

@@ -7,9 +7,15 @@ from unittest.mock import MagicMock
 import pytest
 from transformers import AutoTokenizer
 
+from leap.config.loader import _build_generation_config
 from leap.core import Table
 from leap.core.actions import REGISTRY
 from leap.generation.prompt_builder import CotPromptSettings, IterativePromptSettings, PromptBuilder
+
+
+def test_generation_config_loads_prompt_explanation_toggle():
+    config = _build_generation_config({"include_prompt_explanations": True}, enabled_actions=None, sampling_config=None)
+    assert config.include_prompt_explanations is True
 
 
 @pytest.fixture(scope="module")

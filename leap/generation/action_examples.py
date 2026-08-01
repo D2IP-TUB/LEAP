@@ -41,12 +41,6 @@ class ActionExample:
     explanation: Optional[str] = None
     answer: Optional[str] = None
     answer_without_add_column: Optional[str] = None
-    # Additional fields for specific actions (e.g., select_column needs these)
-    similar_words: Optional[List[str]] = None
-    column_value_links: Optional[List[str]] = None
-    semantic_sentence_links: Optional[List[str]] = None
-    # For f_add_column - stores the actual values added
-    added_column_values: Optional[List[str]] = None
     # For action_selection mid-chain examples - actions already taken
     action_history: Optional[List[str]] = None
 
@@ -70,10 +64,6 @@ class ActionExample:
             explanation=data.get("explanation"),
             answer=data.get("answer"),
             answer_without_add_column=data.get("answer_without_add_column"),
-            similar_words=data.get("similar_words"),
-            column_value_links=data.get("column_value_links"),
-            semantic_sentence_links=data.get("semantic_sentence_links"),
-            added_column_values=data.get("added_column_values"),
             action_history=data.get("action_history"),
         )
 
@@ -207,11 +197,6 @@ class ActionExamplesManager:
             if system_rules:
                 self._system_rules_cache[action_name] = system_rules
 
-    def clear_cache(self):
-        """Clear the examples cache (useful for testing or reloading)."""
-        self._examples_cache = None
-        self._system_rules_cache = None
-
 
 class ActionPromptTemplate:
     """
@@ -221,18 +206,16 @@ class ActionPromptTemplate:
     Only the instance-specific parts (current table, question) are filled in later.
     """
 
-    def __init__(self, action_name: str, examples: List[ActionExample], instruction: str):
+    def __init__(self, action_name: str, examples: List[ActionExample]):
         """
         Create a prompt template.
 
         Args:
             action_name: Name of the action
             examples: List of examples for this action
-            instruction: Instruction text explaining what to do
         """
         self.action_name = action_name
         self.examples = examples
-        self._instructions = instruction
         self._examples_template = self._build_examples_template()
 
     def _build_examples_template(self) -> Tuple[List[str], List[str]]:
@@ -255,9 +238,6 @@ class ActionPromptTemplate:
 
     def get_examples_template(self) -> Tuple[List[str], List[str]]:
         return self._examples_template
-
-    def get_instructions(self) -> str:
-        return self._instructions
 
 
 class ActionPromptBuilder:
@@ -287,8 +267,7 @@ class ActionPromptBuilder:
         for action_name in ("select_row", "select_column", "add_column", "group_by", "sort_by", "action_selection"):
             examples = self.examples_manager.get_examples(action_name)
             if examples:
-                instruction = self.examples_manager.get_system_rules(action_name) or ""
-                self._templates[action_name] = ActionPromptTemplate(action_name, examples, instruction)
+                self._templates[action_name] = ActionPromptTemplate(action_name, examples)
 
     def get_examples(self, action_name: str) -> Optional[str]:
         """
@@ -307,12 +286,6 @@ class ActionPromptBuilder:
             return None
 
         return template.get_examples_template()
-
-    def get_instruction(self, action_name: str) -> str:
-        template = self._templates.get(action_name)
-        if template is None:
-            return None
-        return template.get_instructions()
 
     def has_prompt(self, action_name: str) -> bool:
         """Check if a prompt template exists for this action."""

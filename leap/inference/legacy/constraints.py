@@ -70,7 +70,6 @@ class ConstraintStateMachine:
             self.possible_actions = self._get_allowed_actions_without_global_constraints()
 
         self.action_prefix = []
-        self.current_column = None
 
     def _get_allowed_actions_with_global_constraints(self):
         """Return enabled successors from the canonical LEAP transition matrix."""
@@ -313,7 +312,7 @@ def create_constraint_logits_processor(
         use_global_constraints: Whether to apply global action constraints (default: True)
     """
 
-    def constraint_logits_processor(prompt_token_ids, generated_token_ids, logits):
+    def constraint_logits_processor(_prompt_token_ids, generated_token_ids, logits):
         # Get or create state machine for this request with action history
         if request_id not in state_machines_dict:
             state_machines_dict[request_id] = ConstraintStateMachine(
@@ -454,7 +453,7 @@ def create_action_only_constraint_processor(
 ):
     """Create a logits processor that only allows action selection (no parameters)"""
 
-    def action_constraint_processor(prompt_token_ids, generated_token_ids, logits):
+    def action_constraint_processor(_prompt_token_ids, generated_token_ids, logits):
         # Get or create state machine for this request
         if request_id not in state_machines_dict:
             state_machines_dict[request_id] = ActionOnlyConstraintStateMachine(
@@ -721,7 +720,7 @@ def create_arguments_only_constraint_processor(
     Used in two-phase generation where action name is already determined.
     """
 
-    def arguments_constraint_processor(prompt_token_ids, generated_token_ids, logits):
+    def arguments_constraint_processor(_prompt_token_ids, generated_token_ids, logits):
         # Get or create state machine for this request
         if request_id not in state_machines_dict:
             state_machines_dict[request_id] = ArgumentsOnlyConstraintStateMachine(table, tokenizer, tokenizer_config, action_name)

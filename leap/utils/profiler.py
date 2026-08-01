@@ -24,14 +24,6 @@ class RequestProfiler:
             duration = time.perf_counter() - start
             self.timings[operation] = self.timings.get(operation, 0.0) + duration
 
-    def start_step(self) -> float:
-        """Start timing a new step"""
-        return time.perf_counter()
-
-    def end_step(self, step_start: float, step_num: int, operation: str):
-        """End timing for a step"""
-        pass  # Currently unused but kept for API compatibility
-
     def get_total_time(self) -> float:
         """Get total request time since profiler creation"""
         return time.perf_counter() - self.start_time
