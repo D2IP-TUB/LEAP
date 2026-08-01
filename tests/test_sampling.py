@@ -17,18 +17,23 @@ def test_add_column_argument_cleaning_removes_echoed_function_call():
     assert action.arguments == ("display type", ["monochrome", "color"])
 
 
-def test_global_constraints_remove_add_column_from_action_selection():
+def test_global_transition_policy_controls_sampling_without_decoding_constraints():
     previous_enabled = REGISTRY._enabled_actions
-    REGISTRY.set_enabled_actions(["add_column", "select_row", "end"])
+    REGISTRY.set_enabled_actions(["add_column", "select_row", "select_column", "group_by", "sort_by", "end"])
     try:
-        actions = SamplingLayer(SamplingConfig())._get_available_actions(
-            [],
-            SimpleNamespace(use_constraints=False, use_global_constraints=True),
+        layer = SamplingLayer(SamplingConfig())
+        worker = SimpleNamespace(
+            use_constraints=False,
+            constraint_backend="legacy_state_machine",
+            use_global_constraints=True,
         )
+        initial_actions = layer._get_available_actions([], worker)
+        actions_after_row = layer._get_available_actions(["select_row([row 0])"], worker)
     finally:
         REGISTRY._enabled_actions = previous_enabled
 
-    assert actions == ["select_row"]
+    assert initial_actions == ["add_column", "select_row", "select_column", "group_by", "sort_by"]
+    assert actions_after_row == ["select_column", "group_by", "sort_by", "end"]
 
 
 def test_sort_by_argument_cleaning_preserves_parentheses_in_column_name():

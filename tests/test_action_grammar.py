@@ -70,12 +70,43 @@ def test_action_grammar_respects_history_and_row_cap():
     assert '"f_select_row("' not in grammar
 
 
-def test_global_available_actions_only_allows_end_after_transformations_exhausted():
+def test_global_available_actions_follow_leap_transition_matrix():
     assert available_actions([], use_global_constraints=True) == ["select_row", "select_column", "group_by", "sort_by"]
     assert available_actions(
-        ["select_row(0)", 'select_column("Name")', 'group_by("Name")', 'sort_by("Points", "desc")'],
+        ["select_row(0)"],
         use_global_constraints=True,
-    ) == ["end"]
+    ) == ["select_column", "group_by", "sort_by", "end"]
+    assert available_actions(
+        ["select_row(0)", 'select_column("Name")'],
+        use_global_constraints=True,
+    ) == ["group_by", "sort_by", "end"]
+    assert available_actions(['group_by("Name")'], use_global_constraints=True) == ["sort_by", "end"]
+    assert available_actions(['sort_by("Points", "desc")'], use_global_constraints=True) == ["end"]
+
+
+def test_global_available_actions_intersect_enabled_and_backend_supported_actions():
+    REGISTRY.set_enabled_actions(["add_column", "select_row", "group_by", "end"])
+
+    # add_column is enabled, but xgrammar independently does not support it.
+    assert available_actions([], use_global_constraints=True) == ["select_row", "group_by"]
+    assert available_actions(["select_row(0)"], use_global_constraints=True) == ["group_by", "end"]
+
+
+def test_registry_global_transitions_include_add_column_when_enabled():
+    REGISTRY.set_enabled_actions(["add_column", "select_row", "select_column", "group_by", "sort_by", "end"])
+
+    expected = {
+        None: ["add_column", "select_row", "select_column", "group_by", "sort_by"],
+        "add_column": ["select_row", "select_column", "group_by", "sort_by", "end"],
+        "select_row": ["select_column", "group_by", "sort_by", "end"],
+        "select_column": ["group_by", "sort_by", "end"],
+        "group_by": ["sort_by", "end"],
+        "sort_by": ["end"],
+    }
+
+    for previous_action, successors in expected.items():
+        history = [] if previous_action is None else [f"{previous_action}()"]
+        assert REGISTRY.get_global_available_actions(history) == successors
 
 
 def test_argument_grammars_for_supported_actions():

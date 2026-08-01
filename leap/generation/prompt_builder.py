@@ -106,16 +106,22 @@ class PromptBuilder:
     def _build_iterative_instruction(self, worker, action_history: Sequence[str] = None, fallback: bool = False) -> str:
         """Instruction text for iterative generation."""
         excluded_actions = self._excluded_actions(worker)
+        use_global_constraints = getattr(worker, "use_global_constraints", False) is True
         action_descriptions = REGISTRY.get_action_descriptions(
             action_history,
             exclude_terminating_on_first=False,
             excluded_actions=excluded_actions,
+            use_global_constraints=use_global_constraints,
         )
 
         if worker.use_constraints:
             return f"{action_descriptions}\n\nNext action: "
 
-        actions_text = REGISTRY.get_prompt_text_iterative(action_history, excluded_actions=excluded_actions)
+        actions_text = REGISTRY.get_prompt_text_iterative(
+            action_history,
+            excluded_actions=excluded_actions,
+            use_global_constraints=use_global_constraints,
+        )
 
         question_prefix = "What should be the next action? " if fallback else "What should be the next action to answer this question? "
         base = f"{action_descriptions}\n\n{question_prefix}Choose from: {actions_text}.\nNext action: "
@@ -140,8 +146,6 @@ class PromptBuilder:
     def _add_column_available(worker) -> bool:
         """Whether this run may expose add_column to the model."""
         if not REGISTRY.is_enabled("add_column"):
-            return False
-        if getattr(worker, "use_global_constraints", False) is True:
             return False
         return not (
             getattr(worker, "use_constraints", False) is True
@@ -172,6 +176,7 @@ class PromptBuilder:
         available_label: str,
         question_suffix: str,
         excluded_actions: set[str],
+        use_global_constraints: bool,
     ) -> str:
         """Build the user-message body for an action-selection turn."""
         prompt = f"{table_str}\n\n"
@@ -187,18 +192,20 @@ class PromptBuilder:
             action_history,
             exclude_terminating_on_first=True,
             excluded_actions=excluded_actions,
+            use_global_constraints=use_global_constraints,
         )
         prompt += f"{available_label}: {actions_text}\n"
         prompt += question_suffix
         return prompt
 
-    def _build_action_selection_example_message(self, example, excluded_actions: set[str]) -> str:
+    def _build_action_selection_example_message(self, example, excluded_actions: set[str], use_global_constraints: bool) -> str:
         """Build the user-message content for a single few-shot action-selection example."""
         action_history = example.action_history or []
         example_actions_text = REGISTRY.get_prompt_text_cot(
             action_history,
             exclude_terminating_on_first=True,
             excluded_actions=excluded_actions,
+            use_global_constraints=use_global_constraints,
         )
         prompt = f"{example.format_table_for_prompt()}\n\n"
         prompt += f"Question: {example.question}\n\n"
@@ -223,10 +230,17 @@ class PromptBuilder:
         """Prompt for CoT action selection (dynamic plan)."""
         table_str = self._format_table(table, self.cot_settings.action_table_chars)
         excluded_actions = self._excluded_actions(worker)
+        use_global_constraints = getattr(worker, "use_global_constraints", False) is True
         available_label = "Available actions"
         question_suffix = ""
         instruction_prompt = self._build_action_selection_body(
-            table_str, question, action_history, available_label, question_suffix, excluded_actions
+            table_str,
+            question,
+            action_history,
+            available_label,
+            question_suffix,
+            excluded_actions,
+            use_global_constraints,
         )
 
         estimated_length = len(instruction_prompt) // 4
@@ -236,7 +250,13 @@ class PromptBuilder:
             question_suffix = ""
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
             instruction_prompt = self._build_action_selection_body(
-                table_str, question_short, action_history, available_label, question_suffix, excluded_actions
+                table_str,
+                question_short,
+                action_history,
+                available_label,
+                question_suffix,
+                excluded_actions,
+                use_global_constraints,
             )
 
         if not (self.action_examples and self.action_examples.has_prompt("action_selection")):
@@ -259,7 +279,12 @@ class PromptBuilder:
             answer = example.answer if add_column_available else example.answer_without_add_column
             if not answer:
                 continue
-            messages.append({"role": "user", "content": self._build_action_selection_example_message(example, excluded_actions)})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": self._build_action_selection_example_message(example, excluded_actions, use_global_constraints),
+                }
+            )
             messages.append({"role": "assistant", "content": answer})
 
         messages.append({"role": "user", "content": instruction_prompt})

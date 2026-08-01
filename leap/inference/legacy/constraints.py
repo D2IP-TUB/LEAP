@@ -22,12 +22,7 @@ class ConstraintStateMachine:
         self.tokenizer_config = tokenizer_config
         self.wildcard_tokens = tokenizer.encode("*", add_special_tokens=False)
         self.wildcard_enabled = bool(table.rows and self.wildcard_tokens)
-
-        # Parse action history to determine previously used action types (only if global constraints are enabled)
-        if self.use_global_constraints:
-            self.previously_used_actions = self._parse_action_history(action_history)
-        else:
-            self.previously_used_actions = set()
+        self.action_history = list(action_history or [])
 
         self.reset()
 
@@ -55,20 +50,6 @@ class ConstraintStateMachine:
                 if tokens:
                     self.row_token_map[row] = tokens
 
-    def _parse_action_history(self, action_history):
-        """Parse action history to extract previously used action types"""
-        used_actions = set()
-        if action_history:
-            # Get all enabled action names from registry
-            enabled_actions = REGISTRY.get_enabled_names()
-            for action_str in action_history:
-                # Check each enabled action
-                for action_name in enabled_actions:
-                    if action_name in action_str:
-                        used_actions.add(action_name)
-                        break  # Found the action, move to next history item
-        return used_actions
-
     def reset(self):
         self.state = "start"
         self.current_action = None
@@ -92,36 +73,8 @@ class ConstraintStateMachine:
         self.current_column = None
 
     def _get_allowed_actions_with_global_constraints(self):
-        """Determine which actions are allowed based on global constraints"""
-        # Get enabled actions from registry
-        enabled_actions = REGISTRY.get_enabled_names()
-
-        # Terminating action: only 'end' (direct_query is applied automatically after end)
-        terminating_actions = {"end"}
-
-        # Non-terminating actions (table transformations)
-        transformation_actions = [a for a in enabled_actions if a not in terminating_actions and a != "add_column"]
-
-        allowed = []
-
-        # If no actions have been taken yet, can't use terminating actions
-        if not self.previously_used_actions:
-            # Only allow transformation actions for first action
-            allowed.extend(transformation_actions)
-        else:
-            # Check which transformation actions haven't been used yet
-            for action in transformation_actions:
-                if action not in self.previously_used_actions:
-                    allowed.append(action)
-
-            # Terminating actions are allowed only if:
-            # - At least one other action has been taken
-            # - No other transformation actions are available
-            if not allowed:  # No transformation actions available
-                # Add all enabled terminating actions
-                allowed.extend([a for a in terminating_actions if a in enabled_actions])
-
-        return allowed
+        """Return enabled successors from the canonical LEAP transition matrix."""
+        return REGISTRY.get_global_available_actions(self.action_history)
 
     def _get_allowed_actions_without_global_constraints(self):
         """Get all enabled actions without global constraints"""
@@ -404,27 +357,23 @@ def create_constraint_logits_processor(
 class ActionOnlyConstraintStateMachine:
     """Simplified state machine that only allows action selection (no parameters)"""
 
-    def __init__(self, tokenizer, use_global_constraints=False):
+    def __init__(self, tokenizer, action_history=None, use_global_constraints=False):
         self.tokenizer = tokenizer
+        self.action_history = list(action_history or [])
         self.use_global_constraints = use_global_constraints
         # Pre-compute action tokens from enabled actions
         self.action_tokens = {}
-        for action_name in self._enabled_actions():
+        for action_name in REGISTRY.get_enabled_names():
             self.action_tokens[action_name] = tokenizer.encode(f"f_{action_name}", add_special_tokens=False)
         self.reset()
-
-    def _enabled_actions(self):
-        actions = REGISTRY.get_enabled_names()
-        if self.use_global_constraints:
-            actions = [action for action in actions if action != "add_column"]
-        return actions
 
     def reset(self):
         self.state = "start"
         self.generated_tokens = []
         self.finished = False
-        # Get enabled action names from registry
-        self.possible_actions = self._enabled_actions()
+        self.possible_actions = (
+            REGISTRY.get_global_available_actions(self.action_history) if self.use_global_constraints else REGISTRY.get_enabled_names()
+        )
         self.action_prefix = []
 
     def update_state(self, token):
@@ -496,13 +445,23 @@ class ActionOnlyConstraintStateMachine:
 
 
 # NEW: Action-only constraint processor for CoT dynamic_plan
-def create_action_only_constraint_processor(tokenizer, request_id, state_machines_dict, use_global_constraints=False):
+def create_action_only_constraint_processor(
+    tokenizer,
+    request_id,
+    state_machines_dict,
+    action_history=None,
+    use_global_constraints=False,
+):
     """Create a logits processor that only allows action selection (no parameters)"""
 
     def action_constraint_processor(prompt_token_ids, generated_token_ids, logits):
         # Get or create state machine for this request
         if request_id not in state_machines_dict:
-            state_machines_dict[request_id] = ActionOnlyConstraintStateMachine(tokenizer, use_global_constraints)
+            state_machines_dict[request_id] = ActionOnlyConstraintStateMachine(
+                tokenizer,
+                action_history=action_history,
+                use_global_constraints=use_global_constraints,
+            )
 
         sm = state_machines_dict[request_id]
 

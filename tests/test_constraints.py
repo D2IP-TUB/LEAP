@@ -63,10 +63,13 @@ def test_initial_allowed_tokens_respect_action_history(gpt2_tokenizer, tokenizer
         machine.tokenizer_config.action_tokens["select_column"][0],
     }
 
-    # If select_row has been used before, then only select_column is allowed
+    # Global transitions allow termination after the first transformation.
     row_history = ConstraintStateMachine(table, gpt2_tokenizer, tokenizer_config, action_history=["select_row(0)"])
     allowed_after_row = set(row_history.allowed_tokens())
-    assert allowed_after_row == {row_history.tokenizer_config.action_tokens["select_column"][0]}
+    assert allowed_after_row == {
+        row_history.tokenizer_config.action_tokens["select_column"][0],
+        row_history.tokenizer_config.action_tokens["end"][0],
+    }
 
     # If both select_row and select_column were used before, only end is allowed
     end_only = ConstraintStateMachine(
@@ -287,14 +290,38 @@ def test_add_column_bypasses_full_action_state_machine(gpt2_tokenizer, tokenizer
     assert machine.bypass_constraints is True
 
 
-def test_global_constraints_remove_add_column_transition(gpt2_tokenizer, tokenizer_config):
+def test_global_constraints_apply_transitions_without_disabling_add_column(gpt2_tokenizer, tokenizer_config):
     REGISTRY.set_enabled_actions(["add_column", "select_row", "end"])
-    machine = ConstraintStateMachine(make_table(), gpt2_tokenizer, tokenizer_config, use_global_constraints=True)
+    config = TokenizerConfig(
+        **{
+            **tokenizer_config.__dict__,
+            "action_tokens": {
+                **tokenizer_config.action_tokens,
+                "add_column": gpt2_tokenizer.encode("add_column", add_special_tokens=False),
+            },
+        }
+    )
+    machine = ConstraintStateMachine(make_table(), gpt2_tokenizer, config, use_global_constraints=True)
 
-    assert machine.possible_actions == ["select_row"]
+    assert machine.possible_actions == ["add_column", "select_row"]
 
-    action_machine = ActionOnlyConstraintStateMachine(gpt2_tokenizer, use_global_constraints=True)
-    assert "add_column" not in action_machine.possible_actions
+    action_machine = ActionOnlyConstraintStateMachine(
+        gpt2_tokenizer,
+        action_history=["add_column()"],
+        use_global_constraints=True,
+    )
+    assert action_machine.possible_actions == ["select_row", "end"]
+
+
+def test_global_action_only_constraints_reject_repeated_operations(gpt2_tokenizer):
+    machine = ActionOnlyConstraintStateMachine(
+        gpt2_tokenizer,
+        action_history=["select_row([row 0])"],
+        use_global_constraints=True,
+    )
+
+    assert "select_row" not in machine.possible_actions
+    assert machine.possible_actions == ["select_column", "end"]
 
 
 def test_arguments_only_sort_by_order_uses_token_prefix(gpt2_tokenizer, tokenizer_config):

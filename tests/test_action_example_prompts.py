@@ -108,7 +108,7 @@ def test_phase_one_prompt_has_no_add_column_evidence_when_disabled():
     ]
 
 
-def test_global_constraints_use_no_add_column_prompt_variant():
+def test_global_constraints_keep_add_column_prompt_variant_when_supported():
     tokenizer = RecordingTokenizer()
     builder = PromptBuilder(tokenizer=tokenizer, is_instruct=True)
     worker = SimpleNamespace(
@@ -129,7 +129,8 @@ def test_global_constraints_use_no_add_column_prompt_variant():
     finally:
         REGISTRY._enabled_actions = previous_enabled
 
-    assert "add_column" not in "\n".join(message["content"] for message in tokenizer.messages)
+    prompt_content = "\n".join(message["content"] for message in tokenizer.messages)
+    assert "add_column" in prompt_content
 
 
 def test_xgrammar_uses_no_add_column_prompt_variant():

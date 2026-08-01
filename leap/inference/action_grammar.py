@@ -34,17 +34,8 @@ def available_actions(action_history: list[str] | tuple[str, ...] | None, *, use
     enabled = [name for name in REGISTRY.get_enabled_names() if name in SUPPORTED_XGRAMMAR_ACTIONS]
 
     if use_global_constraints:
-        terminating = {name for name in enabled if REGISTRY.get(name).is_terminating}
-        transformations = [name for name in enabled if name not in terminating]
-        used = REGISTRY._extract_action_names_from_history(list(action_history or []))
-
-        if not used:
-            return transformations
-
-        allowed = [name for name in transformations if name not in used]
-        if not allowed:
-            allowed.extend(name for name in terminating if name in enabled)
-        return allowed
+        supported = set(enabled)
+        return [name for name in REGISTRY.get_global_available_actions(list(action_history or [])) if name in supported]
 
     if action_history:
         used = REGISTRY._extract_action_names_from_history(list(action_history))

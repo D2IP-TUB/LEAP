@@ -119,7 +119,8 @@ async def generate_action_selection(
                 worker.tokenizer,
                 step_id,
                 state_machines,
-                worker.use_global_constraints,
+                action_history=action_history,
+                use_global_constraints=worker.use_global_constraints,
             )
 
             sampling_params = SamplingParams(

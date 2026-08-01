@@ -330,12 +330,12 @@ def _render_report(
                 "supports select_row, select_column, group_by, sort_by, and end."
             ),
             (
-                "- generation.use_global_constraints changes history handling. When true, transformation actions are each allowed once "
-                "and end is allowed only after all transformations are exhausted."
+                "- generation.use_global_constraints applies LEAP's action-transition matrix to the latest action. It controls the "
+                "available actions shown in prompts and the actions the engine can select."
             ),
             (
-                "- action_history removes already-used transformation actions when global constraints are off, and drives the stricter "
-                "sequencing rule when global constraints are on."
+                "- action_history removes already-used transformation actions when global constraints are off. When they are on, the "
+                "latest action selects the next transition-matrix row; end is available after any first transformation."
             ),
             (
                 "- generation.strategy decides which runtime grammar shape is used. cot uses action selection plus argument grammars; "

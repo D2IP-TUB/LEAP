@@ -123,10 +123,10 @@ class SamplingLayer:
 
             return grammar_available_actions(action_history, use_global_constraints=worker.use_global_constraints)
 
-        available_actions = REGISTRY.get_enabled_names()
+        if worker is not None and getattr(worker, "use_global_constraints", False) is True:
+            return REGISTRY.get_global_available_actions(action_history)
 
-        if worker is not None and worker.use_global_constraints:
-            available_actions = [name for name in available_actions if name != "add_column"]
+        available_actions = REGISTRY.get_enabled_names()
 
         if action_history:
             used_actions = REGISTRY._extract_action_names_from_history(action_history)
@@ -583,7 +583,8 @@ class SamplingLayer:
                 worker.tokenizer,
                 step_id,
                 state_machines,
-                worker.use_global_constraints,
+                action_history=action_history,
+                use_global_constraints=worker.use_global_constraints,
             )
             sampling_params = SamplingParams(
                 temperature=temperature,

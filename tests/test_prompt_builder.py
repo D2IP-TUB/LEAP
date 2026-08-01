@@ -112,6 +112,21 @@ class TestIterativePromptFiltering:
         operations_section = prompt.split("Operations:")[1].split("What should be")[0]
         assert "f_select_row:" not in operations_section
 
+    def test_global_constraints_show_only_matrix_successors(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
+        mock_worker.use_global_constraints = True
+        prompt = prompt_builder_non_instruct.build_iterative_prompt(
+            question="What is the average age?",
+            table=sample_table,
+            action_history=["select_row([row 0])"],
+            worker=mock_worker,
+            step=1,
+        )
+
+        choose_from_section = prompt.split("Choose from:")[-1].split("Next action:")[0]
+        assert "f_select_row" not in choose_from_section
+        assert "f_select_column" in choose_from_section
+        assert "f_end()" in choose_from_section
+
     def test_filters_multiple_used_actions(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """After using multiple actions, all should be filtered."""
         action_history = [
@@ -210,6 +225,18 @@ class TestCoTPromptFiltering:
         assert "f_select_row" not in available_section
         assert "f_select_column" in available_section
         assert "f_end" in available_section
+
+    def test_cot_global_constraints_use_matrix_successors(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
+        mock_worker.use_global_constraints = True
+        prompt = prompt_builder_non_instruct.build_cot_action_prompt(
+            question="What is the average age?",
+            table=sample_table,
+            action_history=["select_column(['Name'])"],
+            worker=mock_worker,
+        )
+
+        available_section = prompt.split("Available actions:")[1].split("\n")[0]
+        assert available_section.strip() == "f_end"
 
     def test_cot_arguments_prompt(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """CoT arguments prompt should work correctly."""
