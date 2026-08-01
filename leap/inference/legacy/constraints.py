@@ -100,7 +100,7 @@ class ConstraintStateMachine:
         terminating_actions = {"end"}
 
         # Non-terminating actions (table transformations)
-        transformation_actions = [a for a in enabled_actions if a not in terminating_actions]
+        transformation_actions = [a for a in enabled_actions if a not in terminating_actions and a != "add_column"]
 
         allowed = []
 
@@ -404,20 +404,27 @@ def create_constraint_logits_processor(
 class ActionOnlyConstraintStateMachine:
     """Simplified state machine that only allows action selection (no parameters)"""
 
-    def __init__(self, tokenizer):
+    def __init__(self, tokenizer, use_global_constraints=False):
         self.tokenizer = tokenizer
+        self.use_global_constraints = use_global_constraints
         # Pre-compute action tokens from enabled actions
         self.action_tokens = {}
-        for action_name in REGISTRY.get_enabled_names():
+        for action_name in self._enabled_actions():
             self.action_tokens[action_name] = tokenizer.encode(f"f_{action_name}", add_special_tokens=False)
         self.reset()
+
+    def _enabled_actions(self):
+        actions = REGISTRY.get_enabled_names()
+        if self.use_global_constraints:
+            actions = [action for action in actions if action != "add_column"]
+        return actions
 
     def reset(self):
         self.state = "start"
         self.generated_tokens = []
         self.finished = False
         # Get enabled action names from registry
-        self.possible_actions = REGISTRY.get_enabled_names()
+        self.possible_actions = self._enabled_actions()
         self.action_prefix = []
 
     def update_state(self, token):
@@ -489,13 +496,13 @@ class ActionOnlyConstraintStateMachine:
 
 
 # NEW: Action-only constraint processor for CoT dynamic_plan
-def create_action_only_constraint_processor(tokenizer, request_id, state_machines_dict):
+def create_action_only_constraint_processor(tokenizer, request_id, state_machines_dict, use_global_constraints=False):
     """Create a logits processor that only allows action selection (no parameters)"""
 
     def action_constraint_processor(prompt_token_ids, generated_token_ids, logits):
         # Get or create state machine for this request
         if request_id not in state_machines_dict:
-            state_machines_dict[request_id] = ActionOnlyConstraintStateMachine(tokenizer)
+            state_machines_dict[request_id] = ActionOnlyConstraintStateMachine(tokenizer, use_global_constraints)
 
         sm = state_machines_dict[request_id]
 

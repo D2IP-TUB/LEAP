@@ -5,6 +5,7 @@ from leap.config.loader import TokenizerConfig
 from leap.core import Table
 from leap.core.actions import REGISTRY
 from leap.inference.legacy.constraints import (
+    ActionOnlyConstraintStateMachine,
     ArgumentsOnlyConstraintStateMachine,
     ConstraintStateMachine,
 )
@@ -284,6 +285,16 @@ def test_add_column_bypasses_full_action_state_machine(gpt2_tokenizer, tokenizer
 
     assert machine.current_action == "add_column"
     assert machine.bypass_constraints is True
+
+
+def test_global_constraints_remove_add_column_transition(gpt2_tokenizer, tokenizer_config):
+    REGISTRY.set_enabled_actions(["add_column", "select_row", "end"])
+    machine = ConstraintStateMachine(make_table(), gpt2_tokenizer, tokenizer_config, use_global_constraints=True)
+
+    assert machine.possible_actions == ["select_row"]
+
+    action_machine = ActionOnlyConstraintStateMachine(gpt2_tokenizer, use_global_constraints=True)
+    assert "add_column" not in action_machine.possible_actions
 
 
 def test_arguments_only_sort_by_order_uses_token_prefix(gpt2_tokenizer, tokenizer_config):

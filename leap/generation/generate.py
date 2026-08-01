@@ -115,7 +115,12 @@ async def generate_action_selection(
                 **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
             )
         elif worker.use_constraints:
-            constraint_processor = create_action_only_constraint_processor(worker.tokenizer, step_id, state_machines)
+            constraint_processor = create_action_only_constraint_processor(
+                worker.tokenizer,
+                step_id,
+                state_machines,
+                worker.use_global_constraints,
+            )
 
             sampling_params = SamplingParams(
                 temperature=temperature,

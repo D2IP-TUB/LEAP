@@ -125,6 +125,9 @@ class SamplingLayer:
 
         available_actions = REGISTRY.get_enabled_names()
 
+        if worker is not None and worker.use_global_constraints:
+            available_actions = [name for name in available_actions if name != "add_column"]
+
         if action_history:
             used_actions = REGISTRY._extract_action_names_from_history(action_history)
             # Filter out used actions but keep 'end' always available
@@ -576,7 +579,12 @@ class SamplingLayer:
                 **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
             )
         elif worker.use_constraints:
-            constraint_processor = create_action_only_constraint_processor(worker.tokenizer, step_id, state_machines)
+            constraint_processor = create_action_only_constraint_processor(
+                worker.tokenizer,
+                step_id,
+                state_machines,
+                worker.use_global_constraints,
+            )
             sampling_params = SamplingParams(
                 temperature=temperature,
                 max_tokens=20,

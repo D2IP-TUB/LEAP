@@ -182,7 +182,11 @@ class ActionRegistry:
             params[name] = action.generate_params(table)
         return params
 
-    def get_prompt_text_iterative(self, action_history: Optional[List[str]] = None) -> str:
+    def get_prompt_text_iterative(
+        self,
+        action_history: Optional[List[str]] = None,
+        excluded_actions: Optional[Set[str]] = None,
+    ) -> str:
         """
         Generate prompt text for iterative strategy.
 
@@ -192,7 +196,7 @@ class ActionRegistry:
             action_history: List of actions already taken. If provided, these actions
                           will be filtered out from the available options (except 'end').
         """
-        enabled = self.get_enabled_names()
+        enabled = [name for name in self.get_enabled_names() if name not in (excluded_actions or set())]
 
         # Filter out already-used actions (but always keep 'end' as an option)
         if action_history:
@@ -212,7 +216,12 @@ class ActionRegistry:
             # Multiple actions: "op1, op2, or op3"
             return ", ".join(action_texts[:-1]) + f", or {action_texts[-1]}"
 
-    def get_prompt_text_cot(self, action_history: Optional[List[str]] = None, exclude_terminating_on_first: bool = True) -> str:
+    def get_prompt_text_cot(
+        self,
+        action_history: Optional[List[str]] = None,
+        exclude_terminating_on_first: bool = True,
+        excluded_actions: Optional[Set[str]] = None,
+    ) -> str:
         """
         Generate prompt text for CoT strategy.
 
@@ -224,7 +233,7 @@ class ActionRegistry:
             exclude_terminating_on_first: If True, exclude terminating actions when action_history is empty.
                                          This follows the Chain-of-Table paper convention.
         """
-        enabled = self.get_enabled_names()
+        enabled = [name for name in self.get_enabled_names() if name not in (excluded_actions or set())]
 
         # On first step (empty history), exclude terminating actions
         if exclude_terminating_on_first and (not action_history or len(action_history) == 0):
@@ -237,7 +246,12 @@ class ActionRegistry:
         action_texts = [self._actions[name].get_prompt_text_cot() for name in enabled]
         return ", ".join(action_texts)
 
-    def get_action_descriptions(self, action_history: Optional[List[str]] = None, exclude_terminating_on_first: bool = True) -> str:
+    def get_action_descriptions(
+        self,
+        action_history: Optional[List[str]] = None,
+        exclude_terminating_on_first: bool = True,
+        excluded_actions: Optional[Set[str]] = None,
+    ) -> str:
         """
         Generate formatted action descriptions for prompts.
 
@@ -257,7 +271,7 @@ class ActionRegistry:
             exclude_terminating_on_first: If True, exclude terminating actions when action_history is empty.
                                          This follows the Chain-of-Table paper convention.
         """
-        enabled = self.get_enabled_names()
+        enabled = [name for name in self.get_enabled_names() if name not in (excluded_actions or set())]
 
         # On first step (empty history), exclude terminating actions
         if exclude_terminating_on_first and (not action_history or len(action_history) == 0):

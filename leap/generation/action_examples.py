@@ -34,6 +34,7 @@ class ActionExample:
     question: str
     explanation: Optional[str] = None
     answer: Optional[str] = None
+    answer_without_add_column: Optional[str] = None
     # Additional fields for specific actions (e.g., select_column needs these)
     similar_words: Optional[List[str]] = None
     column_value_links: Optional[List[str]] = None
@@ -62,6 +63,7 @@ class ActionExample:
             question=data["question"],
             explanation=data.get("explanation"),
             answer=data.get("answer"),
+            answer_without_add_column=data.get("answer_without_add_column"),
             similar_words=data.get("similar_words"),
             column_value_links=data.get("column_value_links"),
             semantic_sentence_links=data.get("semantic_sentence_links"),

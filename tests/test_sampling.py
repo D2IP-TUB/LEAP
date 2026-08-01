@@ -1,5 +1,8 @@
+from types import SimpleNamespace
+
+from leap.core.actions import REGISTRY
 from leap.core.actions.action import Action
-from leap.generation.sampling import SamplingLayer
+from leap.generation.sampling import SamplingConfig, SamplingLayer
 
 
 def test_add_column_argument_cleaning_removes_echoed_function_call():
@@ -12,6 +15,20 @@ def test_add_column_argument_cleaning_removes_echoed_function_call():
     assert action is not None
     assert action.name == "add_column"
     assert action.arguments == ("display type", ["monochrome", "color"])
+
+
+def test_global_constraints_remove_add_column_from_action_selection():
+    previous_enabled = REGISTRY._enabled_actions
+    REGISTRY.set_enabled_actions(["add_column", "select_row", "end"])
+    try:
+        actions = SamplingLayer(SamplingConfig())._get_available_actions(
+            [],
+            SimpleNamespace(use_constraints=False, use_global_constraints=True),
+        )
+    finally:
+        REGISTRY._enabled_actions = previous_enabled
+
+    assert actions == ["select_row"]
 
 
 def test_sort_by_argument_cleaning_preserves_parentheses_in_column_name():

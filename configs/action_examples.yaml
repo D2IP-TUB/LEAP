@@ -408,6 +408,7 @@ examples:
       question: "What was the last year when this team was part of the USL A-League?"
       action_history: []
       answer: 'f_add_column("year", [2001, 2002, 2005]) -> f_select_row(["row 0", "row 1"]) -> f_select_column(["year", "league"]) -> f_sort_by("year", "desc") -> f_end()'
+      answer_without_add_column: 'f_select_row(["row 0", "row 1"]) -> f_select_column(["date", "league"]) -> f_sort_by("date", "desc") -> f_end()'
 
     - table: |
         ,rank,lane,athlete,time
@@ -417,6 +418,7 @@ examples:
       question: "How many athletes are from India?"
       action_history: []
       answer: 'f_add_column("country of athletes", ["India", "Kazakhstan", "India"]) -> f_select_row(["row 0", "row 2"]) -> f_select_column(["athlete", "country of athletes"]) -> f_group_by("country of athletes") -> f_end()'
+      answer_without_add_column: 'f_select_row(["row 0", "row 2"]) -> f_select_column(["athlete"]) -> f_group_by("athlete") -> f_end()'
 
     - table: |
         ,week,when,kickoff,opponent,results; final score,results; team record,game site,attendance
@@ -426,6 +428,7 @@ examples:
       question: "When was the competition with the highest points scored played?"
       action_history: []
       answer: 'f_add_column("points scored", [27, 37, 33]) -> f_select_row([*]) -> f_select_column(["when", "points scored"]) -> f_sort_by("points scored", "desc") -> f_end()'
+      answer_without_add_column: 'f_select_row([*]) -> f_select_column(["when", "results; final score"]) -> f_sort_by("results; final score", "desc") -> f_end()'
 
     - table: |
         ,iso/iec standard,status,wg
@@ -435,3 +438,4 @@ examples:
       question: "How many standards were published in 2011?"
       action_history: []
       answer: 'f_add_column("year", [2005, 2008, 2011]) -> f_select_row(["row 2"]) -> f_select_column(["year"]) -> f_group_by("year") -> f_end()'
+      answer_without_add_column: 'f_select_row(["row 2"]) -> f_select_column(["status"]) -> f_group_by("status") -> f_end()'

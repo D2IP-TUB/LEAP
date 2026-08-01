@@ -105,12 +105,17 @@ class PromptBuilder:
 
     def _build_iterative_instruction(self, worker, action_history: Sequence[str] = None, fallback: bool = False) -> str:
         """Instruction text for iterative generation."""
-        action_descriptions = REGISTRY.get_action_descriptions(action_history, exclude_terminating_on_first=False)
+        excluded_actions = self._excluded_actions(worker)
+        action_descriptions = REGISTRY.get_action_descriptions(
+            action_history,
+            exclude_terminating_on_first=False,
+            excluded_actions=excluded_actions,
+        )
 
         if worker.use_constraints:
             return f"{action_descriptions}\n\nNext action: "
 
-        actions_text = REGISTRY.get_prompt_text_iterative(action_history)
+        actions_text = REGISTRY.get_prompt_text_iterative(action_history, excluded_actions=excluded_actions)
 
         question_prefix = "What should be the next action? " if fallback else "What should be the next action to answer this question? "
         base = f"{action_descriptions}\n\n{question_prefix}Choose from: {actions_text}.\nNext action: "
@@ -131,6 +136,34 @@ class PromptBuilder:
     def _truncate_text(text: str, limit: int) -> str:
         return text[:limit] + "..." if len(text) > limit else text
 
+    @staticmethod
+    def _add_column_available(worker) -> bool:
+        """Whether this run may expose add_column to the model."""
+        if not REGISTRY.is_enabled("add_column"):
+            return False
+        if getattr(worker, "use_global_constraints", False) is True:
+            return False
+        return not (
+            getattr(worker, "use_constraints", False) is True
+            and getattr(worker, "constraint_backend", "legacy_state_machine") == "xgrammar"
+        )
+
+    @classmethod
+    def _excluded_actions(cls, worker) -> set[str]:
+        return set() if cls._add_column_available(worker) else {"add_column"}
+
+    @staticmethod
+    def _remove_add_column_rule(system: str) -> str:
+        """Return the existing action-selection rules with only add_column material removed."""
+        system = system.replace(", f_add_column", "")
+        rule_start = "If the table lacks a column to answer the question, use f_add_column()"
+        next_rule = "Often only a subset of columns is required to answer a question."
+        start = system.find(rule_start)
+        end = system.find(next_rule, start)
+        if start >= 0 and end >= 0:
+            system = system[:start] + system[end:]
+        return system
+
     def _build_action_selection_body(
         self,
         table_str: str,
@@ -138,6 +171,7 @@ class PromptBuilder:
         action_history: Sequence[str],
         available_label: str,
         question_suffix: str,
+        excluded_actions: set[str],
     ) -> str:
         """Build the user-message body for an action-selection turn."""
         prompt = f"{table_str}\n\n"
@@ -149,15 +183,23 @@ class PromptBuilder:
         else:
             prompt += "None\n"
         prompt += "\n"
-        actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
+        actions_text = REGISTRY.get_prompt_text_cot(
+            action_history,
+            exclude_terminating_on_first=True,
+            excluded_actions=excluded_actions,
+        )
         prompt += f"{available_label}: {actions_text}\n"
         prompt += question_suffix
         return prompt
 
-    def _build_action_selection_example_message(self, example) -> str:
+    def _build_action_selection_example_message(self, example, excluded_actions: set[str]) -> str:
         """Build the user-message content for a single few-shot action-selection example."""
         action_history = example.action_history or []
-        example_actions_text = REGISTRY.get_prompt_text_cot(action_history, exclude_terminating_on_first=True)
+        example_actions_text = REGISTRY.get_prompt_text_cot(
+            action_history,
+            exclude_terminating_on_first=True,
+            excluded_actions=excluded_actions,
+        )
         prompt = f"{example.format_table_for_prompt()}\n\n"
         prompt += f"Question: {example.question}\n\n"
         prompt += "Actions taken so far:\n"
@@ -180,9 +222,12 @@ class PromptBuilder:
     ) -> str:
         """Prompt for CoT action selection (dynamic plan)."""
         table_str = self._format_table(table, self.cot_settings.action_table_chars)
+        excluded_actions = self._excluded_actions(worker)
         available_label = "Available actions"
         question_suffix = ""
-        instruction_prompt = self._build_action_selection_body(table_str, question, action_history, available_label, question_suffix)
+        instruction_prompt = self._build_action_selection_body(
+            table_str, question, action_history, available_label, question_suffix, excluded_actions
+        )
 
         estimated_length = len(instruction_prompt) // 4
         if estimated_length > worker.max_model_len - self.cot_settings.action_safety_margin_tokens:
@@ -191,7 +236,7 @@ class PromptBuilder:
             question_suffix = ""
             question_short = self._truncate_text(question, self.cot_settings.action_question_truncation)
             instruction_prompt = self._build_action_selection_body(
-                table_str, question_short, action_history, available_label, question_suffix
+                table_str, question_short, action_history, available_label, question_suffix, excluded_actions
             )
 
         if not (self.action_examples and self.action_examples.has_prompt("action_selection")):
@@ -205,11 +250,17 @@ class PromptBuilder:
             self.action_examples.examples_manager.get_system_rules("action_selection")
             or "You are a helpful table question answering assistant"
         )
+        add_column_available = not excluded_actions
+        if not add_column_available:
+            system = self._remove_add_column_rule(system)
         messages = [{"role": "system", "content": system}]
 
         for example in examples:
-            messages.append({"role": "user", "content": self._build_action_selection_example_message(example)})
-            messages.append({"role": "assistant", "content": example.answer})
+            answer = example.answer if add_column_available else example.answer_without_add_column
+            if not answer:
+                continue
+            messages.append({"role": "user", "content": self._build_action_selection_example_message(example, excluded_actions)})
+            messages.append({"role": "assistant", "content": answer})
 
         messages.append({"role": "user", "content": instruction_prompt})
 
@@ -231,6 +282,9 @@ class PromptBuilder:
         worker,
     ) -> str:
         """Prompt for CoT argument generation."""
+
+        if action_name == "add_column" and not self._add_column_available(worker):
+            raise ValueError("add_column is not available for this generation configuration")
 
         messages = []
 

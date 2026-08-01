@@ -77,6 +77,85 @@ def test_phase_one_few_shot_chains_use_canonical_function_syntax():
         assert all(Action.parse(call) is not None for call in calls)
 
 
+def test_phase_one_prompt_has_no_add_column_evidence_when_disabled():
+    tokenizer = RecordingTokenizer()
+    builder = PromptBuilder(tokenizer=tokenizer, is_instruct=True)
+    worker = SimpleNamespace(
+        max_model_len=4096,
+        use_constraints=False,
+        use_global_constraints=False,
+        constraint_backend="legacy_state_machine",
+    )
+    table = Table(columns=["Name", "Age"], rows=[["Alice", "25"]])
+    previous_enabled = REGISTRY._enabled_actions
+    REGISTRY.set_enabled_actions(["select_row", "select_column", "group_by", "sort_by", "end"])
+    try:
+        builder.build_cot_action_prompt(
+            question="Who is oldest?",
+            table=table,
+            action_history=[],
+            worker=worker,
+        )
+    finally:
+        REGISTRY._enabled_actions = previous_enabled
+
+    assert "add_column" not in "\n".join(message["content"] for message in tokenizer.messages)
+    assert [message["content"] for message in tokenizer.messages if message["role"] == "assistant"] == [
+        'f_select_row(["row 0", "row 1"]) -> f_select_column(["date", "league"]) -> f_sort_by("date", "desc") -> f_end()',
+        'f_select_row(["row 0", "row 2"]) -> f_select_column(["athlete"]) -> f_group_by("athlete") -> f_end()',
+        'f_select_row([*]) -> f_select_column(["when", "results; final score"]) -> f_sort_by("results; final score", "desc") -> f_end()',
+        'f_select_row(["row 2"]) -> f_select_column(["status"]) -> f_group_by("status") -> f_end()',
+    ]
+
+
+def test_global_constraints_use_no_add_column_prompt_variant():
+    tokenizer = RecordingTokenizer()
+    builder = PromptBuilder(tokenizer=tokenizer, is_instruct=True)
+    worker = SimpleNamespace(
+        max_model_len=4096,
+        use_constraints=True,
+        use_global_constraints=True,
+        constraint_backend="legacy_state_machine",
+    )
+    previous_enabled = REGISTRY._enabled_actions
+    REGISTRY.set_enabled_actions(["select_row", "add_column", "end"])
+    try:
+        builder.build_cot_action_prompt(
+            question="Who is listed?",
+            table=Table(columns=["Name"], rows=[["Alice"]]),
+            action_history=[],
+            worker=worker,
+        )
+    finally:
+        REGISTRY._enabled_actions = previous_enabled
+
+    assert "add_column" not in "\n".join(message["content"] for message in tokenizer.messages)
+
+
+def test_xgrammar_uses_no_add_column_prompt_variant():
+    tokenizer = RecordingTokenizer()
+    builder = PromptBuilder(tokenizer=tokenizer, is_instruct=True)
+    worker = SimpleNamespace(
+        max_model_len=4096,
+        use_constraints=True,
+        use_global_constraints=False,
+        constraint_backend="xgrammar",
+    )
+    previous_enabled = REGISTRY._enabled_actions
+    REGISTRY.set_enabled_actions(["select_row", "add_column", "end"])
+    try:
+        builder.build_cot_action_prompt(
+            question="Who is listed?",
+            table=Table(columns=["Name"], rows=[["Alice"]]),
+            action_history=[],
+            worker=worker,
+        )
+    finally:
+        REGISTRY._enabled_actions = previous_enabled
+
+    assert "add_column" not in "\n".join(message["content"] for message in tokenizer.messages)
+
+
 def test_phase_one_examples_use_direct_questions_and_requested_chains():
     examples = ActionExamplesManager().get_examples("action_selection")
 
