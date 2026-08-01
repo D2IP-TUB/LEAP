@@ -13,6 +13,7 @@ import os
 import queue
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 from tqdm.auto import tqdm
@@ -27,6 +28,13 @@ from leap.utils.table_logger import TableLogger
 
 # Default max concurrent requests per worker for continuous batching
 DEFAULT_MAX_CONCURRENT_REQUESTS = 16
+
+
+@dataclass(frozen=True)
+class ConfiguredInferenceRequest:
+    request: InferenceRequest
+    generation_config: GenerationConfig
+    logging_config: LoggingConfig
 
 
 def _open_progress_output():
@@ -102,6 +110,15 @@ class VLLMWorkerProcess(mp.Process):
         self.tokenizer = None
         self.max_model_len = None  # Will be set from engine after initialization
         self.model_loaded = mp.Event()
+
+    def _apply_run_config(self, generation_config: GenerationConfig, logging_config: LoggingConfig) -> None:
+        self.generation_config = generation_config
+        self.logging_config = logging_config
+        self.use_constraints = generation_config.use_constraints
+        self.use_cot = generation_config.strategy == "cot"
+        self.use_global_constraints = generation_config.use_global_constraints
+        self.constraint_backend = generation_config.constraint_backend
+        self.output_format = generation_config.output_format
 
     def run(self):
         """Main worker process loop"""
@@ -269,11 +286,17 @@ class VLLMWorkerProcess(mp.Process):
                     filled = 0
                     for _ in range(slots_available):
                         try:
-                            request = self.input_queue.get_nowait()
+                            queued_request = self.input_queue.get_nowait()
 
-                            if request is None:  # Shutdown signal
+                            if queued_request is None:  # Shutdown signal
                                 shutdown_requested = True
                                 break
+
+                            if isinstance(queued_request, ConfiguredInferenceRequest):
+                                self._apply_run_config(queued_request.generation_config, queued_request.logging_config)
+                                request = queued_request.request
+                            else:
+                                request = queued_request
 
                             # Create async task for this request (non-blocking)
                             task = asyncio.create_task(self._process_single_request(request, state_machines))
@@ -365,8 +388,8 @@ class VLLMWorkerProcess(mp.Process):
         try:
             # Get the appropriate generation function based on strategy config
             strategy = self.generation_config.strategy
-            function_name = strategy + "_generation"
-            generation_func = self.generation_functions.get(function_name)
+            function_name = f"{self.output_format}_{strategy}_generation"
+            generation_func = self.generation_functions.get(function_name) or self.generation_functions.get(strategy + "_generation")
 
             if not generation_func:
                 raise ValueError(f"No generation function configured for strategy: {strategy}")
@@ -674,6 +697,24 @@ class ProcessParallelVLLM:
         else:
             return "Unconstrained generation with post-processing"
 
+    def reconfigure(self, generation_config: GenerationConfig, logging_config: LoggingConfig) -> None:
+        """Select settings and a fresh logger for the next batch without recreating workers."""
+        if not self.workers_healthy():
+            raise RuntimeError("Cannot reconfigure an unhealthy vLLM worker pool.")
+        self.generation_config = generation_config
+        self.logging_config = logging_config
+        self.main_logger = None
+        self._init_main_logger()
+
+    def finish_run(self) -> None:
+        """Finalize the active run's logs without shutting down the model workers."""
+        if self.main_logger:
+            self.write_summary_report(self._get_generation_mode_description())
+
+    def workers_healthy(self) -> bool:
+        started_workers = [worker for worker in self.workers if worker.pid is not None]
+        return self._workers_ready and len(started_workers) == self.num_workers and all(worker.is_alive() for worker in started_workers)
+
     def generate_batch(self, requests: List[InferenceRequest], timeout_per_request: int = 180) -> List[InferenceResult]:
         """
         Generate responses for batch of requests
@@ -700,7 +741,13 @@ class ProcessParallelVLLM:
             request_with_id = replace(request, request_id=request_id)
 
             # Put the typed object directly in the queue
-            self.input_queue.put(request_with_id)
+            self.input_queue.put(
+                ConfiguredInferenceRequest(
+                    request=request_with_id,
+                    generation_config=self.generation_config,
+                    logging_config=self.logging_config,
+                )
+            )
 
         # Collect results
         results = {}
@@ -816,7 +863,7 @@ class ProcessParallelVLLM:
         else:
             print("Warning: Logging not enabled, cannot analyze logs")
 
-    def shutdown(self):
+    def shutdown(self, *, write_summary: bool = True):
         """Shutdown all worker processes"""
         print("Shutting down workers...")
 
@@ -836,7 +883,7 @@ class ProcessParallelVLLM:
         self._workers_ready = False
 
         # Final summary report if logging enabled
-        if self.main_logger:
+        if write_summary and self.main_logger:
             print("\nGenerating final summary report...")
             generation_mode = self._get_generation_mode_description()
             self.write_summary_report(generation_mode)

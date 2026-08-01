@@ -24,12 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from leap.vllm_runtime import (  # noqa: E402
-    BOOTSTRAPPED_ENV_VAR,
-    ensure_vllm_runtime,
-    runtime_for_experiment,
-    runtime_for_generation,
-)
+from leap.vllm_runtime import BOOTSTRAPPED_ENV_VAR, runtime_for_generation  # noqa: E402
 
 VALID_STRATEGIES = {"iterative", "cot", "direct_query"}
 VALID_CONSTRAINT_BACKENDS = {"legacy_state_machine", "xgrammar"}
@@ -60,6 +55,7 @@ class ExperimentSpec:
     python_executable: Path
     extractors: list[str]
     enabled_actions: list[str]
+    reuse_models: bool = True
 
 
 @dataclass(frozen=True)
@@ -81,6 +77,14 @@ class ExperimentJob:
             constraint_backend=self.constraint_backend,
             output_format=self.output_format,
         ).name
+
+
+@dataclass(frozen=True)
+class ExperimentSession:
+    session_id: str
+    model: str
+    expected_runtime: str
+    jobs: list[ExperimentJob]
 
 
 @dataclass(frozen=True)
@@ -114,6 +118,10 @@ class JobResult:
     error: str | None = None
     average_extractor_accuracy: float | None = None
     method_accuracies: dict[str, float] = field(default_factory=dict)
+    session_id: str | None = None
+    model_load_id: str | None = None
+    model_reused: bool = False
+    restart_reason: str | None = None
 
 
 def load_experiment_spec(spec_path: Path) -> ExperimentSpec:
@@ -164,6 +172,9 @@ def load_experiment_spec(spec_path: Path) -> ExperimentSpec:
 
     extractors = _string_list(raw, "extractors", VALID_EXTRACTORS)
     enabled_actions = _string_list(raw, "enabled_actions", VALID_ACTIONS)
+    reuse_models = raw.get("reuse_models", True)
+    if type(reuse_models) is not bool:
+        raise ValueError("'reuse_models' must be a boolean.")
 
     return ExperimentSpec(
         base_config=base_config,
@@ -175,6 +186,7 @@ def load_experiment_spec(spec_path: Path) -> ExperimentSpec:
         python_executable=python_executable,
         extractors=extractors,
         enabled_actions=enabled_actions,
+        reuse_models=reuse_models,
     )
 
 
@@ -235,6 +247,21 @@ def create_jobs(spec: ExperimentSpec, experiment_dir: Path) -> list[ExperimentJo
                     )
                 )
     return jobs
+
+
+def group_jobs(jobs: list[ExperimentJob]) -> list[ExperimentSession]:
+    grouped: dict[tuple[str, str], list[ExperimentJob]] = {}
+    for job in jobs:
+        grouped.setdefault((job.model, job.expected_runtime), []).append(job)
+    return [
+        ExperimentSession(
+            session_id=f"{_slugify(model)}-{runtime}",
+            model=model,
+            expected_runtime=runtime,
+            jobs=session_jobs,
+        )
+        for (model, runtime), session_jobs in grouped.items()
+    ]
 
 
 def expand_matrix(matrix: ExperimentMatrix) -> list[dict[str, Any]]:
@@ -336,18 +363,7 @@ def run_job(job: ExperimentJob, *, experiment_dir: Path, project_root: Path, pyt
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
         existing_manifests = {path.resolve() for path in job.results_root.glob("**/run_config.json")}
-        env = os.environ.copy()
-        env["LEAP_CONFIG_PATH"] = str(job.config_path)
-        env["LEAP_RESULTS_ROOT"] = str(job.results_root)
-        env["PYTHONUNBUFFERED"] = "1"
-        # Keep each child run's per-question tqdm visible below the outer suite
-        # bar without redirecting the rest of the child's stderr away from logs.
-        env["LEAP_TQDM_TO_TTY"] = "1"
-        env["LEAP_TQDM_POSITION"] = "1"
-        env["LEAP_TQDM_LEAVE"] = "0"
-        # Each generated job config selects its own runtime. Do not let the
-        # experiment runner's bootstrap prevent a child from switching V0/V1.
-        env.pop(BOOTSTRAPPED_ENV_VAR, None)
+        env = _child_environment(config_path=job.config_path, results_root=job.results_root)
 
         return_code, runtime_seconds = _run_child_process(
             [str(python_executable), "main.py"],
@@ -412,7 +428,12 @@ def _job_result(
     run_dir: Path | None,
     metrics: dict[str, Any],
     error: str | None,
+    session_id: str | None = None,
+    model_load_id: str | None = None,
+    model_reused: bool = False,
+    restart_reason: str | None = None,
 ) -> JobResult:
+    model_load_id = model_load_id or f"standalone-{_job_identifier(job)}"
     return JobResult(
         model=job.model,
         strategy=job.strategy,
@@ -443,7 +464,197 @@ def _job_result(
         error=error,
         average_extractor_accuracy=metrics.get("average_extractor_accuracy"),
         method_accuracies=metrics.get("method_accuracies", {}),
+        session_id=session_id,
+        model_load_id=model_load_id,
+        model_reused=model_reused,
+        restart_reason=restart_reason,
     )
+
+
+def run_session_group(
+    session: ExperimentSession,
+    *,
+    experiment_dir: Path,
+    project_root: Path,
+    python_executable: Path,
+    on_result,
+) -> None:
+    pending = list(session.jobs)
+    attempt = 0
+    while pending:
+        attempt += 1
+        attempt_id = f"{session.session_id}-attempt-{attempt}"
+        session_dir = experiment_dir / "sessions" / attempt_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        status_path = session_dir / "status.jsonl"
+        manifest_path = session_dir / "manifest.json"
+        manifest = {
+            "session_id": attempt_id,
+            "status_path": str(status_path),
+            "jobs": [
+                {
+                    "job_id": _job_identifier(job),
+                    "config_path": str(job.config_path),
+                    "results_root": str(job.results_root),
+                }
+                for job in pending
+            ],
+        }
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        log_dir = experiment_dir / "job_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stdout_log = log_dir / f"{attempt_id}.stdout.log"
+        stderr_log = log_dir / f"{attempt_id}.stderr.log"
+        env = _child_environment(config_path=pending[0].config_path, results_root=pending[0].results_root)
+        env["LEAP_SESSION_MANIFEST"] = str(manifest_path)
+
+        terminal_ids: set[str] = set()
+        started_ids: list[str] = []
+        job_by_id = {_job_identifier(job): job for job in pending}
+
+        def handle_event(event: dict[str, Any]) -> None:
+            job_id = event.get("job_id")
+            if job_id not in job_by_id:
+                return
+            if event.get("event") == "started":
+                started_ids.append(job_id)
+                return
+            if event.get("event") not in {"completed", "failed"} or job_id in terminal_ids:
+                return
+            terminal_ids.add(job_id)
+            on_result(_result_from_session_event(job_by_id[job_id], event, stdout_log, stderr_log, attempt_id))
+
+        return_code, process_error = _run_session_process(
+            [str(python_executable), "main.py"],
+            project_root=project_root,
+            env=env,
+            stdout_log=stdout_log,
+            stderr_log=stderr_log,
+            status_path=status_path,
+            on_event=handle_event,
+        )
+
+        unfinished = [job for job in pending if _job_identifier(job) not in terminal_ids]
+        if unfinished:
+            active_id = next((job_id for job_id in reversed(started_ids) if job_id not in terminal_ids), _job_identifier(unfinished[0]))
+            active_job = job_by_id[active_id]
+            terminal_ids.add(active_id)
+            on_result(
+                _job_result(
+                    active_job,
+                    status="failed",
+                    return_code=return_code,
+                    runtime_seconds=0.0,
+                    stdout_log=stdout_log,
+                    stderr_log=stderr_log,
+                    run_dir=None,
+                    metrics={},
+                    error=process_error or _format_process_error(return_code, stderr_log, stdout_log),
+                    session_id=attempt_id,
+                    model_load_id=f"{attempt_id}-crashed",
+                    restart_reason="Persistent session process crashed",
+                )
+            )
+        pending = [job for job in pending if _job_identifier(job) not in terminal_ids]
+
+
+def _result_from_session_event(
+    job: ExperimentJob,
+    event: dict[str, Any],
+    stdout_log: Path,
+    stderr_log: Path,
+    session_id: str,
+) -> JobResult:
+    run_dir = Path(event["run_dir"]) if event.get("run_dir") else None
+    metrics = {}
+    error = event.get("error")
+    status = "failed"
+    try:
+        metrics = collect_run_metrics(run_dir) if run_dir else {}
+        primary_accuracy = metrics.get("average_extractor_accuracy")
+        if primary_accuracy is None:
+            primary_accuracy = metrics.get("accuracy")
+        if event["event"] == "completed" and metrics.get("examples", 0) > 0 and primary_accuracy is not None:
+            status = "ok"
+        elif event["event"] == "completed":
+            error = "Session completed without usable result metrics"
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    return _job_result(
+        job,
+        status=status,
+        return_code=0 if status == "ok" else 1,
+        runtime_seconds=float(event.get("runtime_seconds", 0.0)),
+        stdout_log=stdout_log,
+        stderr_log=stderr_log,
+        run_dir=run_dir,
+        metrics=metrics,
+        error=error,
+        session_id=session_id,
+        model_load_id=event.get("model_load_id"),
+        model_reused=bool(event.get("model_reused", False)),
+        restart_reason=event.get("restart_reason"),
+    )
+
+
+def _child_environment(*, config_path: Path, results_root: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["LEAP_CONFIG_PATH"] = str(config_path)
+    env["LEAP_RESULTS_ROOT"] = str(results_root)
+    env["PYTHONUNBUFFERED"] = "1"
+    env["LEAP_TQDM_TO_TTY"] = "1"
+    env["LEAP_TQDM_POSITION"] = "1"
+    env["LEAP_TQDM_LEAVE"] = "0"
+    env.pop(BOOTSTRAPPED_ENV_VAR, None)
+    return env
+
+
+def _run_session_process(
+    cmd: list[str],
+    *,
+    project_root: Path,
+    env: dict[str, str],
+    stdout_log: Path,
+    stderr_log: Path,
+    status_path: Path,
+    on_event,
+) -> tuple[int, str | None]:
+    process = None
+    status_offset = 0
+    process_error = None
+    try:
+        with stdout_log.open("w", encoding="utf-8") as stdout_f, stderr_log.open("w", encoding="utf-8") as stderr_f:
+            process = subprocess.Popen(cmd, cwd=project_root, env=env, stdout=stdout_f, stderr=stderr_f, text=True)
+            while process.poll() is None:
+                status_offset = _consume_session_events(status_path, status_offset, on_event)
+                time.sleep(1)
+            status_offset = _consume_session_events(status_path, status_offset, on_event)
+            return int(process.returncode), None
+    except BaseException as exc:
+        if process is not None:
+            _terminate_process(process)
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        process_error = f"{type(exc).__name__}: {exc}"
+        LOGGER.exception("Persistent experiment session failed")
+        _consume_session_events(status_path, status_offset, on_event)
+        return int(process.returncode) if process and process.returncode is not None else -1, process_error
+
+
+def _consume_session_events(status_path: Path, offset: int, on_event) -> int:
+    if not status_path.exists():
+        return offset
+    with status_path.open("r", encoding="utf-8") as status_file:
+        status_file.seek(offset)
+        while True:
+            line_offset = status_file.tell()
+            line = status_file.readline()
+            if not line:
+                return line_offset
+            if not line.endswith("\n"):
+                return line_offset
+            if line.strip():
+                on_event(json.loads(line))
 
 
 def collect_run_metrics(run_dir: Path) -> dict[str, Any]:
@@ -570,6 +781,8 @@ def build_report(spec: ExperimentSpec, experiment_id: str, experiment_dir: Path,
         "repeats": spec.repeats,
         "max_examples": spec.max_examples,
         "python_executable": str(spec.python_executable),
+        "reuse_models": spec.reuse_models,
+        "model_load_count": len({result.model_load_id for result in job_results if result.model_load_id}),
         "required_vllm_runtimes": sorted({result.expected_runtime for result in job_results}),
         "jobs": serial_jobs,
         "summary_by_configuration": _summarize(job_results, configuration_keys),
@@ -593,6 +806,8 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         f"Max examples: {report['max_examples']}",
         f"Repeats: {report['repeats']}",
         f"Python: {report['python_executable']}",
+        f"Reuse models: {report['reuse_models']}",
+        f"Model loads: {report['model_load_count']}",
         f"Required vLLM runtimes: {', '.join(report['required_vllm_runtimes']) or 'none'}",
         *(f"Matrix adjustment: {note}" for note in report["matrix_adjustments"]),
         "",
@@ -654,14 +869,14 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             "## Individual Runs",
             "",
             "| Model | Strategy | Constraints | Global | Backend | Format | vLLM | Repeat | Accuracy | "
-            "Examples | Runtime | Status | Error | Run Dir |",
-            "|---|---|---|---|---|---|---|---:|---:|---:|---:|---|---|---|",
+            "Examples | Runtime | Reused | Session | Restart | Status | Error | Run Dir |",
+            "|---|---|---|---|---|---|---|---:|---:|---:|---:|---|---|---|---|---|---|",
         ]
     )
     for row in report["jobs"]:
         lines.append(
             "| {model} | {strategy} | {constraints} | {global_constraints} | {backend} | {format} | {vllm} | {repeat} | "
-            "{accuracy} | {examples} | {runtime} | {status} | {error} | {run_dir} |".format(
+            "{accuracy} | {examples} | {runtime} | {reused} | {session} | {restart} | {status} | {error} | {run_dir} |".format(
                 model=row["model"],
                 strategy=row["strategy"],
                 constraints=_fmt_bool(row["use_constraints"]),
@@ -675,6 +890,9 @@ def render_markdown_report(report: dict[str, Any]) -> str:
                 ),
                 examples=row["examples"],
                 runtime=_format_seconds(row["runtime_seconds"]),
+                reused=row["model_reused"],
+                session=row["session_id"] or "",
+                restart=_markdown_cell(row["restart_reason"] or ""),
                 status=row["status"],
                 error=_markdown_cell(row["error"] or ""),
                 run_dir=row["run_dir"] or "",
@@ -713,56 +931,28 @@ def main(argv: list[str] | None = None) -> int:
     for note in describe_matrix_adjustments(spec.matrix):
         LOGGER.info("Matrix adjustment: %s", note)
 
-    job_results = []
+    job_results: list[JobResult] = []
     project_root = PROJECT_ROOT
-    progress = tqdm(jobs, desc="Experiments", unit="job")
-    for job in progress:
-        progress.set_postfix_str(f"{job.strategy} r{job.repeat}", refresh=False)
-        LOGGER.info(
-            "Starting job: model=%s strategy=%s constraints=%s global=%s backend=%s format=%s repeat=%s",
-            job.model,
-            job.strategy,
-            job.use_constraints,
-            job.use_global_constraints,
-            job.constraint_backend,
-            job.output_format,
-            job.repeat,
-        )
-        try:
-            result = run_job(
-                job,
-                experiment_dir=experiment_dir,
-                project_root=project_root,
-                python_executable=spec.python_executable,
-            )
-        except Exception as exc:
-            LOGGER.exception("Unexpected runner failure; recording the job and continuing")
-            log_dir = experiment_dir / "job_logs"
-            result = _job_result(
-                job,
-                status="failed",
-                return_code=-1,
-                runtime_seconds=0.0,
-                stdout_log=log_dir / f"{_job_identifier(job)}.stdout.log",
-                stderr_log=log_dir / f"{_job_identifier(job)}.stderr.log",
-                run_dir=None,
-                metrics={},
-                error=f"{type(exc).__name__}: {exc}",
-            )
+    progress = tqdm(total=len(jobs), desc="Experiments", unit="job")
+
+    def record_result(result: JobResult) -> None:
         job_results.append(result)
+        progress.update(1)
+        progress.set_postfix_str(f"{result.strategy} r{result.repeat}", refresh=False)
         try:
             write_reports(build_report(spec, experiment_id, experiment_dir, job_results), experiment_dir)
         except Exception:
             LOGGER.exception("Could not update experiment reports; continuing with the next job")
         if result.status == "ok":
             LOGGER.info(
-                "Finished job: model=%s strategy=%s repeat=%s examples=%s accuracy=%s runtime=%s",
+                "Finished job: model=%s strategy=%s repeat=%s examples=%s accuracy=%s runtime=%s reused=%s",
                 result.model,
                 result.strategy,
                 result.repeat,
                 result.examples,
                 _fmt_float(result.accuracy),
                 _format_seconds(result.runtime_seconds),
+                getattr(result, "model_reused", False),
             )
         else:
             LOGGER.error(
@@ -773,6 +963,51 @@ def main(argv: list[str] | None = None) -> int:
                 result.error,
                 result.stderr_log,
             )
+
+    try:
+        if spec.reuse_models:
+            sessions = group_jobs(jobs)
+            LOGGER.info("Prepared %s persistent model/runtime sessions", len(sessions))
+            for session in sessions:
+                LOGGER.info(
+                    "Starting persistent session: model=%s runtime=%s jobs=%s",
+                    session.model,
+                    session.expected_runtime,
+                    len(session.jobs),
+                )
+                run_session_group(
+                    session,
+                    experiment_dir=experiment_dir,
+                    project_root=project_root,
+                    python_executable=spec.python_executable,
+                    on_result=record_result,
+                )
+        else:
+            for job in jobs:
+                try:
+                    result = run_job(
+                        job,
+                        experiment_dir=experiment_dir,
+                        project_root=project_root,
+                        python_executable=spec.python_executable,
+                    )
+                except Exception as exc:
+                    LOGGER.exception("Unexpected runner failure; recording the job and continuing")
+                    log_dir = experiment_dir / "job_logs"
+                    result = _job_result(
+                        job,
+                        status="failed",
+                        return_code=-1,
+                        runtime_seconds=0.0,
+                        stdout_log=log_dir / f"{_job_identifier(job)}.stdout.log",
+                        stderr_log=log_dir / f"{_job_identifier(job)}.stderr.log",
+                        run_dir=None,
+                        metrics={},
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+                record_result(result)
+    finally:
+        progress.close()
 
     try:
         write_reports(build_report(spec, experiment_id, experiment_dir, job_results), experiment_dir)
@@ -1037,9 +1272,4 @@ def _configure_logging(log_level: str) -> None:
 
 
 if __name__ == "__main__":
-    bootstrap_parser = argparse.ArgumentParser(add_help=False)
-    bootstrap_parser.add_argument("spec", nargs="?", type=Path, default=DEFAULT_SPEC_PATH)
-    bootstrap_parser.add_argument("--log-level")
-    bootstrap_args, _ = bootstrap_parser.parse_known_args()
-    ensure_vllm_runtime(runtime_for_experiment(bootstrap_args.spec, project_root=PROJECT_ROOT), argv=sys.argv, project_root=PROJECT_ROOT)
     raise SystemExit(main())

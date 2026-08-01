@@ -12,6 +12,7 @@ from scripts.run_experiments import (
     DEFAULT_SPEC_PATH,
     ExperimentJob,
     ExperimentMatrix,
+    ExperimentSession,
     ExperimentSpec,
     JobResult,
     _run_child_process,
@@ -20,10 +21,12 @@ from scripts.run_experiments import (
     collect_run_metrics,
     create_jobs,
     expand_matrix,
+    group_jobs,
     load_experiment_spec,
     main,
     render_markdown_report,
     run_job,
+    run_session_group,
 )
 
 
@@ -185,6 +188,19 @@ def test_load_experiment_spec_validates_matrix_lists(tmp_path, monkeypatch, key,
         load_experiment_spec(spec_path)
 
 
+def test_load_experiment_spec_defaults_model_reuse_on_and_accepts_opt_out(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    base_path, _ = _base_config(tmp_path)
+    data = _spec_data(base_path)
+    spec_path = tmp_path / "experiments.yaml"
+    _write_yaml(spec_path, data)
+    assert load_experiment_spec(spec_path).reuse_models is True
+
+    data["reuse_models"] = False
+    _write_yaml(spec_path, data)
+    assert load_experiment_spec(spec_path).reuse_models is False
+
+
 def test_example_matrix_creates_252_unique_jobs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     base_path, _ = _base_config(tmp_path)
@@ -201,6 +217,22 @@ def test_example_matrix_creates_252_unique_jobs(tmp_path, monkeypatch):
     generated = yaml.safe_load(jobs[0].config_path.read_text(encoding="utf-8"))
     assert generated["extractors"] == data["extractors"]
     assert generated["generation"]["enabled_actions"] == data["enabled_actions"]
+
+
+def test_group_jobs_creates_one_session_per_model_and_runtime(tmp_path):
+    settings = expand_matrix(_matrix())
+    jobs = []
+    for model in ("model/a", "model/b", "model/c", "model/d"):
+        for setting in settings:
+            jobs.append(_job(tmp_path, model=model, **setting))
+
+    sessions = group_jobs(jobs)
+
+    assert len(sessions) == 8
+    assert {(session.model, session.expected_runtime) for session in sessions} == {
+        (model, runtime) for model in ("model/a", "model/b", "model/c", "model/d") for runtime in ("legacy", "modern")
+    }
+    assert sum(len(session.jobs) for session in sessions) == len(jobs)
 
 
 def test_collect_run_metrics_from_results(tmp_path):
@@ -360,6 +392,9 @@ def test_experiment_report_includes_error_columns(tmp_path):
         invalid_candidate_count=3,
         missing_generation_count=1,
         total_error_count=5,
+        session_id="model-a-legacy-attempt-1",
+        model_load_id="model-a-legacy-attempt-1-load-1",
+        model_reused=True,
     )
 
     report = build_report(spec, "exp", tmp_path / "experiment", [result])
@@ -367,7 +402,9 @@ def test_experiment_report_includes_error_columns(tmp_path):
 
     assert report["jobs"][0]["error_rate"] == 0.5
     assert report["required_vllm_runtimes"] == ["legacy"]
+    assert report["model_load_count"] == 1
     assert "Required vLLM runtimes: legacy" in markdown
+    assert "Model loads: 1" in markdown
     assert report["summary_by_configuration"][0]["invalid_generation_end_count"] == 1
     assert "Error Rate" in markdown
     assert "legacy_state_machine" in markdown
@@ -452,6 +489,53 @@ def test_run_child_process_terminates_child_on_runner_error(tmp_path, monkeypatc
     assert process.waited is True
 
 
+def test_persistent_session_crash_marks_active_job_and_continues(tmp_path, monkeypatch):
+    jobs = [_job(tmp_path, repeat=1), _job(tmp_path, repeat=2)]
+    session = ExperimentSession(session_id="model-a-modern", model="model/a", expected_runtime="modern", jobs=jobs)
+    attempts = []
+
+    def fake_session_process(*args, **kwargs):
+        manifest = json.loads((kwargs["status_path"].parent / "manifest.json").read_text(encoding="utf-8"))
+        attempts.append([job["job_id"] for job in manifest["jobs"]])
+        first = manifest["jobs"][0]
+        kwargs["on_event"]({"event": "started", "job_id": first["job_id"], "model_load_id": "load"})
+        if len(attempts) == 1:
+            return 139, "session crashed"
+        run_dir = tmp_path / "run"
+        kwargs["on_event"](
+            {
+                "event": "completed",
+                "job_id": first["job_id"],
+                "run_dir": str(run_dir),
+                "runtime_seconds": 1.0,
+                "model_load_id": "load-2",
+                "model_reused": False,
+            }
+        )
+        return 0, None
+
+    monkeypatch.setattr("scripts.run_experiments._run_session_process", fake_session_process)
+    monkeypatch.setattr(
+        "scripts.run_experiments.collect_run_metrics",
+        lambda path: {"examples": 1, "accuracy": 1.0, "successful_examples": 1},
+    )
+    results = []
+
+    run_session_group(
+        session,
+        experiment_dir=tmp_path / "experiment",
+        project_root=tmp_path,
+        python_executable=Path("python"),
+        on_result=results.append,
+    )
+
+    assert [result.status for result in results] == ["failed", "ok"]
+    assert results[0].restart_reason == "Persistent session process crashed"
+    assert len(attempts) == 2
+    assert len(attempts[0]) == 2
+    assert len(attempts[1]) == 1
+
+
 def test_main_defaults_to_example_spec(monkeypatch, tmp_path):
     seen = {}
 
@@ -495,6 +579,7 @@ def test_main_continues_after_job_and_report_errors(monkeypatch, tmp_path):
         python_executable=Path("python"),
         extractors=["direct_query"],
         enabled_actions=["end"],
+        reuse_models=False,
     )
     jobs = [_job(tmp_path, repeat=1), _job(tmp_path, repeat=2)]
     calls = []
@@ -557,6 +642,7 @@ def test_main_does_not_swallow_keyboard_interrupt(monkeypatch, tmp_path):
         python_executable=Path("python"),
         extractors=["direct_query"],
         enabled_actions=["end"],
+        reuse_models=False,
     )
     monkeypatch.setattr("scripts.run_experiments.load_experiment_spec", lambda path: spec)
     monkeypatch.setattr("scripts.run_experiments.validate_models", lambda value: None)

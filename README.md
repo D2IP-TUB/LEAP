@@ -50,7 +50,15 @@ matrix:
   output_formats: [function, json]
 ```
 
-Only unique supported jobs are generated. Unconstrained runs use the modern xgrammar runtime, legacy constrained decoding supports function output only, and `direct_query` is emitted once per model and repeat because action constraints do not affect it. With the four models and three repeats in the example, this produces 252 jobs. Every job failure is recorded in the experiment report and the runner continues with the remaining jobs; the final command exits nonzero if any job failed. Invalid suite configuration and explicit user interruption still stop the runner.
+Only unique supported jobs are generated. Unconstrained runs use the modern xgrammar runtime, legacy constrained decoding supports function output only, and `direct_query` is emitted once per model and repeat because action constraints do not affect it. Enabling all four documented models, all matrix values, and three repeats produces 252 jobs. Every job failure is recorded in the experiment report and the runner continues with the remaining jobs; the final command exits nonzero if any job failed. Invalid suite configuration and explicit user interruption still stop the runner.
+
+Model reuse is enabled by default and can be controlled explicitly:
+
+```yaml
+reuse_models: true
+```
+
+The runner groups jobs by model and vLLM runtime. Strategy, constraint, output-format, and repeat changes within a compatible group reuse the loaded model; changing the model or switching between the modern V1 and legacy V0 runtimes starts a new model session. Set `reuse_models: false` to restore isolated one-process-per-job execution. Reports include the session, model-load count, reuse state, and restart reason for each job.
 
 ## JSON operation mode
 

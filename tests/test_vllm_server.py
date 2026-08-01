@@ -204,6 +204,31 @@ class TestProcessParallelVLLM:
         with pytest.raises(RuntimeError, match="Workers not ready"):
             server.generate_batch([{"question": "test"}])
 
+    def test_reconfigure_keeps_worker_objects_and_replaces_run_logger(self, monkeypatch, tmp_path):
+        server = create_test_server(
+            model_id="gpt2",
+            num_workers=2,
+            generation_config=create_test_generation_config(),
+            logging_config=create_test_logging_config(enable_logging=False),
+        )
+        worker_ids = [id(worker) for worker in server.workers]
+        monkeypatch.setattr(server, "workers_healthy", lambda: True)
+        next_generation = GenerationConfig(
+            use_constraints=False,
+            use_global_constraints=False,
+            strategy="cot",
+            constraint_backend="xgrammar",
+            output_format="json",
+        )
+        next_logging = create_test_logging_config(log_dir=str(tmp_path))
+
+        server.reconfigure(next_generation, next_logging)
+
+        assert [id(worker) for worker in server.workers] == worker_ids
+        assert server.generation_config is next_generation
+        assert server.logging_config is next_logging
+        assert server.main_logger.log_dir == tmp_path
+
 
 class TestVLLMWorkerProcess:
     """Test VLLMWorkerProcess initialization"""
@@ -222,6 +247,27 @@ class TestVLLMWorkerProcess:
             tensor_parallel_size=1,
             max_model_len=1234,
         )
+
+    def test_apply_run_config_updates_generation_without_reloading_engine(self):
+        worker = self._worker()
+        engine_marker = object()
+        worker.engine = engine_marker
+        generation = GenerationConfig(
+            use_constraints=False,
+            use_global_constraints=False,
+            strategy="cot",
+            constraint_backend="xgrammar",
+            output_format="json",
+        )
+        logging = create_test_logging_config(enable_logging=False)
+
+        worker._apply_run_config(generation, logging)
+
+        assert worker.engine is engine_marker
+        assert worker.generation_config is generation
+        assert worker.use_constraints is False
+        assert worker.use_cot is True
+        assert worker.output_format == "json"
 
     def test_worker_initialization(self):
         """Test worker process initialization"""

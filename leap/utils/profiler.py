@@ -52,6 +52,12 @@ class AggregateProfiler:
         for operation, time_spent in operation_timings.items():
             self.operation_times[operation].append(time_spent)
 
+    def reset(self) -> None:
+        """Clear all accumulated per-run profiling data."""
+        self.operation_times.clear()
+        self.request_times.clear()
+        self.step_counts.clear()
+
     def print_summary(self):
         """Print comprehensive summary of all profiling data"""
         if not self.request_times:

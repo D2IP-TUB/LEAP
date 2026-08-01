@@ -1,5 +1,6 @@
 # ruff: noqa: I001  # Runtime bootstrap must execute before imports that load vLLM.
 if __name__ == "__main__":
+    import json as _bootstrap_json
     import os as _bootstrap_os
     import sys as _bootstrap_sys
     from pathlib import Path as _BootstrapPath
@@ -7,6 +8,11 @@ if __name__ == "__main__":
     from leap.vllm_runtime import ensure_vllm_runtime, runtime_for_config
 
     _bootstrap_config = _BootstrapPath(_bootstrap_os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
+    _bootstrap_session = _bootstrap_os.environ.get("LEAP_SESSION_MANIFEST")
+    if _bootstrap_session:
+        with open(_bootstrap_session, "r", encoding="utf-8") as _session_file:
+            _session_data = _bootstrap_json.load(_session_file)
+        _bootstrap_config = _BootstrapPath(_session_data["jobs"][0]["config_path"])
     ensure_vllm_runtime(runtime_for_config(_bootstrap_config), argv=_bootstrap_sys.argv)
 
 import json
@@ -44,7 +50,7 @@ from leap.generation.strategies import (
     IterativeGenerationStrategy,
 )
 from leap.inference.vllm_server import ProcessParallelVLLM
-from leap.vllm_runtime import runtime_metadata, validate_installed_runtime
+from leap.vllm_runtime import runtime_for_generation, runtime_metadata, validate_installed_runtime
 from leap.utils.profiler import get_aggregate_profiler
 
 # shut off llm logging in case not important
@@ -73,6 +79,10 @@ class RunOutputPaths:
     manifest_file: Path
     config_slug: str
     timestamp: str
+
+
+class ServerExecutionError(RuntimeError):
+    """Raised when a reusable vLLM server fails while executing a batch."""
 
 
 def load_dataset_from_config(dataset_config: DatasetConfig):
@@ -382,102 +392,248 @@ def finalize_results(
     return extractor_report
 
 
-def main() -> int:
-    """Main function using the modular vLLM server with comprehensive logging"""
-    print("Setting up modular vLLM server with integrated logging...")
+def build_generation_functions(app_config: AppConfig, tokenizer) -> dict[str, Any]:
+    functions = {}
+    for output_format in ("function", "json"):
+        prompt_builder = PromptBuilder(
+            tokenizer=tokenizer,
+            is_instruct=app_config.model.instruct,
+            output_format=output_format,
+        )
+        sampling_layer = create_sampling_layer(app_config.generation)
+        extractors = build_extractors(app_config.extractors, prompt_builder)
+        strategies = {
+            "iterative": IterativeGenerationStrategy(
+                prompt_builder=prompt_builder,
+                sampling_layer=sampling_layer,
+                extractors=extractors,
+            ),
+            "cot": ChainOfTableGenerationStrategy(
+                prompt_builder=prompt_builder,
+                sampling_layer=sampling_layer,
+                extractors=extractors,
+            ),
+            "direct_query": DirectQueryGenerationStrategy(
+                prompt_builder=prompt_builder,
+                sampling_layer=sampling_layer,
+                extractors=extractors,
+            ),
+        }
+        for strategy, handler in strategies.items():
+            functions[f"{output_format}_{strategy}_generation"] = handler.generate_instance
+    return functions
 
-    runtime = build_runtime(CONFIG_PATH)
-    original_config = runtime.config
-    run_paths = create_run_output_paths(original_config, results_root=RESULTS_ROOT)
-    app_config = apply_run_output_paths(original_config, run_paths)
+
+def create_server(app_config: AppConfig, tokenizer) -> ProcessParallelVLLM:
     model_settings = app_config.model
-    generation_settings = app_config.generation
-
-    run_paths.run_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Run output directory: {run_paths.run_dir}")
-    write_run_manifest(app_config, run_paths, CONFIG_PATH)
-
-    # Create sampling layer (always created, with n=1 when "disabled")
-    sampling_layer = create_sampling_layer(generation_settings)
-
-    # Create strategies and the configured answer-extractor ensemble.
-    extractors = build_extractors(app_config.extractors, runtime.prompt_builder)
-    iterative_strategy = IterativeGenerationStrategy(
-        prompt_builder=runtime.prompt_builder,
-        sampling_layer=sampling_layer,
-        extractors=extractors,
-    )
-    cot_strategy = ChainOfTableGenerationStrategy(
-        prompt_builder=runtime.prompt_builder,
-        sampling_layer=sampling_layer,
-        extractors=extractors,
-    )
-    direct_query_strategy = DirectQueryGenerationStrategy(
-        prompt_builder=runtime.prompt_builder,
-        sampling_layer=sampling_layer,
-        extractors=extractors,
-    )
-
-    # Validate strategy selection
-    valid_strategies = ["iterative", "cot", "direct_query"]
-    if generation_settings.strategy not in valid_strategies:
-        raise ValueError(f"Invalid strategy '{generation_settings.strategy}'. Must be one of: {valid_strategies}")
-
-    print(f"Using generation strategy: {generation_settings.strategy}_generation")
-
-    # Initialize the server with typed configs (no more dicts!)
-    num_workers = model_settings.hardware.num_workers
-    server = ProcessParallelVLLM(
+    return ProcessParallelVLLM(
         model_id=model_settings.id,
-        num_workers=num_workers,
+        num_workers=model_settings.hardware.num_workers,
         gpu_allocation=model_settings.hardware.gpu_allocation,
-        generation_config=generation_settings,
+        generation_config=app_config.generation,
         tokenizer_config=model_settings.tokenizer_config,
         logging_config=app_config.logging,
-        generation_functions={
-            "iterative_generation": iterative_strategy.generate_instance,
-            "cot_generation": cot_strategy.generate_instance,
-            "direct_query_generation": direct_query_strategy.generate_instance,
-        },
+        generation_functions=build_generation_functions(app_config, tokenizer),
         tensor_parallel_size=model_settings.hardware.tensor_parallel_size,
         max_concurrent_requests=model_settings.hardware.max_concurrent_requests,
         max_model_len=model_settings.hardware.max_model_len,
     )
 
-    extractor_report = None
-    try:
-        # Start server
-        print(f"Starting server with {num_workers} workers...")
-        print(f"Logging configuration: {server.get_logging_stats()}")
 
+def execute_config_run(
+    *,
+    config_path: Path,
+    app_config: AppConfig,
+    dataset,
+    prompt_builder: PromptBuilder,
+    server: ProcessParallelVLLM,
+    results_root: Path,
+    run_paths: RunOutputPaths | None = None,
+) -> tuple[RunOutputPaths, dict[str, Any]]:
+    get_aggregate_profiler().reset()
+    run_paths = run_paths or create_run_output_paths(app_config, results_root=results_root)
+    app_config = apply_run_output_paths(app_config, run_paths)
+    run_paths.run_dir.mkdir(parents=True, exist_ok=True)
+    write_run_manifest(app_config, run_paths, config_path)
+    server.reconfigure(app_config.generation, app_config.logging)
+
+    runtime = RuntimeContext(config=app_config, prompt_builder=prompt_builder, tokenizer=None, dataset=dataset)
+    requests = build_inference_requests(runtime, app_config.run.max_examples)
+    print(f"Run output directory: {run_paths.run_dir}")
+    print(f"Processing {len(requests)} questions...")
+    print(f"Generation mode: {get_generation_mode_string(app_config.generation)}")
+
+    start_time = time.time()
+    try:
+        results = server.generate_batch(requests)
+    except Exception as exc:
+        raise ServerExecutionError(f"vLLM batch execution failed: {exc}") from exc
+    elapsed = time.time() - start_time
+    print(f"Total time: {elapsed:.2f} seconds")
+    if requests:
+        print(f"Average time per request: {elapsed / len(requests):.2f} seconds")
+
+    extractor_report = finalize_results(results, app_config.model, app_config.generation, run_paths, app_config)
+    demonstrate_logging_analysis(server, results)
+    server.finish_run()
+    print_final_extractor_summary(extractor_report)
+    return run_paths, extractor_report
+
+
+def _session_compatibility_key(app_config: AppConfig) -> str:
+    identity = {
+        "model": {
+            "id": app_config.model.id,
+            "instruct": app_config.model.instruct,
+            "hardware": app_config.model.hardware,
+            "tokenizer": app_config.model.tokenizer_config,
+        },
+        "dataset": app_config.dataset,
+        "sampling": app_config.generation.sampling,
+        "enabled_actions": app_config.generation.enabled_actions,
+        "extractors": app_config.extractors,
+    }
+    return json.dumps(_json_safe(identity), sort_keys=True)
+
+
+def _write_session_event(status_path: Path, event: dict[str, Any]) -> None:
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    with status_path.open("a", encoding="utf-8") as status_file:
+        status_file.write(json.dumps(event) + "\n")
+        status_file.flush()
+        os.fsync(status_file.fileno())
+
+
+def run_experiment_session(manifest_path: Path) -> int:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    jobs = manifest["jobs"]
+    status_path = Path(manifest["status_path"])
+    first_config_path = Path(jobs[0]["config_path"])
+    runtime = build_runtime(first_config_path)
+    compatibility_key = _session_compatibility_key(runtime.config)
+    session_runtime = runtime_for_generation(
+        use_constraints=runtime.config.generation.use_constraints,
+        constraint_backend=runtime.config.generation.constraint_backend,
+        output_format=runtime.config.generation.output_format,
+    ).name
+    server = create_server(runtime.config, runtime.tokenizer)
+    model_load_index = 1
+    jobs_on_load = 0
+    restart_reason = None
+
+    try:
+        if not server.start_workers(timeout=600):
+            raise RuntimeError("Failed to start all model workers.")
+        for job in jobs:
+            job_id = job["job_id"]
+            config_path = Path(job["config_path"])
+            started_at = time.time()
+            load_id = f"{manifest['session_id']}-load-{model_load_index}"
+            _write_session_event(
+                status_path,
+                {"event": "started", "job_id": job_id, "config_path": str(config_path), "model_load_id": load_id},
+            )
+            run_paths = None
+            try:
+                app_config = load_runtime_config(config_path, runtime.tokenizer)
+                if _session_compatibility_key(app_config) != compatibility_key:
+                    raise ValueError(f"Config {config_path} is incompatible with this persistent model session.")
+                config_runtime = runtime_for_generation(
+                    use_constraints=app_config.generation.use_constraints,
+                    constraint_backend=app_config.generation.constraint_backend,
+                    output_format=app_config.generation.output_format,
+                ).name
+                if config_runtime != session_runtime:
+                    raise ValueError(f"Config {config_path} requires runtime {config_runtime}, not {session_runtime}.")
+                prompt_builder = PromptBuilder(
+                    tokenizer=runtime.tokenizer,
+                    is_instruct=app_config.model.instruct,
+                    output_format=app_config.generation.output_format,
+                )
+                run_paths = create_run_output_paths(app_config, results_root=Path(job["results_root"]))
+                run_paths, _ = execute_config_run(
+                    config_path=config_path,
+                    app_config=app_config,
+                    dataset=runtime.dataset,
+                    prompt_builder=prompt_builder,
+                    server=server,
+                    results_root=Path(job["results_root"]),
+                    run_paths=run_paths,
+                )
+                _write_session_event(
+                    status_path,
+                    {
+                        "event": "completed",
+                        "job_id": job_id,
+                        "config_path": str(config_path),
+                        "runtime_seconds": time.time() - started_at,
+                        "run_dir": str(run_paths.run_dir),
+                        "model_load_id": load_id,
+                        "model_reused": jobs_on_load > 0,
+                        "restart_reason": restart_reason,
+                    },
+                )
+                jobs_on_load += 1
+                restart_reason = None
+            except Exception as exc:
+                healthy = server.workers_healthy()
+                try:
+                    server.finish_run()
+                except Exception:
+                    pass
+                _write_session_event(
+                    status_path,
+                    {
+                        "event": "failed",
+                        "job_id": job_id,
+                        "config_path": str(config_path),
+                        "runtime_seconds": time.time() - started_at,
+                        "run_dir": str(run_paths.run_dir) if run_paths else None,
+                        "model_load_id": load_id,
+                        "model_reused": jobs_on_load > 0,
+                        "restart_reason": None,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
+                )
+                if isinstance(exc, ServerExecutionError) or not healthy:
+                    restart_reason = f"Server restart after {job_id}: {type(exc).__name__}: {exc}"
+                    server.shutdown(write_summary=False)
+                    server = create_server(runtime.config, runtime.tokenizer)
+                    if not server.start_workers(timeout=600):
+                        raise RuntimeError("Failed to restart model workers.") from exc
+                    model_load_index += 1
+                    jobs_on_load = 0
+                else:
+                    jobs_on_load += 1
+    finally:
+        server.shutdown(write_summary=False)
+    return 0
+
+
+def main() -> int:
+    """Run one configuration or an internal persistent experiment session."""
+    session_manifest = os.environ.get("LEAP_SESSION_MANIFEST")
+    if session_manifest:
+        return run_experiment_session(Path(session_manifest))
+
+    print("Setting up modular vLLM server with integrated logging...")
+    runtime = build_runtime(CONFIG_PATH)
+    server = create_server(runtime.config, runtime.tokenizer)
+    try:
         if not server.start_workers(timeout=600):
             print("Failed to start all workers. Exiting.")
             return 1
-
-        requests = build_inference_requests(runtime, app_config.run.max_examples)
-        print(f"Processing {len(requests)} questions...")
-        print(f"Generation mode: {get_generation_mode_string(generation_settings)}")
-
-        # Generate responses with comprehensive logging
-        start_time = time.time()
-        results = server.generate_batch(requests)
-        end_time = time.time()
-
-        print(f"Total time: {end_time - start_time:.2f} seconds")
-        if requests:
-            print(f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds")
-
-        extractor_report = finalize_results(results, model_settings, generation_settings, run_paths, app_config)
-        # Demonstrate logging analysis
-        demonstrate_logging_analysis(server, results)
-
+        _, extractor_report = execute_config_run(
+            config_path=CONFIG_PATH,
+            app_config=runtime.config,
+            dataset=runtime.dataset,
+            prompt_builder=runtime.prompt_builder,
+            server=server,
+            results_root=RESULTS_ROOT,
+        )
+        return 0 if extractor_report is not None else 1
     finally:
-        # Shutdown will automatically generate summary report
-        server.shutdown()
-
-    if extractor_report is not None:
-        print_final_extractor_summary(extractor_report)
-    return 0
+        server.shutdown(write_summary=False)
 
 
 def analyze_execution_accuracy(results: list[InferenceResult]):
