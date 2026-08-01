@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import itertools
 import json
 import logging
 import os
@@ -17,46 +18,80 @@ from typing import Any
 import yaml
 from tqdm.auto import tqdm
 
-from leap.vllm_runtime import BOOTSTRAPPED_ENV_VAR, ensure_vllm_runtime, runtime_for_experiment, runtime_metadata
+# Running this file directly puts scripts/ on sys.path rather than the project
+# root, so make the repository package importable before importing leap.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-VALID_MODES = {
-    "cot",
-    "constrained_cot",
-    "direct_query",
-    "json_iterative",
-    "constrained_json_iterative",
-    "json_cot",
-    "constrained_json_cot",
-}
-DEFAULT_SPEC_PATH = Path("configs/experiments.example.yaml")
+from leap.vllm_runtime import (  # noqa: E402
+    BOOTSTRAPPED_ENV_VAR,
+    ensure_vllm_runtime,
+    runtime_for_experiment,
+    runtime_for_generation,
+)
+
+VALID_STRATEGIES = {"iterative", "cot", "direct_query"}
+VALID_CONSTRAINT_BACKENDS = {"legacy_state_machine", "xgrammar"}
+VALID_OUTPUT_FORMATS = {"function", "json"}
+VALID_EXTRACTORS = {"direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"}
+VALID_ACTIONS = {"select_row", "select_column", "group_by", "sort_by", "add_column", "end"}
+DEFAULT_SPEC_PATH = PROJECT_ROOT / "configs/experiments.example.yaml"
 LOGGER = logging.getLogger("leap.experiments")
+
+
+@dataclass(frozen=True)
+class ExperimentMatrix:
+    strategies: list[str]
+    use_constraints: list[bool]
+    use_global_constraints: list[bool]
+    constraint_backends: list[str]
+    output_formats: list[str]
 
 
 @dataclass(frozen=True)
 class ExperimentSpec:
     base_config: Path
     models: list[str]
-    modes: list[str]
+    matrix: ExperimentMatrix
     repeats: int
     max_examples: int | None
     output_root: Path
-    continue_on_error: bool
     python_executable: Path
+    extractors: list[str]
+    enabled_actions: list[str]
 
 
 @dataclass(frozen=True)
 class ExperimentJob:
     model: str
-    mode: str
+    strategy: str
+    use_constraints: bool
+    use_global_constraints: bool
+    constraint_backend: str
+    output_format: str
     repeat: int
     config_path: Path
     results_root: Path
+
+    @property
+    def expected_runtime(self) -> str:
+        return runtime_for_generation(
+            use_constraints=self.use_constraints,
+            constraint_backend=self.constraint_backend,
+            output_format=self.output_format,
+        ).name
 
 
 @dataclass(frozen=True)
 class JobResult:
     model: str
-    mode: str
+    strategy: str
+    use_constraints: bool
+    use_global_constraints: bool
+    constraint_backend: str
+    output_format: str
+    expected_runtime: str
     repeat: int
     status: str
     return_code: int
@@ -86,7 +121,7 @@ def load_experiment_spec(spec_path: Path) -> ExperimentSpec:
     if not isinstance(raw, dict):
         raise ValueError(f"Experiment spec {spec_path} must contain a mapping.")
 
-    project_root = Path.cwd()
+    project_root = PROJECT_ROOT
     base_config = _resolve_path(raw.get("base_config", "configs/default.yaml"), spec_path.parent, project_root)
     output_root = _resolve_path(raw.get("output_root", "results/experiments"), spec_path.parent, project_root)
     python_executable = _resolve_path(
@@ -98,40 +133,55 @@ def load_experiment_spec(spec_path: Path) -> ExperimentSpec:
     models = raw.get("models")
     if not isinstance(models, list) or not models or not all(isinstance(model, str) for model in models):
         raise ValueError("'models' must be a non-empty list of model IDs.")
+    if len(models) != len(set(models)):
+        raise ValueError("'models' must not contain duplicates.")
 
-    modes = raw.get("modes", ["cot", "constrained_cot", "direct_query"])
-    if not isinstance(modes, list) or not modes or not all(isinstance(mode, str) for mode in modes):
-        raise ValueError("'modes' must be a non-empty list.")
-    unknown_modes = sorted(set(modes) - VALID_MODES)
-    if unknown_modes:
-        raise ValueError(f"Unknown modes {unknown_modes}. Valid modes: {sorted(VALID_MODES)}")
+    if "modes" in raw:
+        raise ValueError("'modes' is no longer supported; use the 'matrix' generation settings instead.")
+    if "continue_on_error" in raw:
+        raise ValueError("'continue_on_error' is no longer supported; experiment jobs now always continue after failures.")
+    matrix_raw = raw.get("matrix")
+    if not isinstance(matrix_raw, dict):
+        raise ValueError("'matrix' must be a mapping of generation setting lists.")
+    matrix = ExperimentMatrix(
+        strategies=_string_list(matrix_raw, "strategies", VALID_STRATEGIES),
+        use_constraints=_bool_list(matrix_raw, "use_constraints"),
+        use_global_constraints=_bool_list(matrix_raw, "use_global_constraints"),
+        constraint_backends=_string_list(matrix_raw, "constraint_backends", VALID_CONSTRAINT_BACKENDS),
+        output_formats=_string_list(matrix_raw, "output_formats", VALID_OUTPUT_FORMATS),
+    )
+    if not expand_matrix(matrix):
+        raise ValueError("The experiment matrix contains no supported generation-setting combinations.")
 
-    repeats = int(raw.get("repeats", 3))
-    if repeats <= 0:
+    repeats = raw.get("repeats", 3)
+    if type(repeats) is not int or repeats <= 0:
         raise ValueError("'repeats' must be positive.")
 
     max_examples = raw.get("max_examples")
     if max_examples is not None:
-        max_examples = int(max_examples)
-        if max_examples < 0:
+        if type(max_examples) is not int or max_examples < 0:
             raise ValueError("'max_examples' must be non-negative when provided.")
+
+    extractors = _string_list(raw, "extractors", VALID_EXTRACTORS)
+    enabled_actions = _string_list(raw, "enabled_actions", VALID_ACTIONS)
 
     return ExperimentSpec(
         base_config=base_config,
         models=models,
-        modes=modes,
+        matrix=matrix,
         repeats=repeats,
         max_examples=max_examples,
         output_root=output_root,
-        continue_on_error=bool(raw.get("continue_on_error", True)),
         python_executable=python_executable,
+        extractors=extractors,
+        enabled_actions=enabled_actions,
     )
 
 
 def validate_models(spec: ExperimentSpec) -> None:
     base_config = _load_yaml(spec.base_config)
     model_section = base_config.get("model", {})
-    presets_path = _resolve_path(model_section.get("presets_path", "configs/models.yaml"), spec.base_config.parent, Path.cwd())
+    presets_path = _resolve_path(model_section.get("presets_path", "configs/models.yaml"), spec.base_config.parent, PROJECT_ROOT)
     presets = _load_yaml(presets_path).get("models", _load_yaml(presets_path))
     missing = [model for model in spec.models if model not in presets]
     if missing:
@@ -159,104 +209,218 @@ def create_jobs(spec: ExperimentSpec, experiment_dir: Path) -> list[ExperimentJo
     run_root.mkdir(parents=True, exist_ok=True)
 
     jobs = []
+    settings = expand_matrix(spec.matrix)
     for model in spec.models:
         model_slug = _slugify(model)
-        for mode in spec.modes:
+        for setting in settings:
             for repeat in range(1, spec.repeats + 1):
-                job_config = build_job_config(base_config, model=model, mode=mode, max_examples=spec.max_examples)
-                config_path = config_dir / f"{model_slug}_{mode}_r{repeat}.yaml"
+                job_config = build_job_config(
+                    base_config,
+                    model=model,
+                    max_examples=spec.max_examples,
+                    extractors=spec.extractors,
+                    enabled_actions=spec.enabled_actions,
+                    **setting,
+                )
+                stem = _job_stem(model_slug, repeat=repeat, **setting)
+                config_path = config_dir / f"{stem}.yaml"
                 _write_yaml(config_path, job_config)
                 jobs.append(
                     ExperimentJob(
                         model=model,
-                        mode=mode,
                         repeat=repeat,
                         config_path=config_path,
                         results_root=run_root,
+                        **setting,
                     )
                 )
     return jobs
 
 
-def build_job_config(base_config: dict[str, Any], *, model: str, mode: str, max_examples: int | None) -> dict[str, Any]:
+def expand_matrix(matrix: ExperimentMatrix) -> list[dict[str, Any]]:
+    settings: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for strategy in matrix.strategies:
+        if strategy == "direct_query":
+            candidates = [(False, False, "xgrammar", "function")]
+        else:
+            candidates = itertools.product(
+                matrix.use_constraints,
+                matrix.use_global_constraints,
+                matrix.constraint_backends,
+                matrix.output_formats,
+            )
+        for use_constraints, use_global_constraints, constraint_backend, output_format in candidates:
+            if constraint_backend == "legacy_state_machine" and output_format == "json":
+                continue
+            if not use_constraints:
+                constraint_backend = "xgrammar"
+            key = (strategy, use_constraints, use_global_constraints, constraint_backend, output_format)
+            if key in seen:
+                continue
+            seen.add(key)
+            settings.append(
+                {
+                    "strategy": strategy,
+                    "use_constraints": use_constraints,
+                    "use_global_constraints": use_global_constraints,
+                    "constraint_backend": constraint_backend,
+                    "output_format": output_format,
+                }
+            )
+    return settings
+
+
+def describe_matrix_adjustments(matrix: ExperimentMatrix) -> list[str]:
+    notes = []
+    transformation_strategies = set(matrix.strategies) & {"iterative", "cot"}
+    if transformation_strategies and "legacy_state_machine" in matrix.constraint_backends and "json" in matrix.output_formats:
+        notes.append("Omitted legacy_state_machine + JSON combinations because the legacy backend only supports function output.")
+    if transformation_strategies and False in matrix.use_constraints and len(matrix.constraint_backends) > 1:
+        notes.append("Deduplicated unconstrained backend variants and selected xgrammar because unconstrained jobs use the modern runtime.")
+    if "direct_query" in matrix.strategies:
+        notes.append("Collapsed direct_query to one unconstrained function configuration because action constraints do not apply.")
+    return notes
+
+
+def build_job_config(
+    base_config: dict[str, Any],
+    *,
+    model: str,
+    strategy: str,
+    use_constraints: bool,
+    use_global_constraints: bool,
+    constraint_backend: str,
+    output_format: str,
+    max_examples: int | None,
+    extractors: list[str],
+    enabled_actions: list[str],
+) -> dict[str, Any]:
     config = copy.deepcopy(base_config)
     config.setdefault("model", {})["id"] = model
     if max_examples is not None:
         config.setdefault("run", {})["max_examples"] = max_examples
 
+    config["extractors"] = list(extractors)
     generation = config.setdefault("generation", {})
-    if mode == "cot":
-        generation["strategy"] = "cot"
-        generation["use_constraints"] = False
-        generation["use_global_constraints"] = False
-        generation["output_format"] = "function"
-    elif mode == "constrained_cot":
-        generation["strategy"] = "cot"
-        generation["use_constraints"] = True
-        generation["use_global_constraints"] = False
-        generation["output_format"] = "function"
-    elif mode == "direct_query":
-        generation["strategy"] = "direct_query"
-        generation["use_constraints"] = False
-        generation["use_global_constraints"] = False
-        generation["output_format"] = "function"
-    elif mode in {"json_iterative", "constrained_json_iterative", "json_cot", "constrained_json_cot"}:
-        generation["strategy"] = "iterative" if mode.endswith("json_iterative") else "cot"
-        generation["use_constraints"] = mode.startswith("constrained_")
-        generation["use_global_constraints"] = False
-        generation["output_format"] = "json"
-    else:
-        raise ValueError(f"Unknown experiment mode: {mode}")
+    generation.update(
+        {
+            "strategy": strategy,
+            "use_constraints": use_constraints,
+            "use_global_constraints": use_global_constraints,
+            "constraint_backend": constraint_backend,
+            "output_format": output_format,
+            "enabled_actions": list(enabled_actions),
+        }
+    )
 
     return config
 
 
 def run_job(job: ExperimentJob, *, experiment_dir: Path, project_root: Path, python_executable: Path) -> JobResult:
     log_dir = experiment_dir / "job_logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_stem = f"{_slugify(job.model)}_{job.mode}_r{job.repeat}"
+    log_stem = _job_stem(
+        _slugify(job.model),
+        strategy=job.strategy,
+        use_constraints=job.use_constraints,
+        use_global_constraints=job.use_global_constraints,
+        constraint_backend=job.constraint_backend,
+        output_format=job.output_format,
+        repeat=job.repeat,
+    )
     stdout_log = log_dir / f"{log_stem}.stdout.log"
     stderr_log = log_dir / f"{log_stem}.stderr.log"
+    started_at = time.time()
+    return_code = -1
+    run_dir = None
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        existing_manifests = {path.resolve() for path in job.results_root.glob("**/run_config.json")}
+        env = os.environ.copy()
+        env["LEAP_CONFIG_PATH"] = str(job.config_path)
+        env["LEAP_RESULTS_ROOT"] = str(job.results_root)
+        env["PYTHONUNBUFFERED"] = "1"
+        # Keep each child run's per-question tqdm visible below the outer suite
+        # bar without redirecting the rest of the child's stderr away from logs.
+        env["LEAP_TQDM_TO_TTY"] = "1"
+        env["LEAP_TQDM_POSITION"] = "1"
+        env["LEAP_TQDM_LEAVE"] = "0"
+        # Each generated job config selects its own runtime. Do not let the
+        # experiment runner's bootstrap prevent a child from switching V0/V1.
+        env.pop(BOOTSTRAPPED_ENV_VAR, None)
 
-    existing_manifests = {path.resolve() for path in job.results_root.glob("**/run_config.json")}
-    env = os.environ.copy()
-    env["LEAP_CONFIG_PATH"] = str(job.config_path)
-    env["LEAP_RESULTS_ROOT"] = str(job.results_root)
-    env["PYTHONUNBUFFERED"] = "1"
-    # Each generated job config selects its own runtime. Do not let the
-    # experiment runner's bootstrap prevent a child from switching V0/V1.
-    env.pop(BOOTSTRAPPED_ENV_VAR, None)
+        return_code, runtime_seconds = _run_child_process(
+            [str(python_executable), "main.py"],
+            project_root=project_root,
+            env=env,
+            stdout_log=stdout_log,
+            stderr_log=stderr_log,
+            job=job,
+        )
 
-    return_code, runtime_seconds = _run_child_process(
-        [str(python_executable), "main.py"],
-        project_root=project_root,
-        env=env,
-        stdout_log=stdout_log,
-        stderr_log=stderr_log,
-        job=job,
-    )
+        run_dir = _find_new_run_dir(job.results_root, existing_manifests)
+        metrics = collect_run_metrics(run_dir) if run_dir else {}
+        examples = metrics.get("examples", 0)
+        accuracy = metrics.get("average_extractor_accuracy")
+        if accuracy is None:
+            accuracy = metrics.get("accuracy")
+        status = "ok" if return_code == 0 and run_dir and examples > 0 and accuracy is not None else "failed"
+        error = None
+        if return_code != 0:
+            error = _format_process_error(return_code, stderr_log, stdout_log)
+        elif not run_dir:
+            error = "No run_config.json was produced"
+        elif examples == 0:
+            error = "Run completed without results.jsonl entries"
+        elif accuracy is None:
+            error = "Run completed without an accuracy metric"
 
-    run_dir = _find_new_run_dir(job.results_root, existing_manifests)
-    metrics = collect_run_metrics(run_dir) if run_dir else {}
-    examples = metrics.get("examples", 0)
-    accuracy = metrics.get("accuracy")
-    primary_accuracy = metrics.get("average_extractor_accuracy")
-    if primary_accuracy is None:
-        primary_accuracy = accuracy
-    status = "ok" if return_code == 0 and run_dir and examples > 0 and primary_accuracy is not None else "failed"
-    error = None
-    if return_code != 0:
-        error = _format_process_error(return_code, stderr_log, stdout_log)
-    elif not run_dir:
-        error = "No run_config.json was produced"
-    elif examples == 0:
-        error = "Run completed without results.jsonl entries"
-    elif primary_accuracy is None:
-        error = "Run completed without an accuracy metric"
+        return _job_result(
+            job,
+            status=status,
+            return_code=return_code,
+            runtime_seconds=runtime_seconds,
+            stdout_log=stdout_log,
+            stderr_log=stderr_log,
+            run_dir=run_dir,
+            metrics=metrics,
+            error=error,
+        )
+    except Exception as exc:
+        LOGGER.exception("Job handling failed for %s", log_stem)
+        return _job_result(
+            job,
+            status="failed",
+            return_code=return_code,
+            runtime_seconds=time.time() - started_at,
+            stdout_log=stdout_log,
+            stderr_log=stderr_log,
+            run_dir=run_dir,
+            metrics={},
+            error=f"{type(exc).__name__}: {exc}",
+        )
 
+
+def _job_result(
+    job: ExperimentJob,
+    *,
+    status: str,
+    return_code: int,
+    runtime_seconds: float,
+    stdout_log: Path,
+    stderr_log: Path,
+    run_dir: Path | None,
+    metrics: dict[str, Any],
+    error: str | None,
+) -> JobResult:
     return JobResult(
         model=job.model,
-        mode=job.mode,
+        strategy=job.strategy,
+        use_constraints=job.use_constraints,
+        use_global_constraints=job.use_global_constraints,
+        constraint_backend=job.constraint_backend,
+        output_format=job.output_format,
+        expected_runtime=job.expected_runtime,
         repeat=job.repeat,
         status=status,
         return_code=return_code,
@@ -393,19 +557,23 @@ def _collect_error_summary(run_dir: Path, rows: list[dict[str, Any]]) -> dict[st
 
 def build_report(spec: ExperimentSpec, experiment_id: str, experiment_dir: Path, job_results: list[JobResult]) -> dict[str, Any]:
     serial_jobs = [asdict(result) for result in job_results]
+    configuration_keys = ("strategy", "use_constraints", "use_global_constraints", "constraint_backend", "output_format")
     return {
         "experiment_id": experiment_id,
         "experiment_dir": str(experiment_dir),
         "base_config": str(spec.base_config),
         "models": spec.models,
-        "modes": spec.modes,
+        "matrix": asdict(spec.matrix),
+        "matrix_adjustments": describe_matrix_adjustments(spec.matrix),
+        "extractors": spec.extractors,
+        "enabled_actions": spec.enabled_actions,
         "repeats": spec.repeats,
         "max_examples": spec.max_examples,
         "python_executable": str(spec.python_executable),
-        "vllm_runtime": runtime_metadata(),
+        "required_vllm_runtimes": sorted({result.expected_runtime for result in job_results}),
         "jobs": serial_jobs,
-        "summary_by_mode": _summarize(job_results, ("mode",)),
-        "summary_by_model_and_mode": _summarize(job_results, ("model", "mode")),
+        "summary_by_configuration": _summarize(job_results, configuration_keys),
+        "summary_by_model_and_configuration": _summarize(job_results, ("model", *configuration_keys)),
     }
 
 
@@ -425,30 +593,27 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         f"Max examples: {report['max_examples']}",
         f"Repeats: {report['repeats']}",
         f"Python: {report['python_executable']}",
-        f"vLLM runtime: {report['vllm_runtime']['runtime']}",
-        f"vLLM version: {report['vllm_runtime']['vllm_version']}",
-        f"vLLM engine: {report['vllm_runtime']['engine']}",
+        f"Required vLLM runtimes: {', '.join(report['required_vllm_runtimes']) or 'none'}",
+        *(f"Matrix adjustment: {note}" for note in report["matrix_adjustments"]),
         "",
-        "## Summary By Mode",
+        "## Summary By Configuration",
         "",
-        "| Mode | Jobs | Mean Accuracy | Std Dev | Error Rate | Invalid->End | Answer Found | Termination | Failed Jobs | Avg Runtime |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Strategy | Constraints | Global | Backend | Format | Jobs | Mean Accuracy | Std Dev | Error Rate | Failed | Avg Runtime |",
+        "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|",
     ]
-    for row in report["summary_by_mode"]:
-        mode_row = (
-            "| {mode} | {jobs} | {mean_accuracy} | {std_dev} | {error_rate} | {invalid_end} | "
-            "{answer_found} | {termination} | {failed_jobs} | {runtime} |"
-        )
+    for row in report["summary_by_configuration"]:
         lines.append(
-            mode_row.format(
-                mode=row["mode"],
+            "| {strategy} | {constraints} | {global_constraints} | {backend} | {format} | {jobs} | "
+            "{mean_accuracy} | {std_dev} | {error_rate} | {failed_jobs} | {runtime} |".format(
+                strategy=row["strategy"],
+                constraints=_fmt_bool(row["use_constraints"]),
+                global_constraints=_fmt_bool(row["use_global_constraints"]),
+                backend=row["constraint_backend"],
+                format=row["output_format"],
                 jobs=row["jobs"],
                 mean_accuracy=_fmt_float(row["mean_accuracy"]),
                 std_dev=_fmt_float(row["std_dev"]),
                 error_rate=_fmt_float(row["error_rate"]),
-                invalid_end=row["invalid_generation_end_count"],
-                answer_found=_fmt_float(row["answer_found_rate"]),
-                termination=_fmt_float(row["termination_rate"]),
                 failed_jobs=row["failed_jobs"],
                 runtime=_format_seconds(row["avg_runtime_seconds"]),
             )
@@ -457,30 +622,28 @@ def render_markdown_report(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## Summary By Model And Mode",
+            "## Summary By Model And Configuration",
             "",
-            "| Model | Mode | Runs | Mean Accuracy | Std Dev | Error Rate | Invalid->End | "
-            "Successful Examples | Avg Actions | Avg Runtime |",
-            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+            "| Model | Strategy | Constraints | Global | Backend | Format | Runs | Mean Accuracy | "
+            "Error Rate | Successful Examples | Avg Runtime |",
+            "|---|---|---|---|---|---|---:|---:|---:|---:|---:|",
         ]
     )
-    for row in report["summary_by_model_and_mode"]:
-        model_row = (
-            "| {model} | {mode} | {runs} | {mean_accuracy} | {std_dev} | {error_rate} | "
-            "{invalid_end} | {success}/{examples} | {actions} | {runtime} |"
-        )
+    for row in report["summary_by_model_and_configuration"]:
         lines.append(
-            model_row.format(
+            "| {model} | {strategy} | {constraints} | {global_constraints} | {backend} | {format} | {runs} | "
+            "{mean_accuracy} | {error_rate} | {success}/{examples} | {runtime} |".format(
                 model=row["model"],
-                mode=row["mode"],
+                strategy=row["strategy"],
+                constraints=_fmt_bool(row["use_constraints"]),
+                global_constraints=_fmt_bool(row["use_global_constraints"]),
+                backend=row["constraint_backend"],
+                format=row["output_format"],
                 runs=row["jobs"],
                 mean_accuracy=_fmt_float(row["mean_accuracy"]),
-                std_dev=_fmt_float(row["std_dev"]),
                 error_rate=_fmt_float(row["error_rate"]),
-                invalid_end=row["invalid_generation_end_count"],
                 success=row["successful_examples"],
                 examples=row["examples"],
-                actions=_fmt_float(row["average_actions"]),
                 runtime=_format_seconds(row["avg_runtime_seconds"]),
             )
         )
@@ -490,25 +653,30 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             "",
             "## Individual Runs",
             "",
-            "| Model | Mode | Repeat | Accuracy | Error Rate | Invalid->End | Examples | Runtime | Status | Run Dir |",
-            "|---|---|---:|---:|---:|---:|---:|---:|---|---|",
+            "| Model | Strategy | Constraints | Global | Backend | Format | vLLM | Repeat | Accuracy | "
+            "Examples | Runtime | Status | Error | Run Dir |",
+            "|---|---|---|---|---|---|---|---:|---:|---:|---:|---|---|---|",
         ]
     )
     for row in report["jobs"]:
-        job_row = (
-            "| {model} | {mode} | {repeat} | {accuracy} | {error_rate} | {invalid_end} | {examples} | {runtime} | {status} | {run_dir} |"
-        )
         lines.append(
-            job_row.format(
+            "| {model} | {strategy} | {constraints} | {global_constraints} | {backend} | {format} | {vllm} | {repeat} | "
+            "{accuracy} | {examples} | {runtime} | {status} | {error} | {run_dir} |".format(
                 model=row["model"],
-                mode=row["mode"],
+                strategy=row["strategy"],
+                constraints=_fmt_bool(row["use_constraints"]),
+                global_constraints=_fmt_bool(row["use_global_constraints"]),
+                backend=row["constraint_backend"],
+                format=row["output_format"],
+                vllm=row["expected_runtime"],
                 repeat=row["repeat"],
-                accuracy=_fmt_float(row["accuracy"]),
-                error_rate=_fmt_float(row["error_rate"]),
-                invalid_end=row["invalid_generation_end_count"],
+                accuracy=_fmt_float(
+                    row["average_extractor_accuracy"] if row["average_extractor_accuracy"] is not None else row["accuracy"]
+                ),
                 examples=row["examples"],
                 runtime=_format_seconds(row["runtime_seconds"]),
                 status=row["status"],
+                error=_markdown_cell(row["error"] or ""),
                 run_dir=row["run_dir"] or "",
             )
         )
@@ -542,27 +710,55 @@ def main(argv: list[str] | None = None) -> int:
     LOGGER.info("Output directory: %s", experiment_dir)
     LOGGER.info("Python executable: %s", spec.python_executable)
     LOGGER.info("Prepared %s jobs", len(jobs))
+    for note in describe_matrix_adjustments(spec.matrix):
+        LOGGER.info("Matrix adjustment: %s", note)
 
     job_results = []
-    project_root = Path.cwd()
+    project_root = PROJECT_ROOT
     progress = tqdm(jobs, desc="Experiments", unit="job")
     for job in progress:
-        progress.set_postfix_str(f"{job.mode} r{job.repeat}", refresh=False)
-        LOGGER.info("Starting job: model=%s mode=%s repeat=%s", job.model, job.mode, job.repeat)
-        result = run_job(
-            job,
-            experiment_dir=experiment_dir,
-            project_root=project_root,
-            python_executable=spec.python_executable,
+        progress.set_postfix_str(f"{job.strategy} r{job.repeat}", refresh=False)
+        LOGGER.info(
+            "Starting job: model=%s strategy=%s constraints=%s global=%s backend=%s format=%s repeat=%s",
+            job.model,
+            job.strategy,
+            job.use_constraints,
+            job.use_global_constraints,
+            job.constraint_backend,
+            job.output_format,
+            job.repeat,
         )
+        try:
+            result = run_job(
+                job,
+                experiment_dir=experiment_dir,
+                project_root=project_root,
+                python_executable=spec.python_executable,
+            )
+        except Exception as exc:
+            LOGGER.exception("Unexpected runner failure; recording the job and continuing")
+            log_dir = experiment_dir / "job_logs"
+            result = _job_result(
+                job,
+                status="failed",
+                return_code=-1,
+                runtime_seconds=0.0,
+                stdout_log=log_dir / f"{_job_identifier(job)}.stdout.log",
+                stderr_log=log_dir / f"{_job_identifier(job)}.stderr.log",
+                run_dir=None,
+                metrics={},
+                error=f"{type(exc).__name__}: {exc}",
+            )
         job_results.append(result)
-        report = build_report(spec, experiment_id, experiment_dir, job_results)
-        write_reports(report, experiment_dir)
+        try:
+            write_reports(build_report(spec, experiment_id, experiment_dir, job_results), experiment_dir)
+        except Exception:
+            LOGGER.exception("Could not update experiment reports; continuing with the next job")
         if result.status == "ok":
             LOGGER.info(
-                "Finished job: model=%s mode=%s repeat=%s examples=%s accuracy=%s runtime=%s",
+                "Finished job: model=%s strategy=%s repeat=%s examples=%s accuracy=%s runtime=%s",
                 result.model,
-                result.mode,
+                result.strategy,
                 result.repeat,
                 result.examples,
                 _fmt_float(result.accuracy),
@@ -570,19 +766,21 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             LOGGER.error(
-                "Failed job: model=%s mode=%s repeat=%s error=%s stderr=%s",
+                "Failed job: model=%s strategy=%s repeat=%s error=%s stderr=%s",
                 result.model,
-                result.mode,
+                result.strategy,
                 result.repeat,
                 result.error,
                 result.stderr_log,
             )
-        if result.status != "ok" and not spec.continue_on_error:
-            LOGGER.error("Stopping after failed job: %s", result.error)
-            return result.return_code or 1
 
+    try:
+        write_reports(build_report(spec, experiment_id, experiment_dir, job_results), experiment_dir)
+    except Exception:
+        LOGGER.exception("Could not write final experiment reports")
+        return 1
     LOGGER.info("Experiment report written to %s", experiment_dir / "experiment_report.md")
-    return 0 if all(result.status == "ok" for result in job_results) else 1
+    return 0 if job_results and all(result.status == "ok" for result in job_results) else 1
 
 
 def _run_child_process(
@@ -595,28 +793,45 @@ def _run_child_process(
     job: ExperimentJob,
 ) -> tuple[int, float]:
     start = time.time()
+    process = None
     with stdout_log.open("w", encoding="utf-8") as stdout_f, stderr_log.open("w", encoding="utf-8") as stderr_f:
-        process = subprocess.Popen(
-            cmd,
-            cwd=project_root,
-            env=env,
-            stdout=stdout_f,
-            stderr=stderr_f,
-            text=True,
-        )
-        last_log = start
-        while True:
-            return_code = process.poll()
-            now = time.time()
-            if return_code is not None:
-                break
-            if now - last_log >= 30:
-                LOGGER.info(
-                    "Still running: model=%s mode=%s repeat=%s elapsed=%s", job.model, job.mode, job.repeat, _format_seconds(now - start)
-                )
-                last_log = now
-            time.sleep(1)
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=project_root,
+                env=env,
+                stdout=stdout_f,
+                stderr=stderr_f,
+                text=True,
+            )
+            while True:
+                return_code = process.poll()
+                if return_code is not None:
+                    break
+                time.sleep(1)
+        except BaseException:
+            if process is not None:
+                _terminate_process(process)
+            raise
     return int(return_code), time.time() - start
+
+
+def _terminate_process(process: subprocess.Popen) -> None:
+    try:
+        running = process.poll() is None
+    except Exception:
+        running = True
+    if not running:
+        return
+    try:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+    except Exception:
+        LOGGER.exception("Could not terminate failed experiment child process")
 
 
 def _summarize(results: list[JobResult], keys: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -713,8 +928,72 @@ def _format_seconds(seconds: float | None) -> str:
     return f"{remainder}s"
 
 
+def _fmt_bool(value: bool) -> str:
+    return "on" if value else "off"
+
+
+def _markdown_cell(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ")
+
+
+def _job_stem(
+    model_slug: str,
+    *,
+    strategy: str,
+    use_constraints: bool,
+    use_global_constraints: bool,
+    constraint_backend: str,
+    output_format: str,
+    repeat: int,
+) -> str:
+    return "_".join(
+        [
+            model_slug,
+            _slugify(strategy),
+            f"constraints-{_fmt_bool(use_constraints)}",
+            f"global-{_fmt_bool(use_global_constraints)}",
+            _slugify(constraint_backend),
+            _slugify(output_format),
+            f"r{repeat}",
+        ]
+    )
+
+
+def _job_identifier(job: ExperimentJob) -> str:
+    return _job_stem(
+        _slugify(job.model),
+        strategy=job.strategy,
+        use_constraints=job.use_constraints,
+        use_global_constraints=job.use_global_constraints,
+        constraint_backend=job.constraint_backend,
+        output_format=job.output_format,
+        repeat=job.repeat,
+    )
+
+
 def _slugify(value: str) -> str:
     return "".join(ch if ch.isalnum() else "-" for ch in value.lower()).strip("-")
+
+
+def _string_list(raw: dict[str, Any], key: str, valid_values: set[str]) -> list[str]:
+    values = raw.get(key)
+    if not isinstance(values, list) or not values or not all(isinstance(value, str) and value for value in values):
+        raise ValueError(f"'{key}' must be a non-empty list of strings.")
+    if len(values) != len(set(values)):
+        raise ValueError(f"'{key}' must not contain duplicates.")
+    unknown = sorted(set(values) - valid_values)
+    if unknown:
+        raise ValueError(f"Unknown {key} {unknown}. Valid values: {sorted(valid_values)}")
+    return values
+
+
+def _bool_list(raw: dict[str, Any], key: str) -> list[bool]:
+    values = raw.get(key)
+    if not isinstance(values, list) or not values or not all(type(value) is bool for value in values):
+        raise ValueError(f"'{key}' must be a non-empty list of booleans.")
+    if len(values) != len(set(values)):
+        raise ValueError(f"'{key}' must not contain duplicates.")
+    return values
 
 
 def _resolve_path(value, base_dir: Path, project_root: Path) -> Path:
@@ -762,5 +1041,5 @@ if __name__ == "__main__":
     bootstrap_parser.add_argument("spec", nargs="?", type=Path, default=DEFAULT_SPEC_PATH)
     bootstrap_parser.add_argument("--log-level")
     bootstrap_args, _ = bootstrap_parser.parse_known_args()
-    ensure_vllm_runtime(runtime_for_experiment(bootstrap_args.spec), argv=sys.argv)
+    ensure_vllm_runtime(runtime_for_experiment(bootstrap_args.spec, project_root=PROJECT_ROOT), argv=sys.argv, project_root=PROJECT_ROOT)
     raise SystemExit(main())

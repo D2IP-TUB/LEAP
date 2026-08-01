@@ -15,6 +15,7 @@ import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 
+from tqdm.auto import tqdm
 from vllm import AsyncLLMEngine, SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 
@@ -26,6 +27,16 @@ from leap.utils.table_logger import TableLogger
 
 # Default max concurrent requests per worker for continuous batching
 DEFAULT_MAX_CONCURRENT_REQUESTS = 16
+
+
+def _open_progress_output():
+    """Use the controlling terminal for nested suite progress while preserving stderr logs."""
+    if os.environ.get("LEAP_TQDM_TO_TTY") != "1":
+        return None, False
+    try:
+        return open("/dev/tty", "w", encoding="utf-8", buffering=1), True
+    except OSError:
+        return None, False
 
 
 class VLLMWorkerProcess(mp.Process):
@@ -695,52 +706,66 @@ class ProcessParallelVLLM:
         results = {}
         completed = 0
         total_requests = len(request_ids)
-
-        while completed < total_requests:
-            try:
-                msg_type, req_id, data = self.output_queue.get(timeout=timeout_per_request)
-                if msg_type == "result":
-                    # data is already an InferenceResult object
-                    results[req_id] = data
-                    completed += 1
-                    print(f"Completed {completed}/{total_requests} requests")
-                elif msg_type == "log_entry":
-                    # Handle log entries from workers
-                    if self.main_logger:
-                        log_data = data
-                        self.main_logger.log_table_state(
-                            request_id=log_data["request_id"],
-                            step=log_data["step"],
-                            action=log_data["action"],
-                            table=log_data["table"],
-                            success=log_data["success"],
-                            failure_type=log_data["failure_type"],
-                            generation_mode=log_data["generation_mode"],
-                        )
-                elif msg_type == "error":
-                    print(f"Error for request {req_id}: {data}")
-                    # Create error result object
-                    results[req_id] = InferenceResult(
-                        action_history=[],
-                        final_table=Table(columns=[], rows=[]),
-                        execution_metrics=ExecutionMetrics(
-                            execution_accuracy=0.0,
-                            answer_found_in_final=False,
-                            answer_found_in_original=False,
-                            terminated_properly=False,
-                            matched_answers_final=[],
-                            matched_answers_original=[],
-                            num_actions=0,
-                            execution_error=str(data),
-                        ),
-                        request_id=req_id,
-                        question="",
-                        ground_truth_answers=[],
-                    )
-                    completed += 1
-            except queue.Empty:
-                print(f"Timeout waiting for results (completed {completed}/{total_requests})")
-                break
+        progress_file, close_progress_file = _open_progress_output()
+        try:
+            with tqdm(
+                total=total_requests,
+                desc="Questions",
+                unit="question",
+                dynamic_ncols=True,
+                position=int(os.environ.get("LEAP_TQDM_POSITION", "0")),
+                leave=os.environ.get("LEAP_TQDM_LEAVE", "1") == "1",
+                file=progress_file,
+            ) as progress:
+                while completed < total_requests:
+                    try:
+                        msg_type, req_id, data = self.output_queue.get(timeout=timeout_per_request)
+                        if msg_type == "result":
+                            # data is already an InferenceResult object
+                            results[req_id] = data
+                            completed += 1
+                            progress.update(1)
+                        elif msg_type == "log_entry":
+                            # Handle log entries from workers
+                            if self.main_logger:
+                                log_data = data
+                                self.main_logger.log_table_state(
+                                    request_id=log_data["request_id"],
+                                    step=log_data["step"],
+                                    action=log_data["action"],
+                                    table=log_data["table"],
+                                    success=log_data["success"],
+                                    failure_type=log_data["failure_type"],
+                                    generation_mode=log_data["generation_mode"],
+                                )
+                        elif msg_type == "error":
+                            tqdm.write(f"Error for request {req_id}: {data}", file=progress_file)
+                            # Create error result object
+                            results[req_id] = InferenceResult(
+                                action_history=[],
+                                final_table=Table(columns=[], rows=[]),
+                                execution_metrics=ExecutionMetrics(
+                                    execution_accuracy=0.0,
+                                    answer_found_in_final=False,
+                                    answer_found_in_original=False,
+                                    terminated_properly=False,
+                                    matched_answers_final=[],
+                                    matched_answers_original=[],
+                                    num_actions=0,
+                                    execution_error=str(data),
+                                ),
+                                request_id=req_id,
+                                question="",
+                                ground_truth_answers=[],
+                            )
+                            completed += 1
+                            progress.update(1)
+                    except queue.Empty:
+                        tqdm.write(f"Timeout waiting for results (completed {completed}/{total_requests})", file=progress_file)
+                        break
+        finally:
+            if close_progress_file:
+                progress_file.close()
 
         # Return results in original order, with per-request error results for missing ones.
         ordered_results = []

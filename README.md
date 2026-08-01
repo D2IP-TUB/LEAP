@@ -31,6 +31,27 @@ The first run for each runtime downloads and installs its vLLM and PyTorch stack
 
 The backend/version pairing is strict. If LEAP reports a mismatch, update the lockfile with `uv lock` and retry. If an environment was interrupted or corrupted during installation, remove only the named generated environment from the error message and rerun the command. The `xgrammar` backend does not support the `add_column` action.
 
+## Experiment matrices
+
+Run the example benchmark matrix with:
+
+```bash
+uv run scripts/run_experiments.py configs/experiments.example.yaml
+```
+
+The experiment spec uses explicit generation dimensions:
+
+```yaml
+matrix:
+  strategies: [iterative, cot, direct_query]
+  use_constraints: [false, true]
+  use_global_constraints: [false, true]
+  constraint_backends: [legacy_state_machine, xgrammar]
+  output_formats: [function, json]
+```
+
+Only unique supported jobs are generated. Unconstrained runs use the modern xgrammar runtime, legacy constrained decoding supports function output only, and `direct_query` is emitted once per model and repeat because action constraints do not affect it. With the four models and three repeats in the example, this produces 252 jobs. Every job failure is recorded in the experiment report and the runner continues with the remaining jobs; the final command exits nonzero if any job failed. Invalid suite configuration and explicit user interruption still stop the runner.
+
 ## JSON operation mode
 
 Iterative and Chain-of-Table generation can use named JSON operation objects instead of the original `f_action(...)` protocol:

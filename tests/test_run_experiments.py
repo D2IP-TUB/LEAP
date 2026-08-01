@@ -1,5 +1,9 @@
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -7,11 +11,15 @@ import yaml
 from scripts.run_experiments import (
     DEFAULT_SPEC_PATH,
     ExperimentJob,
+    ExperimentMatrix,
     ExperimentSpec,
     JobResult,
+    _run_child_process,
     build_job_config,
     build_report,
     collect_run_metrics,
+    create_jobs,
+    expand_matrix,
     load_experiment_spec,
     main,
     render_markdown_report,
@@ -52,48 +60,147 @@ def _write_result(run_dir: Path, *, accuracy: float, rows: list[dict]):
     (run_dir / "results.jsonl").write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
 
-def test_build_job_config_uses_existing_generation_strategy_flag(tmp_path):
+def _matrix():
+    return ExperimentMatrix(
+        strategies=["iterative", "cot", "direct_query"],
+        use_constraints=[False, True],
+        use_global_constraints=[False, True],
+        constraint_backends=["legacy_state_machine", "xgrammar"],
+        output_formats=["function", "json"],
+    )
+
+
+def _spec_data(base_path: Path):
+    return {
+        "base_config": str(base_path),
+        "models": ["model/a"],
+        "matrix": {
+            "strategies": ["iterative", "cot", "direct_query"],
+            "use_constraints": [False, True],
+            "use_global_constraints": [False, True],
+            "constraint_backends": ["legacy_state_machine", "xgrammar"],
+            "output_formats": ["function", "json"],
+        },
+        "repeats": 3,
+        "extractors": ["direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"],
+        "enabled_actions": ["select_row", "select_column", "group_by", "sort_by", "end"],
+    }
+
+
+def _job(tmp_path, **overrides):
+    values = {
+        "model": "model/a",
+        "strategy": "cot",
+        "use_constraints": False,
+        "use_global_constraints": False,
+        "constraint_backend": "xgrammar",
+        "output_format": "function",
+        "repeat": 1,
+        "config_path": tmp_path / "config.yaml",
+        "results_root": tmp_path / "runs",
+    }
+    values.update(overrides)
+    return ExperimentJob(**values)
+
+
+def test_build_job_config_applies_all_matrix_and_fixed_settings(tmp_path):
     _, base_config = _base_config(tmp_path)
+    extractors = ["direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"]
+    actions = ["select_row", "select_column", "group_by", "sort_by", "end"]
+    config = build_job_config(
+        base_config,
+        model="model/b",
+        strategy="iterative",
+        use_constraints=True,
+        use_global_constraints=True,
+        constraint_backend="xgrammar",
+        output_format="json",
+        max_examples=10,
+        extractors=extractors,
+        enabled_actions=actions,
+    )
 
-    cot = build_job_config(base_config, model="model/b", mode="cot", max_examples=10)
-    constrained = build_job_config(base_config, model="model/b", mode="constrained_cot", max_examples=10)
-    direct = build_job_config(base_config, model="model/b", mode="direct_query", max_examples=10)
-
-    assert cot["model"]["id"] == "model/b"
-    assert cot["run"]["max_examples"] == 10
-    assert cot["generation"]["strategy"] == "cot"
-    assert cot["generation"]["use_constraints"] is False
-    assert constrained["generation"]["strategy"] == "cot"
-    assert constrained["generation"]["use_constraints"] is True
-    assert direct["generation"]["strategy"] == "direct_query"
-    assert direct["generation"]["use_constraints"] is False
-
-
-@pytest.mark.parametrize(
-    ("mode", "strategy", "constrained"),
-    [
-        ("json_iterative", "iterative", False),
-        ("constrained_json_iterative", "iterative", True),
-        ("json_cot", "cot", False),
-        ("constrained_json_cot", "cot", True),
-    ],
-)
-def test_build_job_config_supports_json_modes(tmp_path, mode, strategy, constrained):
-    _, base_config = _base_config(tmp_path)
-    config = build_job_config(base_config, model="model/b", mode=mode, max_examples=10)
+    assert config["model"]["id"] == "model/b"
+    assert config["run"]["max_examples"] == 10
     assert config["generation"]["output_format"] == "json"
-    assert config["generation"]["strategy"] == strategy
-    assert config["generation"]["use_constraints"] is constrained
+    assert config["generation"]["strategy"] == "iterative"
+    assert config["generation"]["use_constraints"] is True
+    assert config["generation"]["use_global_constraints"] is True
+    assert config["generation"]["constraint_backend"] == "xgrammar"
+    assert config["generation"]["enabled_actions"] == actions
+    assert "add_column" not in config["generation"]["enabled_actions"]
+    assert config["extractors"] == extractors
+    assert base_config["generation"]["enabled_actions"] == ["select_row", "end"]
 
 
-def test_load_experiment_spec_rejects_unknown_mode(tmp_path, monkeypatch):
+def test_expand_matrix_produces_21_unique_settings_and_canonical_direct_query():
+    settings = expand_matrix(_matrix())
+
+    assert len(settings) == 21
+    assert len({tuple(setting.values()) for setting in settings}) == 21
+    assert not any(setting["constraint_backend"] == "legacy_state_machine" and setting["output_format"] == "json" for setting in settings)
+    assert all(setting["constraint_backend"] == "xgrammar" for setting in settings if not setting["use_constraints"])
+    direct = [setting for setting in settings if setting["strategy"] == "direct_query"]
+    assert direct == [
+        {
+            "strategy": "direct_query",
+            "use_constraints": False,
+            "use_global_constraints": False,
+            "constraint_backend": "xgrammar",
+            "output_format": "function",
+        }
+    ]
+
+
+def test_load_experiment_spec_rejects_legacy_modes(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     base_path, _ = _base_config(tmp_path)
     spec_path = tmp_path / "configs" / "experiments.yaml"
     _write_yaml(spec_path, {"base_config": str(base_path), "models": ["model/a"], "modes": ["bad_mode"]})
 
-    with pytest.raises(ValueError, match="Unknown modes"):
+    with pytest.raises(ValueError, match="modes.*no longer supported"):
         load_experiment_spec(spec_path)
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("strategies", [], "strategies"),
+        ("strategies", ["bad"], "Unknown strategies"),
+        ("use_constraints", ["false"], "booleans"),
+        ("use_global_constraints", [False, False], "duplicates"),
+        ("constraint_backends", ["bad"], "Unknown constraint_backends"),
+        ("output_formats", ["xml"], "Unknown output_formats"),
+    ],
+)
+def test_load_experiment_spec_validates_matrix_lists(tmp_path, monkeypatch, key, value, message):
+    monkeypatch.chdir(tmp_path)
+    base_path, _ = _base_config(tmp_path)
+    data = _spec_data(base_path)
+    data["matrix"][key] = value
+    spec_path = tmp_path / "configs" / "experiments.yaml"
+    _write_yaml(spec_path, data)
+
+    with pytest.raises(ValueError, match=message):
+        load_experiment_spec(spec_path)
+
+
+def test_example_matrix_creates_252_unique_jobs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    base_path, _ = _base_config(tmp_path)
+    data = _spec_data(base_path)
+    data["models"] = ["model/a", "model/b", "model/c", "model/d"]
+    spec_path = tmp_path / "experiments.yaml"
+    _write_yaml(spec_path, data)
+    spec = load_experiment_spec(spec_path)
+
+    jobs = create_jobs(spec, tmp_path / "experiment")
+
+    assert len(jobs) == 252
+    assert len({job.config_path.name for job in jobs}) == 252
+    generated = yaml.safe_load(jobs[0].config_path.read_text(encoding="utf-8"))
+    assert generated["extractors"] == data["extractors"]
+    assert generated["generation"]["enabled_actions"] == data["enabled_actions"]
 
 
 def test_collect_run_metrics_from_results(tmp_path):
@@ -218,16 +325,22 @@ def test_experiment_report_includes_error_columns(tmp_path):
     spec = ExperimentSpec(
         base_config=tmp_path / "config.yaml",
         models=["model/a"],
-        modes=["cot"],
+        matrix=_matrix(),
         repeats=1,
         max_examples=2,
         output_root=tmp_path / "experiments",
-        continue_on_error=True,
         python_executable=Path("python"),
+        extractors=["direct_query"],
+        enabled_actions=["select_row", "end"],
     )
     result = JobResult(
         model="model/a",
-        mode="cot",
+        strategy="cot",
+        use_constraints=True,
+        use_global_constraints=False,
+        constraint_backend="legacy_state_machine",
+        output_format="function",
+        expected_runtime="legacy",
         repeat=1,
         status="ok",
         return_code=0,
@@ -253,15 +366,18 @@ def test_experiment_report_includes_error_columns(tmp_path):
     markdown = render_markdown_report(report)
 
     assert report["jobs"][0]["error_rate"] == 0.5
-    assert "vllm_runtime" in report
-    assert "vLLM runtime:" in markdown
-    assert report["summary_by_mode"][0]["invalid_generation_end_count"] == 1
+    assert report["required_vllm_runtimes"] == ["legacy"]
+    assert "Required vLLM runtimes: legacy" in markdown
+    assert report["summary_by_configuration"][0]["invalid_generation_end_count"] == 1
     assert "Error Rate" in markdown
-    assert "Invalid->End" in markdown
+    assert "legacy_state_machine" in markdown
 
 
 def test_run_job_fails_when_subprocess_writes_empty_run(tmp_path, monkeypatch):
+    seen_env = {}
+
     def fake_run_child_process(*args, **kwargs):
+        seen_env.update(kwargs["env"])
         run_dir = tmp_path / "runs" / "empty_run"
         run_dir.mkdir(parents=True)
         (run_dir / "run_config.json").write_text(json.dumps({"run_dir": str(run_dir)}), encoding="utf-8")
@@ -270,13 +386,7 @@ def test_run_job_fails_when_subprocess_writes_empty_run(tmp_path, monkeypatch):
         return 0, 0.1
 
     monkeypatch.setattr("scripts.run_experiments._run_child_process", fake_run_child_process)
-    job = ExperimentJob(
-        model="model/a",
-        mode="direct_query",
-        repeat=1,
-        config_path=tmp_path / "config.yaml",
-        results_root=tmp_path / "runs",
-    )
+    job = _job(tmp_path, strategy="direct_query")
 
     result = run_job(job, experiment_dir=tmp_path / "experiment", project_root=tmp_path, python_executable=Path("python"))
 
@@ -284,6 +394,62 @@ def test_run_job_fails_when_subprocess_writes_empty_run(tmp_path, monkeypatch):
     assert result.return_code == 0
     assert result.examples == 0
     assert result.error == "Run completed without results.jsonl entries"
+    assert seen_env["LEAP_TQDM_TO_TTY"] == "1"
+    assert seen_env["LEAP_TQDM_POSITION"] == "1"
+    assert seen_env["LEAP_TQDM_LEAVE"] == "0"
+
+
+def test_run_job_converts_metric_errors_to_failed_result(tmp_path, monkeypatch):
+    def fake_run_child_process(*args, **kwargs):
+        run_dir = tmp_path / "runs" / "bad_run"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run_config.json").write_text("{}", encoding="utf-8")
+        return 0, 0.1
+
+    monkeypatch.setattr("scripts.run_experiments._run_child_process", fake_run_child_process)
+    monkeypatch.setattr("scripts.run_experiments.collect_run_metrics", lambda path: (_ for _ in ()).throw(ValueError("bad metrics")))
+
+    result = run_job(_job(tmp_path), experiment_dir=tmp_path / "experiment", project_root=tmp_path, python_executable=Path("python"))
+
+    assert result.status == "failed"
+    assert result.error == "ValueError: bad metrics"
+
+
+def test_run_child_process_terminates_child_on_runner_error(tmp_path, monkeypatch):
+    class FakeProcess:
+        def __init__(self):
+            self.poll_count = 0
+            self.terminated = False
+            self.waited = False
+
+        def poll(self):
+            self.poll_count += 1
+            if self.poll_count == 1:
+                raise RuntimeError("poll failed")
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            self.waited = True
+            return 0
+
+    process = FakeProcess()
+    monkeypatch.setattr("scripts.run_experiments.subprocess.Popen", lambda *args, **kwargs: process)
+
+    with pytest.raises(RuntimeError, match="poll failed"):
+        _run_child_process(
+            ["python", "main.py"],
+            project_root=tmp_path,
+            env={},
+            stdout_log=tmp_path / "stdout.log",
+            stderr_log=tmp_path / "stderr.log",
+            job=_job(tmp_path),
+        )
+
+    assert process.terminated is True
+    assert process.waited is True
 
 
 def test_main_defaults_to_example_spec(monkeypatch, tmp_path):
@@ -299,3 +465,106 @@ def test_main_defaults_to_example_spec(monkeypatch, tmp_path):
         main([])
 
     assert seen["path"] == DEFAULT_SPEC_PATH
+
+
+def test_runner_imports_leap_when_launched_from_scripts_directory():
+    project_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+
+    completed = subprocess.run(
+        [sys.executable, "-c", "import run_experiments; print(run_experiments.DEFAULT_SPEC_PATH)"],
+        cwd=project_root / "scripts",
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.stdout.strip() == str(project_root / "configs/experiments.example.yaml")
+
+
+def test_main_continues_after_job_and_report_errors(monkeypatch, tmp_path):
+    spec = ExperimentSpec(
+        base_config=tmp_path / "config.yaml",
+        models=["model/a"],
+        matrix=_matrix(),
+        repeats=1,
+        max_examples=1,
+        output_root=tmp_path / "experiments",
+        python_executable=Path("python"),
+        extractors=["direct_query"],
+        enabled_actions=["end"],
+    )
+    jobs = [_job(tmp_path, repeat=1), _job(tmp_path, repeat=2)]
+    calls = []
+
+    def fake_run_job(job, **kwargs):
+        calls.append(job.repeat)
+        if job.repeat == 1:
+            raise RuntimeError("launch failed")
+        return SimpleNamespace(
+            model=job.model,
+            strategy=job.strategy,
+            repeat=job.repeat,
+            status="ok",
+            examples=1,
+            accuracy=1.0,
+            runtime_seconds=0.1,
+            error=None,
+            stderr_log="stderr.log",
+        )
+
+    build_report_calls = []
+
+    def fake_build_report(*args):
+        build_report_calls.append(1)
+        if len(build_report_calls) == 1:
+            raise ValueError("bad report data")
+        return {}
+
+    report_calls = []
+
+    def fake_write_reports(*args):
+        report_calls.append(1)
+        if len(report_calls) == 1:
+            raise OSError("report busy")
+
+    monkeypatch.setattr("scripts.run_experiments.load_experiment_spec", lambda path: spec)
+    monkeypatch.setattr("scripts.run_experiments.validate_models", lambda value: None)
+    monkeypatch.setattr("scripts.run_experiments.validate_python_executable", lambda value: None)
+    monkeypatch.setattr("scripts.run_experiments.create_jobs", lambda value, path: jobs)
+    monkeypatch.setattr("scripts.run_experiments.run_job", fake_run_job)
+    monkeypatch.setattr("scripts.run_experiments.build_report", fake_build_report)
+    monkeypatch.setattr("scripts.run_experiments.write_reports", fake_write_reports)
+    monkeypatch.setattr("scripts.run_experiments._write_yaml", lambda *args: None)
+    monkeypatch.setattr("scripts.run_experiments._read_yaml_raw", lambda *args: {})
+
+    assert main(["spec.yaml"]) == 1
+    assert calls == [1, 2]
+    assert len(build_report_calls) == 3
+    assert len(report_calls) == 2
+
+
+def test_main_does_not_swallow_keyboard_interrupt(monkeypatch, tmp_path):
+    spec = ExperimentSpec(
+        base_config=tmp_path / "config.yaml",
+        models=["model/a"],
+        matrix=_matrix(),
+        repeats=1,
+        max_examples=1,
+        output_root=tmp_path / "experiments",
+        python_executable=Path("python"),
+        extractors=["direct_query"],
+        enabled_actions=["end"],
+    )
+    monkeypatch.setattr("scripts.run_experiments.load_experiment_spec", lambda path: spec)
+    monkeypatch.setattr("scripts.run_experiments.validate_models", lambda value: None)
+    monkeypatch.setattr("scripts.run_experiments.validate_python_executable", lambda value: None)
+    monkeypatch.setattr("scripts.run_experiments.create_jobs", lambda value, path: [_job(tmp_path)])
+    monkeypatch.setattr("scripts.run_experiments.run_job", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()))
+    monkeypatch.setattr("scripts.run_experiments._write_yaml", lambda *args: None)
+    monkeypatch.setattr("scripts.run_experiments._read_yaml_raw", lambda *args: {})
+
+    with pytest.raises(KeyboardInterrupt):
+        main(["spec.yaml"])

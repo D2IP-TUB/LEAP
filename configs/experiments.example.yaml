@@ -1,24 +1,50 @@
 base_config: configs/default.yaml
-# All jobs inherit generation.constraint_backend from base_config. That setting
-# automatically selects either the vLLM 0.10.0/V0 legacy environment or the
-# vLLM 0.12/V1 xgrammar environment for the complete experiment.
 models:
   - Qwen/Qwen2.5-7B-Instruct
   - Qwen/Qwen2.5-32B-Instruct
   - meta-llama/Llama-4-Scout-17B-16E-Instruct
   - mistralai/Mistral-7B-Instruct-v0.2
-modes:
-  - direct_query
-  - constrained_cot
-  - cot
-  # JSON variants also available:
-  # - json_iterative
-  # - constrained_json_iterative
-  # - json_cot
-  # - constrained_json_cot
+
+# The runner expands all unique, supported combinations. Unconstrained jobs use
+# xgrammar's modern runtime, legacy_state_machine + JSON is omitted, and
+# direct_query is emitted once because action constraints do not apply to it.
+matrix:
+  strategies:
+    - iterative
+    - cot
+    - direct_query
+  use_constraints:
+    - false
+    - true
+  use_global_constraints:
+    - false
+    - true
+  constraint_backends:
+    # - legacy_state_machine
+    - xgrammar
+  output_formats:
+    - function
+    - json
+
 repeats: 3
 max_examples: 500
 output_root: results/experiments
-continue_on_error: true
+
+# Run every answer extraction method on every strategy's final table.
+extractors:
+  - direct_query
+  - nl2sql
+  - nl2code
+  - end2ender
+  - cot_end2ender
+
+# add_column is intentionally disabled for the entire matrix.
+enabled_actions:
+  - select_row
+  - select_column
+  - group_by
+  - sort_by
+  - end
+
 # Optional. Defaults to .venv/bin/python when present, otherwise the current Python.
 # python_executable: .venv/bin/python
