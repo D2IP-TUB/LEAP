@@ -798,6 +798,12 @@ def write_reports(report: dict[str, Any], experiment_dir: Path) -> None:
 
 
 def render_markdown_report(report: dict[str, Any]) -> str:
+    extractors = report.get("extractors", [])
+    extractor_headers = [f"`{_markdown_cell(method)}` Accuracy" for method in extractors]
+
+    def table_row(cells: list[Any]) -> str:
+        return "| " + " | ".join(str(cell) for cell in cells) + " |"
+
     lines = [
         "# Experiment Report",
         "",
@@ -813,24 +819,32 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         "",
         "## Summary By Configuration",
         "",
-        "| Strategy | Constraints | Global | Backend | Format | Jobs | Mean Accuracy | Std Dev | Error Rate | Failed | Avg Runtime |",
-        "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|",
+        table_row(
+            ["Strategy", "Constraints", "Global", "Backend", "Format", "Jobs"]
+            + extractor_headers
+            + ["Mean Extractor Accuracy", "Std Dev", "Error Rate", "Failed", "Avg Runtime"]
+        ),
+        table_row(["---"] * 5 + ["---:"] + ["---:"] * len(extractors) + ["---:"] * 5),
     ]
     for row in report["summary_by_configuration"]:
         lines.append(
-            "| {strategy} | {constraints} | {global_constraints} | {backend} | {format} | {jobs} | "
-            "{mean_accuracy} | {std_dev} | {error_rate} | {failed_jobs} | {runtime} |".format(
-                strategy=row["strategy"],
-                constraints=_fmt_bool(row["use_constraints"]),
-                global_constraints=_fmt_bool(row["use_global_constraints"]),
-                backend=row["constraint_backend"],
-                format=row["output_format"],
-                jobs=row["jobs"],
-                mean_accuracy=_fmt_float(row["mean_accuracy"]),
-                std_dev=_fmt_float(row["std_dev"]),
-                error_rate=_fmt_float(row["error_rate"]),
-                failed_jobs=row["failed_jobs"],
-                runtime=_format_seconds(row["avg_runtime_seconds"]),
+            table_row(
+                [
+                    row["strategy"],
+                    _fmt_bool(row["use_constraints"]),
+                    _fmt_bool(row["use_global_constraints"]),
+                    row["constraint_backend"],
+                    row["output_format"],
+                    row["jobs"],
+                ]
+                + [_fmt_float(row.get("mean_method_accuracies", {}).get(method)) for method in extractors]
+                + [
+                    _fmt_float(row["mean_accuracy"]),
+                    _fmt_float(row["std_dev"]),
+                    _fmt_float(row["error_rate"]),
+                    row["failed_jobs"],
+                    _format_seconds(row["avg_runtime_seconds"]),
+                ]
             )
         )
 
@@ -839,27 +853,33 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             "",
             "## Summary By Model And Configuration",
             "",
-            "| Model | Strategy | Constraints | Global | Backend | Format | Runs | Mean Accuracy | "
-            "Error Rate | Successful Examples | Avg Runtime |",
-            "|---|---|---|---|---|---|---:|---:|---:|---:|---:|",
+            table_row(
+                ["Model", "Strategy", "Constraints", "Global", "Backend", "Format", "Runs"]
+                + extractor_headers
+                + ["Mean Extractor Accuracy", "Error Rate", "Successful Examples", "Avg Runtime"]
+            ),
+            table_row(["---"] * 6 + ["---:"] + ["---:"] * len(extractors) + ["---:"] * 4),
         ]
     )
     for row in report["summary_by_model_and_configuration"]:
         lines.append(
-            "| {model} | {strategy} | {constraints} | {global_constraints} | {backend} | {format} | {runs} | "
-            "{mean_accuracy} | {error_rate} | {success}/{examples} | {runtime} |".format(
-                model=row["model"],
-                strategy=row["strategy"],
-                constraints=_fmt_bool(row["use_constraints"]),
-                global_constraints=_fmt_bool(row["use_global_constraints"]),
-                backend=row["constraint_backend"],
-                format=row["output_format"],
-                runs=row["jobs"],
-                mean_accuracy=_fmt_float(row["mean_accuracy"]),
-                error_rate=_fmt_float(row["error_rate"]),
-                success=row["successful_examples"],
-                examples=row["examples"],
-                runtime=_format_seconds(row["avg_runtime_seconds"]),
+            table_row(
+                [
+                    row["model"],
+                    row["strategy"],
+                    _fmt_bool(row["use_constraints"]),
+                    _fmt_bool(row["use_global_constraints"]),
+                    row["constraint_backend"],
+                    row["output_format"],
+                    row["jobs"],
+                ]
+                + [_fmt_float(row.get("mean_method_accuracies", {}).get(method)) for method in extractors]
+                + [
+                    _fmt_float(row["mean_accuracy"]),
+                    _fmt_float(row["error_rate"]),
+                    f"{row['successful_examples']}/{row['examples']}",
+                    _format_seconds(row["avg_runtime_seconds"]),
+                ]
             )
         )
 
@@ -868,34 +888,49 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             "",
             "## Individual Runs",
             "",
-            "| Model | Strategy | Constraints | Global | Backend | Format | vLLM | Repeat | Accuracy | "
-            "Examples | Runtime | Reused | Session | Restart | Status | Error | Run Dir |",
-            "|---|---|---|---|---|---|---|---:|---:|---:|---:|---|---|---|---|---|---|",
+            table_row(
+                ["Model", "Strategy", "Constraints", "Global", "Backend", "Format", "vLLM", "Repeat"]
+                + extractor_headers
+                + [
+                    "Mean Extractor Accuracy",
+                    "Examples",
+                    "Runtime",
+                    "Reused",
+                    "Session",
+                    "Restart",
+                    "Status",
+                    "Error",
+                    "Run Dir",
+                ]
+            ),
+            table_row(["---"] * 7 + ["---:"] + ["---:"] * len(extractors) + ["---:", "---:", "---:"] + ["---"] * 6),
         ]
     )
     for row in report["jobs"]:
         lines.append(
-            "| {model} | {strategy} | {constraints} | {global_constraints} | {backend} | {format} | {vllm} | {repeat} | "
-            "{accuracy} | {examples} | {runtime} | {reused} | {session} | {restart} | {status} | {error} | {run_dir} |".format(
-                model=row["model"],
-                strategy=row["strategy"],
-                constraints=_fmt_bool(row["use_constraints"]),
-                global_constraints=_fmt_bool(row["use_global_constraints"]),
-                backend=row["constraint_backend"],
-                format=row["output_format"],
-                vllm=row["expected_runtime"],
-                repeat=row["repeat"],
-                accuracy=_fmt_float(
-                    row["average_extractor_accuracy"] if row["average_extractor_accuracy"] is not None else row["accuracy"]
-                ),
-                examples=row["examples"],
-                runtime=_format_seconds(row["runtime_seconds"]),
-                reused=row["model_reused"],
-                session=row["session_id"] or "",
-                restart=_markdown_cell(row["restart_reason"] or ""),
-                status=row["status"],
-                error=_markdown_cell(row["error"] or ""),
-                run_dir=row["run_dir"] or "",
+            table_row(
+                [
+                    row["model"],
+                    row["strategy"],
+                    _fmt_bool(row["use_constraints"]),
+                    _fmt_bool(row["use_global_constraints"]),
+                    row["constraint_backend"],
+                    row["output_format"],
+                    row["expected_runtime"],
+                    row["repeat"],
+                ]
+                + [_fmt_float(row.get("method_accuracies", {}).get(method)) for method in extractors]
+                + [
+                    _fmt_float(row["average_extractor_accuracy"] if row["average_extractor_accuracy"] is not None else row["accuracy"]),
+                    row["examples"],
+                    _format_seconds(row["runtime_seconds"]),
+                    row["model_reused"],
+                    row["session_id"] or "",
+                    _markdown_cell(row["restart_reason"] or ""),
+                    row["status"],
+                    _markdown_cell(row["error"] or ""),
+                    row["run_dir"] or "",
+                ]
             )
         )
     return "\n".join(lines) + "\n"
@@ -1083,10 +1118,15 @@ def _summarize(results: list[JobResult], keys: tuple[str, ...]) -> list[dict[str
             if result.average_extractor_accuracy is not None or result.accuracy is not None
         ]
         row = {key: value for key, value in zip(keys, group_key)}
+        methods = sorted({method for result in ok_results for method in result.method_accuracies})
         row.update(
             {
                 "jobs": len(group_results),
                 "mean_accuracy": _mean(accuracies),
+                "mean_method_accuracies": {
+                    method: _mean(result.method_accuracies[method] for result in ok_results if method in result.method_accuracies)
+                    for method in methods
+                },
                 "std_dev": statistics.pstdev(accuracies) if len(accuracies) > 1 else 0.0 if accuracies else None,
                 "answer_found_rate": _mean(result.answer_found_rate for result in ok_results if result.answer_found_rate is not None),
                 "termination_rate": _mean(result.termination_rate for result in ok_results if result.termination_rate is not None),

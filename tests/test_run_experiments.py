@@ -362,7 +362,7 @@ def test_experiment_report_includes_error_columns(tmp_path):
         max_examples=2,
         output_root=tmp_path / "experiments",
         python_executable=Path("python"),
-        extractors=["direct_query"],
+        extractors=["direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"],
         enabled_actions=["select_row", "end"],
     )
     result = JobResult(
@@ -392,6 +392,14 @@ def test_experiment_report_includes_error_columns(tmp_path):
         invalid_candidate_count=3,
         missing_generation_count=1,
         total_error_count=5,
+        average_extractor_accuracy=0.3,
+        method_accuracies={
+            "direct_query": 0.5,
+            "nl2sql": 0.4,
+            "nl2code": 0.3,
+            "end2ender": 0.2,
+            "cot_end2ender": 0.1,
+        },
         session_id="model-a-legacy-attempt-1",
         model_load_id="model-a-legacy-attempt-1-load-1",
         model_reused=True,
@@ -406,7 +414,21 @@ def test_experiment_report_includes_error_columns(tmp_path):
     assert "Required vLLM runtimes: legacy" in markdown
     assert "Model loads: 1" in markdown
     assert report["summary_by_configuration"][0]["invalid_generation_end_count"] == 1
+    assert report["summary_by_configuration"][0]["mean_method_accuracies"] == {
+        "cot_end2ender": 0.1,
+        "direct_query": 0.5,
+        "end2ender": 0.2,
+        "nl2code": 0.3,
+        "nl2sql": 0.4,
+    }
     assert "Error Rate" in markdown
+    assert "`direct_query` Accuracy" in markdown
+    assert "`nl2sql` Accuracy" in markdown
+    assert "`nl2code` Accuracy" in markdown
+    assert "`end2ender` Accuracy" in markdown
+    assert "`cot_end2ender` Accuracy" in markdown
+    assert "Mean Extractor Accuracy" in markdown
+    assert "| 0.500 | 0.400 | 0.300 | 0.200 | 0.100 | 0.300 |" in markdown
     assert "legacy_state_machine" in markdown
 
 
