@@ -19,3 +19,5 @@ flash-attention/
 *.backup
 uv.lock.backup
 Miniconda3-latest-Linux-x86_64.sh
+
+AGENTS.md

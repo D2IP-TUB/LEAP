@@ -138,7 +138,7 @@ class InferenceRequest:
             InferenceRequest instance
         """
         table = Table(columns=example["table"]["header"], rows=example["table"]["rows"])
-        request_id = f"req_{index}" if index is not None else str(uuid.uuid4())
+        request_id = f"example_{index}" if index is not None else str(uuid.uuid4())
         return cls(
             question=example["question"],
             table=table,

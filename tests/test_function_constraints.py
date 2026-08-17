@@ -57,6 +57,25 @@ def test_legacy_backend_forces_function_output_format(use_constraints):
     assert config.output_format == "function"
 
 
+def test_generation_config_accepts_mcp_mode():
+    config = _build_generation_config(
+        {"constraint_backend": "xgrammar", "output_format": "mcp"},
+        ["select_column", "end"],
+        SamplingConfig(),
+    )
+
+    assert config.output_format == "mcp"
+
+
+def test_generation_config_rejects_add_column_in_mcp_mode():
+    with pytest.raises(ValueError, match="add_column"):
+        _build_generation_config(
+            {"constraint_backend": "xgrammar", "output_format": "mcp"},
+            ["select_column", "add_column", "end"],
+            SamplingConfig(),
+        )
+
+
 def test_generation_config_rejects_unknown_output_format():
     with pytest.raises(ValueError, match="output_format"):
         _build_generation_config({"output_format": "xml"}, ["end"], SamplingConfig())

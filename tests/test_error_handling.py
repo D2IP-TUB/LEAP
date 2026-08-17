@@ -1,6 +1,6 @@
 """Tests for error handling in the inference pipeline"""
 
-from leap.core import ExecutionMetrics, InferenceResult, Table
+from leap.core import ExecutionMetrics, InferenceRequest, InferenceResult, Table
 
 
 def test_inference_result_from_dict_with_error():
@@ -83,6 +83,7 @@ def test_inference_result_to_dict():
         request_id="req_789",
         question="Test question",
         ground_truth_answers=["1"],
+        generated_answers=["1"],
     )
 
     result_dict = result.to_dict()
@@ -90,9 +91,22 @@ def test_inference_result_to_dict():
     assert result_dict["request_id"] == "req_789"
     assert result_dict["question"] == "Test question"
     assert result_dict["ground_truth_answers"] == ["1"]
+    assert result_dict["generated_answers"] == ["1"]
     assert result_dict["action_history"] == ["select_row([0])"]
     assert "execution_accuracy_metrics" in result_dict
     assert result_dict["execution_accuracy_metrics"]["execution_accuracy"] == 0.5
+
+
+def test_inference_request_from_example_uses_stable_example_id():
+    example = {
+        "question": "What is the capital of France?",
+        "table": {"header": ["Country", "Capital"], "rows": [["France", "Paris"]]},
+        "answers": ["Paris"],
+    }
+
+    request = InferenceRequest.from_example(example, index=7)
+
+    assert request.request_id == "example_7"
 
 
 def test_inference_result_round_trip_with_error():

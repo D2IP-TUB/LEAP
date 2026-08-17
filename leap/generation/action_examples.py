@@ -28,6 +28,8 @@ ITERATIVE_PROMPT_PATH = PROMPTS_DIR / "iterative.yaml"
 DIRECT_QUERY_PROMPT_PATH = PROMPTS_DIR / "direct_query.yaml"
 ITERATIVE_JSON_PROMPT_PATH = PROMPTS_DIR / "iterative_json.yaml"
 COT_JSON_PROMPT_PATH = PROMPTS_DIR / "cot_json.yaml"
+ITERATIVE_MCP_PROMPT_PATH = PROMPTS_DIR / "iterative_mcp.yaml"
+COT_MCP_PROMPT_PATH = PROMPTS_DIR / "cot_mcp.yaml"
 
 
 @dataclass(frozen=True)
@@ -342,18 +344,24 @@ class PromptCatalog:
         direct_query_path: Path = DIRECT_QUERY_PROMPT_PATH,
         iterative_json_path: Path = ITERATIVE_JSON_PROMPT_PATH,
         cot_json_path: Path = COT_JSON_PROMPT_PATH,
+        iterative_mcp_path: Path = ITERATIVE_MCP_PROMPT_PATH,
+        cot_mcp_path: Path = COT_MCP_PROMPT_PATH,
     ) -> None:
         self.cot_path = cot_path
         self.iterative_path = iterative_path
         self.direct_query_path = direct_query_path
         self.iterative_json_path = iterative_json_path
         self.cot_json_path = cot_json_path
+        self.iterative_mcp_path = iterative_mcp_path
+        self.cot_mcp_path = cot_mcp_path
 
         self.cot = self._load_yaml(cot_path)
         self.iterative = self._load_yaml(iterative_path)
         self.direct_query = self._load_yaml(direct_query_path)
         self.iterative_json = self._load_yaml(iterative_json_path)
         self.cot_json = self._load_yaml(cot_json_path)
+        self.iterative_mcp = self._load_yaml(iterative_mcp_path)
+        self.cot_mcp = self._load_yaml(cot_mcp_path)
         self._validate()
 
         self.cot_examples_manager = ActionExamplesManager(cot_path, examples_data=self.cot)
@@ -387,6 +395,22 @@ class PromptCatalog:
             {"action_instruction", "argument_instructions", "operation_shapes"},
             location=str(self.cot_json_path),
         )
+        self._require_keys(
+            self.iterative_mcp,
+            {"templates", "terminology", "operation_shapes"},
+            location=str(self.iterative_mcp_path),
+        )
+        self._require_keys(
+            self.cot_mcp,
+            {"terminology", "action_instruction", "argument_instructions", "selection_shapes", "operation_shapes"},
+            location=str(self.cot_mcp_path),
+        )
+        self._require_keys(self.iterative_mcp["templates"], {"current_turn"}, location=f"{self.iterative_mcp_path}:templates")
+        for location, terminology in (
+            (self.iterative_mcp_path, self.iterative_mcp["terminology"]),
+            (self.cot_mcp_path, self.cot_mcp["terminology"]),
+        ):
+            self._require_keys(terminology, {"operation_name", "operation_call"}, location=f"{location}:terminology")
         for location, shapes in (
             (self.iterative_json_path, self.iterative_json["operation_shapes"]),
             (self.cot_json_path, self.cot_json["operation_shapes"]),
@@ -398,6 +422,27 @@ class PromptCatalog:
                     raise ValueError(f"Invalid JSON operation shape in {location}: {action_name}") from exc
                 if not isinstance(payload, dict) or payload.get("action") != action_name:
                     raise ValueError(f"JSON operation shape for {action_name} in {location} has the wrong action field")
+        for location, shapes in (
+            (self.iterative_mcp_path, self.iterative_mcp["operation_shapes"]),
+            (self.cot_mcp_path, self.cot_mcp["selection_shapes"]),
+            (self.cot_mcp_path, self.cot_mcp["operation_shapes"]),
+        ):
+            for action_name, shape in shapes.items():
+                try:
+                    payload = json.loads(shape)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"Invalid MCP operation shape in {location}: {action_name}") from exc
+                params = payload.get("params") if isinstance(payload, dict) else None
+                if (
+                    not isinstance(payload, dict)
+                    or set(payload) != {"jsonrpc", "id", "method", "params"}
+                    or payload["jsonrpc"] != "2.0"
+                    or payload["method"] != "tools/call"
+                    or not isinstance(params, dict)
+                    or params.get("name") != action_name
+                    or not isinstance(params.get("arguments"), dict)
+                ):
+                    raise ValueError(f"MCP operation shape for {action_name} in {location} is not a tools/call envelope")
         self._require_keys(self.cot, {"templates", "examples"}, location=str(self.cot_path))
         self._require_keys(self.cot["templates"], self._COT_TEMPLATES, location=f"{self.cot_path}:templates")
         self._require_keys(

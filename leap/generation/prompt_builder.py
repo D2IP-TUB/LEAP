@@ -9,6 +9,7 @@ from leap.core import Action, Table
 from leap.core.actions import REGISTRY
 from leap.generation.action_examples import ActionPromptBuilder, PromptCatalog
 from leap.inference.json_constraints import JsonActionCodec, available_json_actions
+from leap.mcp.protocol import MCP_ACTIONS, McpToolCallCodec
 
 
 @dataclass
@@ -49,8 +50,8 @@ class PromptBuilder:
         self.is_instruct = is_instruct
         self.iterative_settings = iterative_settings or IterativePromptSettings()
         self.cot_settings = cot_settings or CotPromptSettings()
-        if output_format not in {"function", "json"}:
-            raise ValueError("output_format must be 'function' or 'json'")
+        if output_format not in {"function", "json", "mcp"}:
+            raise ValueError("output_format must be 'function', 'json', or 'mcp'")
         self.output_format = output_format
 
         self.prompt_catalog = prompt_catalog or PromptCatalog()
@@ -134,11 +135,14 @@ class PromptBuilder:
             excluded_actions=excluded_actions,
             use_global_constraints=use_global_constraints,
         )
-        if self.output_format == "json":
+        if self.output_format in {"json", "mcp"}:
             available_names = available_json_actions(action_history, use_global_constraints=use_global_constraints)
             available_names = [name for name in available_names if name not in excluded_actions]
             action_descriptions = "\n".join(f"- {name}: {REGISTRY.get(name).get_description()}" for name in available_names)
-            actions_text = "\n".join(self.prompt_catalog.iterative_json["operation_shapes"][name] for name in available_names)
+            if self.output_format == "mcp":
+                actions_text = "\n".join(self.prompt_catalog.iterative_mcp["operation_shapes"][name] for name in available_names)
+            else:
+                actions_text = "\n".join(self.prompt_catalog.iterative_json["operation_shapes"][name] for name in available_names)
 
         messages = [
             {
@@ -162,23 +166,30 @@ class PromptBuilder:
                 answer = example.answer if add_column_available else example.answer_without_add_column
                 if self.output_format == "json":
                     answer = self._chain_to_json(answer)
+                elif self.output_format == "mcp":
+                    action = Action.parse(answer.split("->", 1)[0].strip())
+                    if action is None:
+                        raise ValueError(f"Invalid MCP prompt example: {answer!r}")
+                    answer = McpToolCallCodec.dumps(action)
                 messages.append({"role": "assistant", "content": answer})
 
         if self.output_format == "json":
             history = JsonActionCodec.history_json(action_history) if action_history else "[]"
+        elif self.output_format == "mcp":
+            history = self._mcp_history(action_history)
         else:
             history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
         available_operations = f"{action_descriptions}\n{actions_text}".strip()
         current_template = self.prompt_catalog.iterative_template("current_turn")
-        if self.output_format == "json":
+        if self.output_format == "mcp":
+            current_template = self.prompt_catalog.iterative_mcp["templates"]["current_turn"]
+        elif self.output_format == "json":
             marker = (
                 "Return only the single next operation, including all arguments. "
                 "Do not return an operation chain or an explanation.\nNext operation:"
             )
-            current_template = current_template.replace(
-                marker,
-                self.prompt_catalog.iterative_json["instruction"] + "\nNext JSON operation:",
-            )
+            instruction = self.prompt_catalog.iterative_json["instruction"] + "\nNext JSON operation:"
+            current_template = current_template.replace(marker, instruction)
         messages.append(
             {
                 "role": "user",
@@ -221,6 +232,8 @@ class PromptBuilder:
         """Whether this run may expose add_column to the model."""
         if not REGISTRY.is_enabled("add_column"):
             return False
+        if getattr(worker, "output_format", "function") == "mcp":
+            return False
         return not (
             getattr(worker, "output_format", "function") != "json"
             and getattr(worker, "use_constraints", False) is True
@@ -228,23 +241,33 @@ class PromptBuilder:
         )
 
     def _format_system_for_output(self, text: str) -> str:
-        if self.output_format != "json":
+        if self.output_format not in {"json", "mcp"}:
             return text
 
         def replace_call(match: re.Match[str]) -> str:
             action = Action.parse(match.group(0))
             if action:
-                return JsonActionCodec.dumps(action)
+                return McpToolCallCodec.dumps(action) if self.output_format == "mcp" else JsonActionCodec.dumps(action)
             name = match.group(0).split("(", 1)[0].removeprefix("f_")
+            if self.output_format == "mcp":
+                return self.prompt_catalog.cot_mcp["operation_shapes"].get(name, match.group(0))
             return self.prompt_catalog.cot_json["operation_shapes"].get(name, match.group(0))
 
         text = re.sub(r"f_[a-z_]+\([^\n]*\)", replace_call, text)
         for name, shape in self.prompt_catalog.cot_json["operation_shapes"].items():
-            text = text.replace(f"f_{name}", shape)
+            replacement = self.prompt_catalog.cot_mcp["operation_shapes"].get(name, shape) if self.output_format == "mcp" else shape
+            text = text.replace(f"f_{name}", replacement)
+        if self.output_format == "mcp":
+            terminology = self.prompt_catalog.cot_mcp["terminology"]
+            replacement_name = terminology["operation_name"]
+            replacement_call = terminology["operation_call"]
+        else:
+            replacement_name = "action field"
+            replacement_call = "complete JSON operation object"
         return (
-            text.replace("complete function call", "complete JSON operation object")
-            .replace("function name or outer parentheses", "action field")
-            .replace("function name", "action field")
+            text.replace("complete function call", replacement_call)
+            .replace("function name or outer parentheses", replacement_name)
+            .replace("function name", replacement_name)
         )
 
     @staticmethod
@@ -260,6 +283,15 @@ class PromptBuilder:
         if action is None:
             raise ValueError(f"Invalid {action_name} prompt example: {answer!r}")
         return JsonActionCodec.dumps(action, include_action=False)
+
+    @staticmethod
+    def _mcp_history(action_history: Sequence[str]) -> str:
+        requests = []
+        for index, value in enumerate(action_history):
+            action = Action.parse(value)
+            if action is not None and action.name in MCP_ACTIONS:
+                requests.append(json.loads(McpToolCallCodec.dumps(action, request_id=f"history-{index}")))
+        return json.dumps(requests, ensure_ascii=False, separators=(",", ":"))
 
     @classmethod
     def _excluded_actions(cls, worker) -> set[str]:
@@ -288,11 +320,16 @@ class PromptBuilder:
         use_global_constraints: bool,
     ) -> str:
         """Build the user-message body for an action-selection turn."""
-        if self.output_format == "json":
+        if self.output_format in {"json", "mcp"}:
             history = JsonActionCodec.history_json(action_history) if action_history else "[]"
             names = available_json_actions(action_history, use_global_constraints=use_global_constraints)
-            actions_text = ", ".join(json.dumps({"action": name}, separators=(",", ":")) for name in names if name not in excluded_actions)
+            names = [name for name in names if name not in excluded_actions]
+            actions_text = ", ".join(json.dumps({"action": name}, separators=(",", ":")) for name in names)
             question_suffix = self.prompt_catalog.cot_json["action_instruction"]
+            if self.output_format == "mcp":
+                history = self._mcp_history(action_history)
+                actions_text = "\n".join(self.prompt_catalog.cot_mcp["selection_shapes"][name] for name in names)
+                question_suffix = self.prompt_catalog.cot_mcp["action_instruction"].rstrip()
         else:
             history = "\n".join(f"{idx + 1}. {self._to_display_action(action)}" for idx, action in enumerate(action_history)) or "None"
             actions_text = REGISTRY.get_prompt_text_cot(
@@ -314,13 +351,16 @@ class PromptBuilder:
     def _build_action_selection_example_message(self, example, excluded_actions: set[str], use_global_constraints: bool) -> str:
         """Build the user-message content for a single few-shot action-selection example."""
         action_history = example.action_history or []
-        if self.output_format == "json":
+        if self.output_format in {"json", "mcp"}:
             names = available_json_actions(action_history, use_global_constraints=use_global_constraints)
-            example_actions_text = ", ".join(
-                json.dumps({"action": name}, separators=(",", ":")) for name in names if name not in excluded_actions
-            )
+            names = [name for name in names if name not in excluded_actions]
+            example_actions_text = ", ".join(json.dumps({"action": name}, separators=(",", ":")) for name in names)
             history = JsonActionCodec.history_json(action_history) if action_history else "[]"
             question_suffix = self.prompt_catalog.cot_json["action_instruction"]
+            if self.output_format == "mcp":
+                example_actions_text = "\n".join(self.prompt_catalog.cot_mcp["selection_shapes"][name] for name in names)
+                history = self._mcp_history(action_history)
+                question_suffix = self.prompt_catalog.cot_mcp["action_instruction"].rstrip()
         else:
             example_actions_text = REGISTRY.get_prompt_text_cot(
                 action_history,
@@ -391,19 +431,25 @@ class PromptBuilder:
         add_column_available = not excluded_actions
         if not add_column_available:
             system = self._remove_add_column_rule(system)
-        if self.output_format == "json":
-            system = self._format_system_for_output(system) + "\n\n" + self.prompt_catalog.cot_json["action_instruction"]
+        if self.output_format in {"json", "mcp"}:
+            suffix = self.prompt_catalog.cot_json["action_instruction"]
+            if self.output_format == "mcp":
+                suffix = self.prompt_catalog.cot_mcp["action_instruction"].rstrip()
+            system = self._format_system_for_output(system) + "\n\n" + suffix
         messages = [{"role": "system", "content": system}]
 
         for example in examples:
             answer = example.answer if add_column_available else example.answer_without_add_column
             if not answer:
                 continue
-            if self.output_format == "json":
+            if self.output_format in {"json", "mcp"}:
                 first_action = Action.parse(answer.split("->", 1)[0].strip())
                 if first_action is None:
                     raise ValueError(f"Invalid action-selection prompt example: {answer!r}")
-                answer = json.dumps({"action": first_action.name}, separators=(",", ":"))
+                if self.output_format == "mcp":
+                    answer = McpToolCallCodec.dumps(first_action, include_arguments=False)
+                else:
+                    answer = json.dumps({"action": first_action.name}, separators=(",", ":"))
             messages.append(
                 {
                     "role": "user",
@@ -441,9 +487,12 @@ class PromptBuilder:
         instruction = self.prompt_catalog.cot_examples_manager.get_system_rules(action_name)
         examples = self.prompt_catalog.cot_examples_manager.get_examples(action_name)
 
-        if self.output_format == "json":
+        if self.output_format in {"json", "mcp"}:
             instruction = self._format_system_for_output(instruction or "")
-            instruction += "\n\n" + self.prompt_catalog.cot_json["argument_instructions"][action_name]
+            suffix = self.prompt_catalog.cot_json["argument_instructions"][action_name]
+            if self.output_format == "mcp":
+                suffix = self.prompt_catalog.cot_mcp["argument_instructions"][action_name]
+            instruction += "\n\n" + suffix
 
         if instruction:
             messages.append({"role": "system", "content": instruction})
@@ -458,6 +507,11 @@ class PromptBuilder:
             example_answer = example.answer
             if self.output_format == "json":
                 example_answer = self._argument_answer_to_json(action_name, example_answer)
+            elif self.output_format == "mcp":
+                action = Action.parse(f"{action_name}({example_answer})")
+                if action is None:
+                    raise ValueError(f"Invalid {action_name} MCP prompt example: {example_answer!r}")
+                example_answer = McpToolCallCodec.dumps(action)
             messages.append({"role": "assistant", "content": example_answer})
 
         if action_name == "add_column" and len(table.rows) > 3:

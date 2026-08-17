@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import copy
+import csv
+import hashlib
 import itertools
 import json
 import logging
@@ -24,11 +26,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from leap.utils.config_labels import build_generation_config_label  # noqa: E402
 from leap.vllm_runtime import BOOTSTRAPPED_ENV_VAR, runtime_for_generation  # noqa: E402
 
 VALID_STRATEGIES = {"iterative", "cot", "direct_query"}
 VALID_CONSTRAINT_BACKENDS = {"legacy_state_machine", "xgrammar"}
-VALID_OUTPUT_FORMATS = {"function", "json"}
+VALID_OUTPUT_FORMATS = {"function", "json", "mcp"}
 VALID_EXTRACTORS = {"direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"}
 VALID_ACTIONS = {"select_row", "select_column", "group_by", "sort_by", "add_column", "end"}
 DEFAULT_SPEC_PATH = PROJECT_ROOT / "configs/experiments.example.yaml"
@@ -42,6 +45,7 @@ class ExperimentMatrix:
     use_global_constraints: list[bool]
     constraint_backends: list[str]
     output_formats: list[str]
+    force_zero_temperature: list[bool]
 
 
 @dataclass(frozen=True)
@@ -66,6 +70,7 @@ class ExperimentJob:
     use_global_constraints: bool
     constraint_backend: str
     output_format: str
+    force_zero_temperature: bool
     repeat: int
     config_path: Path
     results_root: Path
@@ -115,6 +120,8 @@ class JobResult:
     invalid_candidate_count: int
     missing_generation_count: int
     total_error_count: int
+    config_key: str | None = None
+    config_label: str | None = None
     error: str | None = None
     average_extractor_accuracy: float | None = None
     method_accuracies: dict[str, float] = field(default_factory=dict)
@@ -122,6 +129,14 @@ class JobResult:
     model_load_id: str | None = None
     model_reused: bool = False
     restart_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ComparisonRun:
+    config_key: str
+    config_label: str
+    run_dir: Path
+    rows: list[dict[str, Any]]
 
 
 def load_experiment_spec(spec_path: Path) -> ExperimentSpec:
@@ -157,6 +172,7 @@ def load_experiment_spec(spec_path: Path) -> ExperimentSpec:
         use_global_constraints=_bool_list(matrix_raw, "use_global_constraints"),
         constraint_backends=_string_list(matrix_raw, "constraint_backends", VALID_CONSTRAINT_BACKENDS),
         output_formats=_string_list(matrix_raw, "output_formats", VALID_OUTPUT_FORMATS),
+        force_zero_temperature=_bool_list(matrix_raw, "force_zero_temperature"),
     )
     if not expand_matrix(matrix):
         raise ValueError("The experiment matrix contains no supported generation-setting combinations.")
@@ -269,20 +285,23 @@ def expand_matrix(matrix: ExperimentMatrix) -> list[dict[str, Any]]:
     seen: set[tuple[Any, ...]] = set()
     for strategy in matrix.strategies:
         if strategy == "direct_query":
-            candidates = [(False, False, "xgrammar", "function")]
+            candidates = [
+                (False, False, "xgrammar", "function", force_zero_temperature) for force_zero_temperature in matrix.force_zero_temperature
+            ]
         else:
             candidates = itertools.product(
                 matrix.use_constraints,
                 matrix.use_global_constraints,
                 matrix.constraint_backends,
                 matrix.output_formats,
+                matrix.force_zero_temperature,
             )
-        for use_constraints, use_global_constraints, constraint_backend, output_format in candidates:
-            if constraint_backend == "legacy_state_machine" and output_format == "json":
+        for use_constraints, use_global_constraints, constraint_backend, output_format, force_zero_temperature in candidates:
+            if constraint_backend == "legacy_state_machine" and output_format != "function":
                 continue
             if not use_constraints:
                 constraint_backend = "xgrammar"
-            key = (strategy, use_constraints, use_global_constraints, constraint_backend, output_format)
+            key = (strategy, use_constraints, use_global_constraints, constraint_backend, output_format, force_zero_temperature)
             if key in seen:
                 continue
             seen.add(key)
@@ -293,6 +312,7 @@ def expand_matrix(matrix: ExperimentMatrix) -> list[dict[str, Any]]:
                     "use_global_constraints": use_global_constraints,
                     "constraint_backend": constraint_backend,
                     "output_format": output_format,
+                    "force_zero_temperature": force_zero_temperature,
                 }
             )
     return settings
@@ -301,12 +321,18 @@ def expand_matrix(matrix: ExperimentMatrix) -> list[dict[str, Any]]:
 def describe_matrix_adjustments(matrix: ExperimentMatrix) -> list[str]:
     notes = []
     transformation_strategies = set(matrix.strategies) & {"iterative", "cot"}
-    if transformation_strategies and "legacy_state_machine" in matrix.constraint_backends and "json" in matrix.output_formats:
-        notes.append("Omitted legacy_state_machine + JSON combinations because the legacy backend only supports function output.")
+    structured_formats = {"json", "mcp"} & set(matrix.output_formats)
+    if transformation_strategies and "legacy_state_machine" in matrix.constraint_backends and structured_formats:
+        notes.append(
+            "Omitted legacy_state_machine + structured-output combinations because the legacy backend only supports function output."
+        )
     if transformation_strategies and False in matrix.use_constraints and len(matrix.constraint_backends) > 1:
         notes.append("Deduplicated unconstrained backend variants and selected xgrammar because unconstrained jobs use the modern runtime.")
     if "direct_query" in matrix.strategies:
-        notes.append("Collapsed direct_query to one unconstrained function configuration because action constraints do not apply.")
+        notes.append(
+            """Collapsed direct_query to the unconstrained function path while retaining the temperature-mode sweep because action 
+            constraints do not apply."""
+        )
     return notes
 
 
@@ -319,6 +345,7 @@ def build_job_config(
     use_global_constraints: bool,
     constraint_backend: str,
     output_format: str,
+    force_zero_temperature: bool,
     max_examples: int | None,
     extractors: list[str],
     enabled_actions: list[str],
@@ -337,6 +364,7 @@ def build_job_config(
             "use_global_constraints": use_global_constraints,
             "constraint_backend": constraint_backend,
             "output_format": output_format,
+            "force_zero_temperature": force_zero_temperature,
             "enabled_actions": list(enabled_actions),
         }
     )
@@ -353,6 +381,7 @@ def run_job(job: ExperimentJob, *, experiment_dir: Path, project_root: Path, pyt
         use_global_constraints=job.use_global_constraints,
         constraint_backend=job.constraint_backend,
         output_format=job.output_format,
+        force_zero_temperature=job.force_zero_temperature,
         repeat=job.repeat,
     )
     stdout_log = log_dir / f"{log_stem}.stdout.log"
@@ -417,6 +446,64 @@ def run_job(job: ExperimentJob, *, experiment_dir: Path, project_root: Path, pyt
         )
 
 
+def _config_identity_from_path(config_path: Path) -> dict[str, Any]:
+    try:
+        raw = _read_yaml_raw(config_path)
+    except FileNotFoundError:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{config_path} must contain a YAML mapping.")
+    return {
+        "model": {
+            "id": raw.get("model", {}).get("id"),
+            "instruct": raw.get("model", {}).get("instruct"),
+            "hardware": raw.get("model", {}).get("hardware"),
+            "tokenizer_config": raw.get("model", {}).get("tokenizer_config"),
+        },
+        "dataset": raw.get("dataset"),
+        "run": raw.get("run"),
+        "generation": raw.get("generation"),
+        "extractors": raw.get("extractors", []),
+    }
+
+
+def _config_identity_from_job(job: ExperimentJob) -> dict[str, Any]:
+    identity = _config_identity_from_path(job.config_path)
+    if identity:
+        return identity
+    return {
+        "model": {"id": job.model},
+        "generation": {
+            "strategy": job.strategy,
+            "use_constraints": job.use_constraints,
+            "use_global_constraints": job.use_global_constraints,
+            "constraint_backend": job.constraint_backend,
+            "output_format": job.output_format,
+        },
+    }
+
+
+def _config_identity_key(job: ExperimentJob) -> str:
+    identity_json = json.dumps(_config_identity_from_job(job), sort_keys=True)
+    return hashlib.sha1(identity_json.encode("utf-8")).hexdigest()
+
+
+def _config_identity_label(job: ExperimentJob) -> str:
+    identity = _config_identity_from_job(job)
+    model_id = identity.get("model", {}).get("id", job.model)
+    generation = identity.get("generation", {}) or {}
+    return build_generation_config_label(
+        model_id=model_id,
+        generation=generation,
+        strategy=job.strategy,
+        use_constraints=job.use_constraints,
+        use_global_constraints=job.use_global_constraints,
+        constraint_backend=job.constraint_backend,
+        output_format=job.output_format,
+        force_zero_temperature=job.force_zero_temperature,
+    )
+
+
 def _job_result(
     job: ExperimentJob,
     *,
@@ -434,6 +521,8 @@ def _job_result(
     restart_reason: str | None = None,
 ) -> JobResult:
     model_load_id = model_load_id or f"standalone-{_job_identifier(job)}"
+    config_key = _config_identity_key(job)
+    config_label = _config_identity_label(job)
     return JobResult(
         model=job.model,
         strategy=job.strategy,
@@ -461,6 +550,8 @@ def _job_result(
         invalid_candidate_count=metrics.get("invalid_candidate_count", 0),
         missing_generation_count=metrics.get("missing_generation_count", 0),
         total_error_count=metrics.get("total_error_count", 0),
+        config_key=config_key,
+        config_label=config_label,
         error=error,
         average_extractor_accuracy=metrics.get("average_extractor_accuracy"),
         method_accuracies=metrics.get("method_accuracies", {}),
@@ -769,6 +860,18 @@ def _collect_error_summary(run_dir: Path, rows: list[dict[str, Any]]) -> dict[st
 def build_report(spec: ExperimentSpec, experiment_id: str, experiment_dir: Path, job_results: list[JobResult]) -> dict[str, Any]:
     serial_jobs = [asdict(result) for result in job_results]
     configuration_keys = ("strategy", "use_constraints", "use_global_constraints", "constraint_backend", "output_format")
+    comparison_inputs = [
+        {
+            "config_key": result.config_key,
+            "config_label": result.config_label,
+            "run_dir": result.run_dir,
+            "examples": result.examples,
+            "accuracy": result.accuracy,
+            "successful_examples": result.successful_examples,
+            "status": result.status,
+        }
+        for result in job_results
+    ]
     return {
         "experiment_id": experiment_id,
         "experiment_dir": str(experiment_dir),
@@ -785,6 +888,7 @@ def build_report(spec: ExperimentSpec, experiment_id: str, experiment_dir: Path,
         "model_load_count": len({result.model_load_id for result in job_results if result.model_load_id}),
         "required_vllm_runtimes": sorted({result.expected_runtime for result in job_results}),
         "jobs": serial_jobs,
+        "comparison_inputs": comparison_inputs,
         "summary_by_configuration": _summarize(job_results, configuration_keys),
         "summary_by_model_and_configuration": _summarize(job_results, ("model", *configuration_keys)),
     }
@@ -816,6 +920,24 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         f"Model loads: {report['model_load_count']}",
         f"Required vLLM runtimes: {', '.join(report['required_vllm_runtimes']) or 'none'}",
         *(f"Matrix adjustment: {note}" for note in report["matrix_adjustments"]),
+        "",
+        "## Comparison Inputs",
+        "",
+        table_row(["Config Key", "Config Label", "Run Dir", "Examples", "Correct", "Status"]),
+        table_row(["---", "---", "---", "---:", "---:", "---"]),
+        *[
+            table_row(
+                [
+                    row.get("config_key") or "",
+                    row.get("config_label") or "",
+                    row.get("run_dir") or "",
+                    row.get("examples", 0),
+                    row.get("successful_examples", 0),
+                    row.get("status") or "",
+                ]
+            )
+            for row in report.get("comparison_inputs", [])
+        ],
         "",
         "## Summary By Configuration",
         "",
@@ -889,7 +1011,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             "## Individual Runs",
             "",
             table_row(
-                ["Model", "Strategy", "Constraints", "Global", "Backend", "Format", "vLLM", "Repeat"]
+                ["Model", "Config Key", "Config Label", "Strategy", "Constraints", "Global", "Backend", "Format", "vLLM", "Repeat"]
                 + extractor_headers
                 + [
                     "Mean Extractor Accuracy",
@@ -903,7 +1025,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
                     "Run Dir",
                 ]
             ),
-            table_row(["---"] * 7 + ["---:"] + ["---:"] * len(extractors) + ["---:", "---:", "---:"] + ["---"] * 6),
+            table_row(["---"] * 8 + ["---:"] + ["---:"] * len(extractors) + ["---:", "---:", "---:"] + ["---"] * 6),
         ]
     )
     for row in report["jobs"]:
@@ -911,6 +1033,8 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             table_row(
                 [
                     row["model"],
+                    row.get("config_key") or "",
+                    _markdown_cell(row.get("config_label") or ""),
                     row["strategy"],
                     _fmt_bool(row["use_constraints"]),
                     _fmt_bool(row["use_global_constraints"]),
@@ -933,6 +1057,252 @@ def render_markdown_report(report: dict[str, Any]) -> str:
                 ]
             )
         )
+    return "\n".join(lines) + "\n"
+
+
+def load_comparison_run(run_dir: Path) -> ComparisonRun:
+    manifest_path = run_dir / "run_config.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows = _read_jsonl(run_dir / "results.jsonl")
+    config_key = str(manifest.get("config_key") or manifest.get("config_slug") or run_dir.name)
+    config_label = str(manifest.get("config_label") or manifest.get("config_slug") or run_dir.name)
+    return ComparisonRun(config_key=config_key, config_label=config_label, run_dir=run_dir, rows=rows)
+
+
+def _comparison_example_id(row: dict[str, Any]) -> str:
+    return str(row.get("example_id") or row.get("request_id") or row.get("id") or "")
+
+
+def _comparison_is_correct(row: dict[str, Any] | None) -> bool | None:
+    if row is None:
+        return None
+    if "is_correct" in row:
+        return bool(row.get("is_correct"))
+    comparison = row.get("comparison", {}) or {}
+    if "is_correct" in comparison:
+        return bool(comparison.get("is_correct"))
+    return float(row.get("execution_accuracy", 0.0)) == 1.0
+
+
+def _comparison_state(row: dict[str, Any] | None) -> str:
+    if row is None:
+        return "missing"
+    return "correct" if _comparison_is_correct(row) else "incorrect"
+
+
+def _comparison_row_payload(run: ComparisonRun, row: dict[str, Any] | None) -> dict[str, Any]:
+    if row is None:
+        return {
+            "config_key": run.config_key,
+            "config_label": run.config_label,
+            "state": "missing",
+            "is_correct": None,
+            "execution_accuracy": None,
+            "generated_answers": None,
+            "answer_found_in_final": None,
+            "terminated_properly": None,
+            "execution_error": None,
+        }
+    comparison = row.get("comparison", {}) or {}
+    metrics = row.get("execution_metrics", {}) or {}
+    return {
+        "config_key": run.config_key,
+        "config_label": run.config_label,
+        "state": _comparison_state(row),
+        "is_correct": _comparison_is_correct(row),
+        "execution_accuracy": row.get("execution_accuracy"),
+        "generated_answers": row.get("generated_answers"),
+        "answer_found_in_final": comparison.get("answer_found_in_final", metrics.get("answer_found_in_final")),
+        "terminated_properly": comparison.get("terminated_properly", metrics.get("terminated_properly")),
+        "execution_error": comparison.get("execution_error", metrics.get("execution_error")),
+    }
+
+
+def build_pairwise_comparison_report(left: ComparisonRun, right: ComparisonRun) -> dict[str, Any]:
+    left_rows = {_comparison_example_id(row): row for row in left.rows}
+    right_rows = {_comparison_example_id(row): row for row in right.rows}
+    example_ids = sorted({example_id for example_id in left_rows if example_id} | {example_id for example_id in right_rows if example_id})
+
+    summary = {
+        "total_examples": len(example_ids),
+        "shared_examples": 0,
+        "left_only_examples": 0,
+        "right_only_examples": 0,
+        "both_correct": 0,
+        "both_wrong": 0,
+        "left_only_correct": 0,
+        "right_only_correct": 0,
+        "left_missing": 0,
+        "right_missing": 0,
+        "both_missing": 0,
+    }
+    rows = []
+    for example_id in example_ids:
+        left_row = left_rows.get(example_id)
+        right_row = right_rows.get(example_id)
+        left_state = _comparison_state(left_row)
+        right_state = _comparison_state(right_row)
+        if left_state != "missing" and right_state != "missing":
+            summary["shared_examples"] += 1
+        elif left_state == "missing" and right_state != "missing":
+            summary["left_missing"] += 1
+            summary["right_only_examples"] += 1
+        elif right_state == "missing" and left_state != "missing":
+            summary["right_missing"] += 1
+            summary["left_only_examples"] += 1
+        else:
+            summary["both_missing"] += 1
+
+        if left_state == "correct" and right_state == "correct":
+            summary["both_correct"] += 1
+            outcome = "both_correct"
+        elif left_state == "incorrect" and right_state == "incorrect":
+            summary["both_wrong"] += 1
+            outcome = "both_wrong"
+        elif left_state == "correct" and right_state == "incorrect":
+            summary["left_only_correct"] += 1
+            outcome = "left_only_correct"
+        elif left_state == "incorrect" and right_state == "correct":
+            summary["right_only_correct"] += 1
+            outcome = "right_only_correct"
+        elif left_state == "missing" and right_state == "missing":
+            outcome = "both_missing"
+        elif left_state == "missing":
+            outcome = "left_missing"
+        else:
+            outcome = "right_missing"
+
+        rows.append(
+            {
+                "example_id": example_id,
+                "question": (left_row or right_row or {}).get("question"),
+                "ground_truth_answers": (left_row or right_row or {}).get("ground_truth_answers"),
+                "outcome": outcome,
+                "left": _comparison_row_payload(left, left_row),
+                "right": _comparison_row_payload(right, right_row),
+            }
+        )
+
+    summary["left_wins"] = summary["left_only_correct"]
+    summary["right_wins"] = summary["right_only_correct"]
+
+    return {
+        "left": {"config_key": left.config_key, "config_label": left.config_label, "run_dir": str(left.run_dir)},
+        "right": {"config_key": right.config_key, "config_label": right.config_label, "run_dir": str(right.run_dir)},
+        "summary": summary,
+        "rows": rows,
+    }
+
+
+def generate_comparison_artifacts(run_dirs: list[Path], output_dir: Path, baseline_config_key: str | None = None) -> dict[str, Any]:
+    runs = [load_comparison_run(run_dir) for run_dir in run_dirs]
+    if baseline_config_key:
+        runs.sort(key=lambda run: 0 if run.config_key == baseline_config_key else 1)
+
+    pairwise_reports = [build_pairwise_comparison_report(left, right) for left, right in itertools.combinations(runs, 2)]
+    report = {
+        "baseline_config_key": baseline_config_key,
+        "runs": [{"config_key": run.config_key, "config_label": run.config_label, "run_dir": str(run.run_dir)} for run in runs],
+        "pairwise_count": len(pairwise_reports),
+        "pairwise_comparisons": pairwise_reports,
+    }
+    write_comparison_artifacts(report, output_dir)
+    return report
+
+
+def write_comparison_artifacts(report: dict[str, Any], output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "comparison_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    (output_dir / "comparison_report.md").write_text(render_comparison_report(report), encoding="utf-8")
+
+    csv_path = output_dir / "comparison_rows.csv"
+    with csv_path.open("w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(
+            [
+                "pair_index",
+                "example_id",
+                "question",
+                "outcome",
+                "left_config_key",
+                "left_config_label",
+                "left_state",
+                "left_is_correct",
+                "left_execution_accuracy",
+                "left_generated_answers",
+                "right_config_key",
+                "right_config_label",
+                "right_state",
+                "right_is_correct",
+                "right_execution_accuracy",
+                "right_generated_answers",
+            ]
+        )
+        for pair_index, pair in enumerate(report.get("pairwise_comparisons", []), start=1):
+            for row in pair.get("rows", []):
+                left = row.get("left", {})
+                right = row.get("right", {})
+                writer.writerow(
+                    [
+                        pair_index,
+                        row.get("example_id"),
+                        row.get("question"),
+                        row.get("outcome"),
+                        left.get("config_key"),
+                        left.get("config_label"),
+                        left.get("state"),
+                        left.get("is_correct"),
+                        left.get("execution_accuracy"),
+                        json.dumps(left.get("generated_answers")),
+                        right.get("config_key"),
+                        right.get("config_label"),
+                        right.get("state"),
+                        right.get("is_correct"),
+                        right.get("execution_accuracy"),
+                        json.dumps(right.get("generated_answers")),
+                    ]
+                )
+
+
+def render_comparison_report(report: dict[str, Any]) -> str:
+    def table_row(cells: list[Any]) -> str:
+        return "| " + " | ".join(str(cell) for cell in cells) + " |"
+
+    lines = ["# Comparison Report", ""]
+    if report.get("baseline_config_key"):
+        lines.extend([f"Baseline config key: `{report['baseline_config_key']}`", ""])
+
+    lines.extend(["## Pairwise Summaries", ""])
+    for index, pair in enumerate(report.get("pairwise_comparisons", []), start=1):
+        left = pair["left"]
+        right = pair["right"]
+        summary = pair["summary"]
+        lines.extend(
+            [
+                f"### Pair {index}: {left['config_label']} vs {right['config_label']}",
+                "",
+                table_row(["Metric", "Count"]),
+                table_row(["---", "---:"]),
+                table_row(["Total examples", summary["total_examples"]]),
+                table_row(["Shared examples", summary["shared_examples"]]),
+                table_row(["Left wins", summary["left_wins"]]),
+                table_row(["Right wins", summary["right_wins"]]),
+                table_row(["Both correct", summary["both_correct"]]),
+                table_row(["Both wrong", summary["both_wrong"]]),
+                table_row(["Left missing", summary["left_missing"]]),
+                table_row(["Right missing", summary["right_missing"]]),
+                table_row(["Both missing", summary["both_missing"]]),
+                "",
+            ]
+        )
+        disagreements = [row for row in pair.get("rows", []) if row.get("outcome") not in {"both_correct", "both_wrong"}]
+        if disagreements:
+            lines.extend(["Disagreements:", "", table_row(["Example", "Outcome", "Question"]), table_row(["---", "---", "---"])])
+            for row in disagreements[:20]:
+                lines.append(table_row([row.get("example_id"), row.get("outcome"), _markdown_cell(row.get("question") or "")]))
+            if len(disagreements) > 20:
+                lines.append(f"_... {len(disagreements) - 20} more disagreements omitted._")
+            lines.append("")
     return "\n".join(lines) + "\n"
 
 
@@ -1219,6 +1589,7 @@ def _job_stem(
     use_global_constraints: bool,
     constraint_backend: str,
     output_format: str,
+    force_zero_temperature: bool,
     repeat: int,
 ) -> str:
     return "_".join(
@@ -1229,6 +1600,7 @@ def _job_stem(
             f"global-{_fmt_bool(use_global_constraints)}",
             _slugify(constraint_backend),
             _slugify(output_format),
+            "zero-temp" if force_zero_temperature else "standard-temp",
             f"r{repeat}",
         ]
     )
@@ -1242,6 +1614,7 @@ def _job_identifier(job: ExperimentJob) -> str:
         use_global_constraints=job.use_global_constraints,
         constraint_backend=job.constraint_backend,
         output_format=job.output_format,
+        force_zero_temperature=job.force_zero_temperature,
         repeat=job.repeat,
     )
 
@@ -1282,6 +1655,7 @@ def _resolve_path(value, base_dir: Path, project_root: Path) -> Path:
 
 
 def _default_python_executable() -> str:
+    """Use the interpreter that is already running the command (for example, `uv run`)."""
     return sys.executable
 
 

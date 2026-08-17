@@ -63,6 +63,17 @@ def test_unconstrained_generation_selects_modern_runtime(backend):
     assert runtime_for_generation(use_constraints=False, constraint_backend=backend).name == "modern"
 
 
+def test_mcp_generation_selects_modern_runtime():
+    assert (
+        runtime_for_generation(
+            use_constraints=True,
+            constraint_backend=MODERN_BACKEND,
+            output_format="mcp",
+        ).name
+        == "modern"
+    )
+
+
 def test_configured_legacy_backend_forces_function_format_before_runtime_selection(tmp_path):
     config = tmp_path / "legacy-json.yaml"
     _write_yaml(

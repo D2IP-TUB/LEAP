@@ -6,8 +6,8 @@ models:
   - mistralai/Mistral-7B-Instruct-v0.2
 
 # The runner expands all unique, supported combinations. Unconstrained jobs use
-# xgrammar's modern runtime, legacy_state_machine + JSON is omitted, and
-# direct_query is emitted once because action constraints do not apply to it.
+# xgrammar's modern runtime, legacy_state_machine + structured formats are
+# omitted, and direct_query is emitted once per temperature mode because action constraints do not apply.
 matrix:
   strategies:
     - iterative
@@ -25,6 +25,9 @@ matrix:
   output_formats:
     - function
     - json
+    - mcp
+  force_zero_temperature:
+    - true
 
 repeats: 3
 max_examples: 500
@@ -46,5 +49,5 @@ enabled_actions:
   - sort_by
   - end
 
-# Optional. Defaults to .venv/bin/python when present, otherwise the current Python.
-# python_executable: .venv/bin/python
+# Optional. Defaults to the Python running the command, so `uv run` works without activation.
+# python_executable: /path/to/python

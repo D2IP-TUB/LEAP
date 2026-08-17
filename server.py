@@ -102,7 +102,7 @@ def build_dataset_config(app_config: AppConfig, dataset_path: Path):
 
 def get_generation_mode_string(generation_config: GenerationSettings):
     """Get a descriptive string for the current generation mode"""
-    format_prefix = "json_" if generation_config.output_format == "json" else ""
+    format_prefix = f"{generation_config.output_format}_" if generation_config.output_format != "function" else ""
     if generation_config.strategy == "cot":
         constraint_desc = "with_constraints" if generation_config.use_constraints else "without_constraints"
         return f"{format_prefix}chain_of_table_{constraint_desc}"

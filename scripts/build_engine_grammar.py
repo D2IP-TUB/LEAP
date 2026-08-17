@@ -18,6 +18,7 @@ from leap.core import Table  # noqa: E402
 from leap.core.actions import REGISTRY  # noqa: E402
 from leap.inference.function_constraints import ROW_LIMIT, SUPPORTED_XGRAMMAR_ACTIONS, ActionGrammarBuilder  # noqa: E402
 from leap.inference.json_constraints import JsonActionSchemaBuilder  # noqa: E402
+from leap.mcp.protocol import McpToolCallSchemaBuilder  # noqa: E402
 
 DEFAULT_CONFIG_PATH = Path("configs/default.yaml")
 DEFAULT_OUTPUT_PATH = Path("logs/engine_grammar.txt")
@@ -69,39 +70,39 @@ def build_engine_grammar_report(
     builder = ActionGrammarBuilder()
     action_history = action_history or []
 
-    if generation_config.output_format == "json":
-        json_builder = JsonActionSchemaBuilder()
-        action_spec = json_builder.build_spec(
+    if generation_config.output_format in {"json", "mcp"}:
+        schema_builder = McpToolCallSchemaBuilder() if generation_config.output_format == "mcp" else JsonActionSchemaBuilder()
+        action_spec = schema_builder.build_spec(
             table=table,
             action_history=action_history,
             use_global_constraints=generation_config.use_global_constraints,
             phase="action",
         )
-        single_spec = json_builder.build_spec(
+        single_spec = schema_builder.build_spec(
             table=table,
             action_history=action_history,
             use_global_constraints=generation_config.use_global_constraints,
             phase="single_step",
         )
         schemas = {
-            "action": json_builder.build_action_schema(action_spec),
-            "single_step": json_builder.build_single_step_schema(single_spec),
+            "action": schema_builder.build_action_schema(action_spec),
+            "single_step": schema_builder.build_single_step_schema(single_spec),
             "arguments": {},
         }
         for action_name in action_spec.allowed_actions:
             if action_name == "end":
                 continue
-            spec = json_builder.build_spec(
+            spec = schema_builder.build_spec(
                 table=table,
                 action_history=action_history,
                 use_global_constraints=generation_config.use_global_constraints,
                 phase="arguments",
                 selected_action=action_name,
             )
-            schemas["arguments"][action_name] = json_builder.build_arguments_schema(spec)
+            schemas["arguments"][action_name] = schema_builder.build_arguments_schema(spec)
         return "\n".join(
             [
-                "# LEAP Engine JSON Schema Report",
+                f"# LEAP Engine {generation_config.output_format.upper()} Schema Report",
                 "",
                 f"- config: {config_path}",
                 f"- table_source: {table_source_description}",

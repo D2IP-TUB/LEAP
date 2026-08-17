@@ -6,6 +6,8 @@ from leap.evaluation.evaluator import calculate_execution_accuracy_with_dataset_
 from leap.evaluation.metrics import check_denotation, to_value_list
 from leap.extractors import ExtractionContext, run_extractors
 from leap.generation.prompt_builder import PromptBuilder
+from leap.inference.json_constraints import JsonActionCodec
+from leap.mcp.protocol import McpToolCall, uses_mcp_operations
 from leap.utils.profiler import RequestProfiler
 
 DEFAULT_COT_ACTION_TEMPERATURE = 0.0
@@ -165,7 +167,27 @@ class BaseGenerationStrategy:
                     profiler.end_step(step_start, step, "validity_failed")
                     continue
 
+                table_state = None
+                if uses_mcp_operations(worker):
+                    if worker.mcp_client is None:
+                        raise RuntimeError("MCP output mode requires an active worker MCP client")
+                    mcp_result = await worker.mcp_client.apply(
+                        McpToolCall(
+                            request_id=f"{request_id}-step-{step}",
+                            name=action.name,
+                            arguments=JsonActionCodec.to_dict(action, include_action=False),
+                        ),
+                        current_table,
+                    )
+                    action = mcp_result.action
+                    table_state = mcp_result.table
+                    profiler.record_timing("mcp_table_transformation", mcp_result.timings.total_seconds)
+                    profiler.record_timing("mcp_startup", mcp_result.timings.startup_seconds, diagnostic=True)
+                    profiler.record_timing("mcp_call", mcp_result.timings.call_seconds, diagnostic=True)
+
                 if action.name == "end":
+                    if table_state is not None:
+                        current_table = table_state
                     action_history.append(action.to_string())
                     # Automatically append direct_query() after end() as per paper
                     action_history.append("direct_query()")
@@ -180,8 +202,11 @@ class BaseGenerationStrategy:
                     profiler.end_step(step_start, step, "end")
                     break
 
-                with profiler.time_operation("table_transformation"):
-                    new_table = action.apply_to_table(current_table)
+                if uses_mcp_operations(worker):
+                    new_table = table_state
+                else:
+                    with profiler.time_operation("table_transformation"):
+                        new_table = action.apply_to_table(current_table)
 
                 if not new_table:
                     validity_failures += 1
@@ -293,6 +318,7 @@ class BaseGenerationStrategy:
         profiling_data = {
             "total_time": total_time,
             "operation_timings": profiler.timings,
+            "diagnostic_timings": profiler.diagnostic_timings,
             "num_steps": step,
         }
 
@@ -361,7 +387,8 @@ class ChainOfTableGenerationStrategy(BaseGenerationStrategy):
 
     def get_generation_mode_string(self, worker) -> str:
         """Override to return CoT mode string."""
-        return "JSON CoT" if getattr(worker, "output_format", "function") == "json" else "CoT"
+        output_format = getattr(worker, "output_format", "function")
+        return "MCP CoT" if output_format == "mcp" else "JSON CoT" if output_format == "json" else "CoT"
 
     async def generate_action_step(
         self,
@@ -481,6 +508,7 @@ class DirectQueryGenerationStrategy(BaseGenerationStrategy):
         profiling_data = {
             "total_time": total_time,
             "operation_timings": profiler.timings,
+            "diagnostic_timings": profiler.diagnostic_timings,
             "num_steps": 0,  # No action steps
         }
 

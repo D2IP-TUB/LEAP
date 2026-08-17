@@ -106,6 +106,25 @@ def test_report_renders_json_schemas_for_json_mode(tmp_path):
     assert '"City"' in report
 
 
+def test_report_renders_mcp_envelope_schemas(tmp_path):
+    config_path = _config(tmp_path)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["generation"]["output_format"] = "mcp"
+    _write_yaml(config_path, config)
+
+    report = build_engine_grammar_report(
+        config_path=config_path,
+        table_source="sample",
+        columns=["City", "Score"],
+        row_count=2,
+    )
+
+    assert report.startswith("# LEAP Engine MCP Schema Report")
+    assert '"tools/call"' in report
+    assert '"select_column"' in report
+    assert '"arguments"' in report
+
+
 def test_report_rejects_add_column_for_active_xgrammar(tmp_path):
     config_path = _config(tmp_path)
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))

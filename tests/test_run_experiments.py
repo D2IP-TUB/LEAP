@@ -21,6 +21,7 @@ from scripts.run_experiments import (
     collect_run_metrics,
     create_jobs,
     expand_matrix,
+    generate_comparison_artifacts,
     group_jobs,
     load_experiment_spec,
     main,
@@ -63,6 +64,15 @@ def _write_result(run_dir: Path, *, accuracy: float, rows: list[dict]):
     (run_dir / "results.jsonl").write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
 
+def _write_comparison_run(run_dir: Path, *, config_key: str, config_label: str, rows: list[dict]):
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run_config.json").write_text(
+        json.dumps({"config_key": config_key, "config_label": config_label, "run_dir": str(run_dir)}),
+        encoding="utf-8",
+    )
+    (run_dir / "results.jsonl").write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+
 def _matrix():
     return ExperimentMatrix(
         strategies=["iterative", "cot", "direct_query"],
@@ -70,6 +80,7 @@ def _matrix():
         use_global_constraints=[False, True],
         constraint_backends=["legacy_state_machine", "xgrammar"],
         output_formats=["function", "json"],
+        force_zero_temperature=[False, True],
     )
 
 
@@ -83,6 +94,7 @@ def _spec_data(base_path: Path):
             "use_global_constraints": [False, True],
             "constraint_backends": ["legacy_state_machine", "xgrammar"],
             "output_formats": ["function", "json"],
+            "force_zero_temperature": [False, True],
         },
         "repeats": 3,
         "extractors": ["direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"],
@@ -98,6 +110,7 @@ def _job(tmp_path, **overrides):
         "use_global_constraints": False,
         "constraint_backend": "xgrammar",
         "output_format": "function",
+        "force_zero_temperature": False,
         "repeat": 1,
         "config_path": tmp_path / "config.yaml",
         "results_root": tmp_path / "runs",
@@ -118,6 +131,7 @@ def test_build_job_config_applies_all_matrix_and_fixed_settings(tmp_path):
         use_global_constraints=True,
         constraint_backend="xgrammar",
         output_format="json",
+        force_zero_temperature=True,
         max_examples=10,
         extractors=extractors,
         enabled_actions=actions,
@@ -130,17 +144,18 @@ def test_build_job_config_applies_all_matrix_and_fixed_settings(tmp_path):
     assert config["generation"]["use_constraints"] is True
     assert config["generation"]["use_global_constraints"] is True
     assert config["generation"]["constraint_backend"] == "xgrammar"
+    assert config["generation"]["force_zero_temperature"] is True
     assert config["generation"]["enabled_actions"] == actions
     assert "add_column" not in config["generation"]["enabled_actions"]
     assert config["extractors"] == extractors
     assert base_config["generation"]["enabled_actions"] == ["select_row", "end"]
 
 
-def test_expand_matrix_produces_21_unique_settings_and_canonical_direct_query():
+def test_expand_matrix_produces_42_unique_settings_and_canonical_direct_query():
     settings = expand_matrix(_matrix())
 
-    assert len(settings) == 21
-    assert len({tuple(setting.values()) for setting in settings}) == 21
+    assert len(settings) == 42
+    assert len({tuple(setting.values()) for setting in settings}) == 42
     assert not any(setting["constraint_backend"] == "legacy_state_machine" and setting["output_format"] == "json" for setting in settings)
     assert all(setting["constraint_backend"] == "xgrammar" for setting in settings if not setting["use_constraints"])
     direct = [setting for setting in settings if setting["strategy"] == "direct_query"]
@@ -151,8 +166,34 @@ def test_expand_matrix_produces_21_unique_settings_and_canonical_direct_query():
             "use_global_constraints": False,
             "constraint_backend": "xgrammar",
             "output_format": "function",
-        }
+            "force_zero_temperature": False,
+        },
+        {
+            "strategy": "direct_query",
+            "use_constraints": False,
+            "use_global_constraints": False,
+            "constraint_backend": "xgrammar",
+            "output_format": "function",
+            "force_zero_temperature": True,
+        },
     ]
+
+
+def test_expand_matrix_accepts_mcp_only_on_modern_runtime():
+    matrix = ExperimentMatrix(
+        strategies=["iterative", "cot"],
+        use_constraints=[False, True],
+        use_global_constraints=[False],
+        constraint_backends=["legacy_state_machine", "xgrammar"],
+        output_formats=["mcp"],
+        force_zero_temperature=[False, True],
+    )
+
+    settings = expand_matrix(matrix)
+
+    assert len(settings) == 8
+    assert all(setting["output_format"] == "mcp" for setting in settings)
+    assert all(setting["constraint_backend"] == "xgrammar" for setting in settings)
 
 
 def test_load_experiment_spec_rejects_legacy_modes(tmp_path, monkeypatch):
@@ -174,6 +215,7 @@ def test_load_experiment_spec_rejects_legacy_modes(tmp_path, monkeypatch):
         ("use_global_constraints", [False, False], "duplicates"),
         ("constraint_backends", ["bad"], "Unknown constraint_backends"),
         ("output_formats", ["xml"], "Unknown output_formats"),
+        ("force_zero_temperature", ["no"], "booleans"),
     ],
 )
 def test_load_experiment_spec_validates_matrix_lists(tmp_path, monkeypatch, key, value, message):
@@ -201,7 +243,21 @@ def test_load_experiment_spec_defaults_model_reuse_on_and_accepts_opt_out(tmp_pa
     assert load_experiment_spec(spec_path).reuse_models is False
 
 
-def test_example_matrix_creates_252_unique_jobs(tmp_path, monkeypatch):
+def test_load_experiment_spec_defaults_python_executable_to_current_interpreter(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("scripts.run_experiments.sys.executable", "/tmp/uv/bin/python")
+    base_path, _ = _base_config(tmp_path)
+    data = _spec_data(base_path)
+    data.pop("python_executable", None)
+    spec_path = tmp_path / "experiments.yaml"
+    _write_yaml(spec_path, data)
+
+    spec = load_experiment_spec(spec_path)
+
+    assert spec.python_executable == Path("/tmp/uv/bin/python")
+
+
+def test_example_matrix_creates_504_unique_jobs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     base_path, _ = _base_config(tmp_path)
     data = _spec_data(base_path)
@@ -212,10 +268,11 @@ def test_example_matrix_creates_252_unique_jobs(tmp_path, monkeypatch):
 
     jobs = create_jobs(spec, tmp_path / "experiment")
 
-    assert len(jobs) == 252
-    assert len({job.config_path.name for job in jobs}) == 252
+    assert len(jobs) == 504
+    assert len({job.config_path.name for job in jobs}) == 504
     generated = yaml.safe_load(jobs[0].config_path.read_text(encoding="utf-8"))
     assert generated["extractors"] == data["extractors"]
+    assert generated["generation"]["force_zero_temperature"] in {False, True}
     assert generated["generation"]["enabled_actions"] == data["enabled_actions"]
 
 
@@ -392,6 +449,8 @@ def test_experiment_report_includes_error_columns(tmp_path):
         invalid_candidate_count=3,
         missing_generation_count=1,
         total_error_count=5,
+        config_key="config-key-a",
+        config_label="model/a | cot | constrained | legacy_state_machine | function | standard_temp",
         average_extractor_accuracy=0.3,
         method_accuracies={
             "direct_query": 0.5,
@@ -411,6 +470,8 @@ def test_experiment_report_includes_error_columns(tmp_path):
     assert report["jobs"][0]["error_rate"] == 0.5
     assert report["required_vllm_runtimes"] == ["legacy"]
     assert report["model_load_count"] == 1
+    assert report["comparison_inputs"][0]["config_key"] == "config-key-a"
+    assert report["comparison_inputs"][0]["config_label"] == "model/a | cot | constrained | legacy_state_machine | function | standard_temp"
     assert "Required vLLM runtimes: legacy" in markdown
     assert "Model loads: 1" in markdown
     assert report["summary_by_configuration"][0]["invalid_generation_end_count"] == 1
@@ -430,6 +491,161 @@ def test_experiment_report_includes_error_columns(tmp_path):
     assert "Mean Extractor Accuracy" in markdown
     assert "| 0.500 | 0.400 | 0.300 | 0.200 | 0.100 | 0.300 |" in markdown
     assert "legacy_state_machine" in markdown
+    assert "## Comparison Inputs" in markdown
+    assert "Config Key" in markdown
+
+
+def test_generate_comparison_artifacts_writes_pairwise_outputs(tmp_path):
+    run_a = tmp_path / "run_a"
+    run_b = tmp_path / "run_b"
+    _write_comparison_run(
+        run_a,
+        config_key="config-a",
+        config_label="model/a | cot | constrained | xgrammar | function | standard_temp",
+        rows=[
+            {
+                "example_id": "example_1",
+                "question": "Q1",
+                "ground_truth_answers": ["A"],
+                "execution_accuracy": 1.0,
+                "is_correct": True,
+                "generated_answers": ["A"],
+                "comparison": {"is_correct": True, "label": "correct"},
+                "execution_metrics": {"answer_found_in_final": True, "terminated_properly": True},
+            },
+            {
+                "example_id": "example_2",
+                "question": "Q2",
+                "ground_truth_answers": ["B"],
+                "execution_accuracy": 1.0,
+                "is_correct": True,
+                "generated_answers": ["B"],
+                "comparison": {"is_correct": True, "label": "correct"},
+                "execution_metrics": {"answer_found_in_final": True, "terminated_properly": True},
+            },
+        ],
+    )
+    _write_comparison_run(
+        run_b,
+        config_key="config-b",
+        config_label="model/a | cot | unconstrained | xgrammar | function | standard_temp",
+        rows=[
+            {
+                "example_id": "example_1",
+                "question": "Q1",
+                "ground_truth_answers": ["A"],
+                "execution_accuracy": 0.0,
+                "is_correct": False,
+                "generated_answers": ["wrong"],
+                "comparison": {"is_correct": False, "label": "incorrect"},
+                "execution_metrics": {"answer_found_in_final": False, "terminated_properly": True},
+            },
+            {
+                "example_id": "example_2",
+                "question": "Q2",
+                "ground_truth_answers": ["B"],
+                "execution_accuracy": 1.0,
+                "is_correct": True,
+                "generated_answers": ["B"],
+                "comparison": {"is_correct": True, "label": "correct"},
+                "execution_metrics": {"answer_found_in_final": True, "terminated_properly": True},
+            },
+        ],
+    )
+
+    report = generate_comparison_artifacts([run_a, run_b], tmp_path / "comparison", baseline_config_key="config-a")
+
+    assert report["baseline_config_key"] == "config-a"
+    assert report["pairwise_count"] == 1
+    pair = report["pairwise_comparisons"][0]
+    assert pair["summary"]["total_examples"] == 2
+    assert pair["summary"]["shared_examples"] == 2
+    assert pair["summary"]["left_wins"] == 1
+    assert pair["summary"]["right_wins"] == 0
+    assert pair["summary"]["both_correct"] == 1
+    assert pair["rows"][0]["outcome"] == "left_only_correct"
+
+    output_dir = tmp_path / "comparison"
+    assert (output_dir / "comparison_report.json").exists()
+    assert (output_dir / "comparison_report.md").exists()
+    assert (output_dir / "comparison_rows.csv").exists()
+    markdown = (output_dir / "comparison_report.md").read_text(encoding="utf-8")
+    assert "Pair 1" in markdown
+    assert "Left wins" in markdown
+    csv_text = (output_dir / "comparison_rows.csv").read_text(encoding="utf-8")
+    assert "left_only_correct" in csv_text
+
+
+def test_generate_comparison_artifacts_tracks_missing_examples(tmp_path):
+    run_a = tmp_path / "run_a"
+    run_b = tmp_path / "run_b"
+    _write_comparison_run(
+        run_a,
+        config_key="config-a",
+        config_label="model/a | cot | constrained | xgrammar | function | standard_temp",
+        rows=[
+            {
+                "example_id": "example_1",
+                "question": "Q1",
+                "ground_truth_answers": ["A"],
+                "execution_accuracy": 1.0,
+                "is_correct": True,
+                "generated_answers": ["A"],
+                "comparison": {"is_correct": True, "label": "correct"},
+                "execution_metrics": {"answer_found_in_final": True, "terminated_properly": True},
+            },
+            {
+                "example_id": "example_2",
+                "question": "Q2",
+                "ground_truth_answers": ["B"],
+                "execution_accuracy": 0.0,
+                "is_correct": False,
+                "generated_answers": ["wrong"],
+                "comparison": {"is_correct": False, "label": "incorrect"},
+                "execution_metrics": {"answer_found_in_final": False, "terminated_properly": True},
+            },
+        ],
+    )
+    _write_comparison_run(
+        run_b,
+        config_key="config-b",
+        config_label="model/a | cot | unconstrained | xgrammar | function | standard_temp",
+        rows=[
+            {
+                "example_id": "example_1",
+                "question": "Q1",
+                "ground_truth_answers": ["A"],
+                "execution_accuracy": 1.0,
+                "is_correct": True,
+                "generated_answers": ["A"],
+                "comparison": {"is_correct": True, "label": "correct"},
+                "execution_metrics": {"answer_found_in_final": True, "terminated_properly": True},
+            },
+            {
+                "example_id": "example_3",
+                "question": "Q3",
+                "ground_truth_answers": ["C"],
+                "execution_accuracy": 1.0,
+                "is_correct": True,
+                "generated_answers": ["C"],
+                "comparison": {"is_correct": True, "label": "correct"},
+                "execution_metrics": {"answer_found_in_final": True, "terminated_properly": True},
+            },
+        ],
+    )
+
+    report = generate_comparison_artifacts([run_a, run_b], tmp_path / "comparison", baseline_config_key="config-a")
+    pair = report["pairwise_comparisons"][0]
+
+    assert pair["summary"]["total_examples"] == 3
+    assert pair["summary"]["shared_examples"] == 1
+    assert pair["summary"]["left_only_examples"] == 1
+    assert pair["summary"]["right_only_examples"] == 1
+    assert pair["summary"]["left_missing"] == 1
+    assert pair["summary"]["right_missing"] == 1
+    outcomes = {row["example_id"]: row["outcome"] for row in pair["rows"]}
+    assert outcomes["example_2"] == "right_missing"
+    assert outcomes["example_3"] == "left_missing"
 
 
 def test_run_job_fails_when_subprocess_writes_empty_run(tmp_path, monkeypatch):

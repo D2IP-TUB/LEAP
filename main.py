@@ -51,6 +51,7 @@ from leap.generation.strategies import (
 )
 from leap.inference.vllm_server import ProcessParallelVLLM
 from leap.vllm_runtime import runtime_for_generation, runtime_metadata, validate_installed_runtime
+from leap.utils.config_labels import build_generation_config_label
 from leap.utils.profiler import get_aggregate_profiler
 
 # shut off llm logging in case not important
@@ -78,6 +79,8 @@ class RunOutputPaths:
     extractor_accuracy_file: Path
     manifest_file: Path
     config_slug: str
+    config_key: str
+    config_label: str
     timestamp: str
 
 
@@ -161,17 +164,32 @@ def _sanitize_slug(value: str) -> str:
     return slug or "run"
 
 
-def build_config_slug(app_config: AppConfig) -> str:
-    identity = {
-        "model_id": app_config.model.id,
-        "model_log_dir": app_config.model.log_dir,
+def build_config_identity(app_config: AppConfig) -> dict[str, Any]:
+    return {
+        "model": {
+            "id": app_config.model.id,
+            "instruct": app_config.model.instruct,
+            "hardware": app_config.model.hardware,
+            "tokenizer_config": app_config.model.tokenizer_config,
+        },
         "dataset": app_config.dataset,
         "run": app_config.run,
         "generation": app_config.generation,
         "extractors": app_config.extractors,
     }
-    identity_json = json.dumps(_json_safe(identity), sort_keys=True)
-    config_hash = sha1(identity_json.encode("utf-8")).hexdigest()[:8]
+
+
+def build_config_key(app_config: AppConfig) -> str:
+    identity_json = json.dumps(_json_safe(build_config_identity(app_config)), sort_keys=True)
+    return sha1(identity_json.encode("utf-8")).hexdigest()
+
+
+def build_config_label(app_config: AppConfig) -> str:
+    return build_generation_config_label(model_id=app_config.model.id, generation=app_config.generation)
+
+
+def build_config_slug(app_config: AppConfig) -> str:
+    config_hash = build_config_key(app_config)[:8]
     base = f"{app_config.model.log_dir}_{app_config.generation.strategy}_{config_hash}"
     return _sanitize_slug(base)
 
@@ -179,6 +197,8 @@ def build_config_slug(app_config: AppConfig) -> str:
 def create_run_output_paths(app_config: AppConfig, results_root: Path | str = "results") -> RunOutputPaths:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     config_slug = build_config_slug(app_config)
+    config_key = build_config_key(app_config)
+    config_label = build_config_label(app_config)
     run_dir = Path(results_root) / config_slug / timestamp
     return RunOutputPaths(
         run_dir=run_dir,
@@ -188,6 +208,8 @@ def create_run_output_paths(app_config: AppConfig, results_root: Path | str = "r
         extractor_accuracy_file=run_dir / "extractor_accuracy.json",
         manifest_file=run_dir / "run_config.json",
         config_slug=config_slug,
+        config_key=config_key,
+        config_label=config_label,
         timestamp=timestamp,
     )
 
@@ -210,6 +232,8 @@ def write_end_to_end_accuracy(accuracy: float, output_file: Path | str) -> None:
 def write_run_manifest(app_config: AppConfig, paths: RunOutputPaths, config_path: Path) -> None:
     manifest = {
         "config_slug": paths.config_slug,
+        "config_key": paths.config_key,
+        "config_label": paths.config_label,
         "timestamp": paths.timestamp,
         "config_path": str(config_path),
         "run_dir": str(paths.run_dir),
@@ -234,7 +258,14 @@ def write_run_manifest(app_config: AppConfig, paths: RunOutputPaths, config_path
         json.dump(manifest, f, indent=2)
 
 
-def write_results_to_jsonl(results: list[InferenceResult], output_file, generation_config: GenerationSettings):
+def write_results_to_jsonl(
+    results: list[InferenceResult],
+    output_file,
+    generation_config: GenerationSettings,
+    *,
+    config_key: str | None = None,
+    config_label: str | None = None,
+):
     """Write results to JSONL file with execution accuracy metrics"""
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
@@ -247,14 +278,28 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
                 else:
                     actions.append({"action": "invalid", "args": [action_str]})
 
+            example_id = result.request_id or f"example_{i + 1}"
+
             # Create entry with WikiTableQuestions logic-based execution accuracy metrics
             # All data comes from the self-contained result
+            is_correct = bool(result.execution_accuracy == 1.0)
             entry = {
-                "id": f"nt-{i + 1}",
+                "id": example_id,
+                "request_id": example_id,
+                "example_id": example_id,
                 "question": result.question,
                 "ground_truth_answers": result.ground_truth_answers,
+                "generated_answers": result.generated_answers,
                 "actions": actions,
                 "execution_accuracy": result.execution_accuracy,
+                "is_correct": is_correct,
+                "comparison": {
+                    "is_correct": is_correct,
+                    "label": "correct" if is_correct else "incorrect",
+                    "answer_found_in_final": result.execution_metrics.answer_found_in_final,
+                    "terminated_properly": result.execution_metrics.terminated_properly,
+                    "execution_error": result.execution_metrics.execution_error,
+                },
                 "execution_metrics": result.execution_metrics.to_dict(),  # Use to_dict() method
                 "extractor_results": [extractor.to_dict() for extractor in (result.extractor_results or [])],
                 "sampling_metadata": [
@@ -272,6 +317,11 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
                     for m in (result.sampling_metadata or [])
                 ],
                 "metadata": {
+                    "example_id": example_id,
+                    "config_key": config_key,
+                    "config_label": config_label,
+                    "is_correct": is_correct,
+                    "comparison_label": "correct" if is_correct else "incorrect",
                     "num_steps": len(actions),
                     "generation_mode": get_generation_mode_string(generation_config),
                     "evaluation_method": "wikitablequestions_logic_with_dataset_answers",
@@ -284,7 +334,7 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
 
 def get_generation_mode_string(generation_config: GenerationSettings):
     """Get a descriptive string for the current generation mode"""
-    format_prefix = "json_" if generation_config.output_format == "json" else ""
+    format_prefix = f"{generation_config.output_format}_" if generation_config.output_format != "function" else ""
     if generation_config.strategy == "direct_query":
         return "direct_query"
     elif generation_config.strategy == "cot":
@@ -380,10 +430,17 @@ def finalize_results(
                 result.profiling_data["total_time"],
                 result.profiling_data["operation_timings"],
                 result.profiling_data["num_steps"],
+                result.profiling_data.get("diagnostic_timings"),
             )
 
     end_to_end_accuracy = analyze_execution_accuracy(results)
-    write_results_to_jsonl(results, model_settings.results_file, generation_settings)
+    write_results_to_jsonl(
+        results,
+        model_settings.results_file,
+        generation_settings,
+        config_key=build_config_key(app_config),
+        config_label=build_config_label(app_config),
+    )
     write_end_to_end_accuracy(end_to_end_accuracy, run_paths.accuracy_file)
     extractor_report = calculate_extractor_accuracy_report(results, app_config.extractors)
     write_extractor_accuracy_report(extractor_report, run_paths.extractor_accuracy_file)
@@ -394,7 +451,7 @@ def finalize_results(
 
 def build_generation_functions(app_config: AppConfig, tokenizer) -> dict[str, Any]:
     functions = {}
-    for output_format in ("function", "json"):
+    for output_format in ("function", "json", "mcp"):
         prompt_builder = PromptBuilder(
             tokenizer=tokenizer,
             is_instruct=app_config.model.instruct,

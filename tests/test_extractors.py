@@ -32,6 +32,9 @@ class _Worker:
         self.responses = iter(responses)
         self.prompts = []
 
+    def effective_temperature(self, temperature):
+        return temperature
+
     async def generate_text(self, prompt, request_id, sampling_params):
         self.prompts.append((prompt, request_id))
         return next(self.responses)

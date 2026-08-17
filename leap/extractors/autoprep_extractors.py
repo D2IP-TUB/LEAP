@@ -97,7 +97,7 @@ async def _generate(
     max_tokens: int,
 ) -> str:
     params = SamplingParams(
-        temperature=0.0,
+        temperature=getattr(context.worker, "effective_temperature", lambda value: value)(0.0),
         max_tokens=max_tokens,
         stop_token_ids=[context.worker.tokenizer.eos_token_id],
     )

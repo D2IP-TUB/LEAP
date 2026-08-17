@@ -12,7 +12,6 @@ import multiprocessing as mp
 import os
 import queue
 import time
-import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -22,6 +21,7 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 
 from leap.config.loader import GenerationConfig, LoggingConfig, TokenizerConfig
 from leap.core import ExecutionMetrics, InferenceRequest, InferenceResult, Table
+from leap.mcp.client import McpTableClient
 
 # Import the table logger
 from leap.utils.table_logger import TableLogger
@@ -104,11 +104,13 @@ class VLLMWorkerProcess(mp.Process):
         self.use_global_constraints = generation_config.use_global_constraints
         self.constraint_backend = generation_config.constraint_backend
         self.output_format = generation_config.output_format
+        self.force_zero_temperature = generation_config.force_zero_temperature
 
         # vLLM components (will be set after engine initialization)
         self.engine = None
         self.tokenizer = None
         self.max_model_len = None  # Will be set from engine after initialization
+        self.mcp_client = None
         self.model_loaded = mp.Event()
 
     def _apply_run_config(self, generation_config: GenerationConfig, logging_config: LoggingConfig) -> None:
@@ -119,6 +121,7 @@ class VLLMWorkerProcess(mp.Process):
         self.use_global_constraints = generation_config.use_global_constraints
         self.constraint_backend = generation_config.constraint_backend
         self.output_format = generation_config.output_format
+        self.force_zero_temperature = generation_config.force_zero_temperature
 
     def run(self):
         """Main worker process loop"""
@@ -161,7 +164,7 @@ class VLLMWorkerProcess(mp.Process):
 
     def _get_generation_mode_string(self) -> str:
         """Get descriptive string for generation mode"""
-        format_prefix = "json_" if self.output_format == "json" else ""
+        format_prefix = f"{self.output_format}_" if self.output_format != "function" else ""
         if self.use_cot:
             constraint_desc = "with_constraints" if self.use_constraints else "without_constraints"
             return f"{format_prefix}chain_of_table_{constraint_desc}"
@@ -169,6 +172,9 @@ class VLLMWorkerProcess(mp.Process):
             return f"{format_prefix}constrained"
         else:
             return f"{format_prefix}unconstrained_with_postprocessing"
+
+    def effective_temperature(self, temperature: float) -> float:
+        return 0.0 if self.force_zero_temperature else temperature
 
     def _init_engine(self):
         """Initialize the vLLM engine"""
@@ -268,7 +274,16 @@ class VLLMWorkerProcess(mp.Process):
         gc.collect()
 
     async def _process_requests(self):
-        """Process incoming requests with concurrent batching support"""
+        """Own the lazy MCP client while processing requests."""
+        async with McpTableClient() as mcp_client:
+            self.mcp_client = mcp_client
+            try:
+                await self._process_request_loop()
+            finally:
+                self.mcp_client = None
+
+    async def _process_request_loop(self):
+        """Process incoming requests with concurrent batching support."""
         state_machines = {}
         active_tasks = {}  # request_id -> (task, request_id)
         max_concurrent = self.max_concurrent_requests
@@ -729,21 +744,16 @@ class ProcessParallelVLLM:
         if not self._workers_ready:
             raise RuntimeError("Workers not ready. Call start_workers() first.")
 
-        # Send all requests to queue with unique IDs
+        # Send all requests to queue using their existing stable IDs
         request_ids = []
-        for i, request in enumerate(requests):
-            request_id = f"req_{i}_{uuid.uuid4().hex[:8]}"
+        for request in requests:
+            request_id = request.request_id
             request_ids.append(request_id)
-
-            # Add request_id to the request using dataclass replace
-            from dataclasses import replace
-
-            request_with_id = replace(request, request_id=request_id)
 
             # Put the typed object directly in the queue
             self.input_queue.put(
                 ConfiguredInferenceRequest(
-                    request=request_with_id,
+                    request=request,
                     generation_config=self.generation_config,
                     logging_config=self.logging_config,
                 )

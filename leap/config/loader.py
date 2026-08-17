@@ -55,7 +55,8 @@ class GenerationConfig:
     use_global_constraints: bool
     strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
     constraint_backend: str = "legacy_state_machine"  # "xgrammar" or "legacy_state_machine"
-    output_format: str = "function"  # "function" or "json"
+    output_format: str = "function"  # "function", "json", or "mcp"
+    force_zero_temperature: bool = False
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
     enabled_actions: tuple = None  # Tuple of enabled action names (immutable for frozen dataclass)
 
@@ -266,15 +267,20 @@ def _build_generation_config(generation_section: Dict[str, Any], enabled_actions
     use_constraints = generation_section.get("use_constraints", False)
     constraint_backend = generation_section.get("constraint_backend", "legacy_state_machine")
     output_format = generation_section.get("output_format", "function")
+    force_zero_temperature = generation_section.get("force_zero_temperature", False)
 
     if constraint_backend not in {"xgrammar", "legacy_state_machine"}:
         raise ValueError("generation.constraint_backend must be either 'xgrammar' or 'legacy_state_machine'.")
-    if output_format not in {"function", "json"}:
-        raise ValueError("generation.output_format must be either 'function' or 'json'.")
+    if output_format not in {"function", "json", "mcp"}:
+        raise ValueError("generation.output_format must be 'function', 'json', or 'mcp'.")
+    if type(force_zero_temperature) is not bool:
+        raise ValueError("generation.force_zero_temperature must be a boolean.")
     if constraint_backend == "legacy_state_machine":
         output_format = "function"
 
     enabled_actions_tuple = tuple(enabled_actions) if enabled_actions else None
+    if output_format == "mcp" and enabled_actions_tuple and "add_column" in enabled_actions_tuple:
+        raise ValueError("add_column is not supported by the prototype MCP server.")
     if (
         output_format == "function"
         and use_constraints
@@ -290,6 +296,7 @@ def _build_generation_config(generation_section: Dict[str, Any], enabled_actions
         strategy=generation_section.get("strategy", "cot"),
         constraint_backend=constraint_backend,
         output_format=output_format,
+        force_zero_temperature=force_zero_temperature,
         sampling=sampling_config,
         enabled_actions=enabled_actions_tuple,
     )

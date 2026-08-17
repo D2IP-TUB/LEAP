@@ -2,11 +2,13 @@
 Essential tests for vLLM server components
 """
 
+import asyncio
 import multiprocessing as mp
 
 import pytest
 
 from leap.config.loader import GenerationConfig, LoggingConfig, TokenizerConfig
+from leap.core import ExecutionMetrics, InferenceRequest, InferenceResult, Table
 from leap.inference.vllm_server import ProcessParallelVLLM, VLLMWorkerProcess
 
 
@@ -204,6 +206,62 @@ class TestProcessParallelVLLM:
         with pytest.raises(RuntimeError, match="Workers not ready"):
             server.generate_batch([{"question": "test"}])
 
+    def test_generate_batch_preserves_stable_request_ids(self):
+        server = create_test_server(
+            model_id="gpt2",
+            num_workers=1,
+            generation_config=create_test_generation_config(),
+            logging_config=create_test_logging_config(enable_logging=False),
+        )
+
+        class DummyQueue:
+            def __init__(self, responses=None):
+                self.responses = list(responses or [])
+                self.put_calls = []
+
+            def put(self, value):
+                self.put_calls.append(value)
+
+            def get(self, timeout=None):
+                if not self.responses:
+                    raise AssertionError("No queued response available")
+                return self.responses.pop(0)
+
+        request = InferenceRequest.from_example(
+            {
+                "question": "What is the answer?",
+                "table": {"header": ["A"], "rows": [["1"]]},
+                "answers": ["1"],
+            },
+            index=0,
+        )
+        result = InferenceResult(
+            action_history=[],
+            final_table=Table(columns=[], rows=[]),
+            execution_metrics=ExecutionMetrics(
+                execution_accuracy=1.0,
+                answer_found_in_final=True,
+                answer_found_in_original=False,
+                terminated_properly=True,
+                matched_answers_final=["1"],
+                matched_answers_original=[],
+                num_actions=0,
+            ),
+            request_id=request.request_id,
+            question=request.question,
+            ground_truth_answers=request.ground_truth_answers,
+        )
+
+        server._workers_ready = True
+        server.input_queue = DummyQueue()
+        server.output_queue = DummyQueue([("result", request.request_id, result)])
+        server.main_logger = None
+
+        ordered_results = server.generate_batch([request])
+
+        assert server.input_queue.put_calls[0].request.request_id == "example_0"
+        assert ordered_results[0].request_id == "example_0"
+
     def test_reconfigure_keeps_worker_objects_and_replaces_run_logger(self, monkeypatch, tmp_path):
         server = create_test_server(
             model_id="gpt2",
@@ -247,6 +305,32 @@ class TestVLLMWorkerProcess:
             tensor_parallel_size=1,
             max_model_len=1234,
         )
+
+    def test_request_loop_owns_one_worker_mcp_client(self, monkeypatch):
+        worker = self._worker()
+        events = []
+
+        class FakeClient:
+            async def __aenter__(self):
+                events.append("enter")
+                return self
+
+            async def __aexit__(self, *_args):
+                events.append("exit")
+
+        client = FakeClient()
+
+        async def fake_loop():
+            events.append("loop")
+            assert worker.mcp_client is client
+
+        monkeypatch.setattr("leap.inference.vllm_server.McpTableClient", lambda: client)
+        monkeypatch.setattr(worker, "_process_request_loop", fake_loop)
+
+        asyncio.run(worker._process_requests())
+
+        assert events == ["enter", "loop", "exit"]
+        assert worker.mcp_client is None
 
     def test_apply_run_config_updates_generation_without_reloading_engine(self):
         worker = self._worker()

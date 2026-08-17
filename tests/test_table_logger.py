@@ -294,7 +294,13 @@ def test_parallel_results_jsonl_created_with_expected_entries(tmp_path, capsys):
     )
 
     out_file = tmp_path / "results.jsonl"
-    write_results_to_jsonl([results], str(out_file), generation_config)
+    write_results_to_jsonl(
+        [results],
+        str(out_file),
+        generation_config,
+        config_key="config-key-123",
+        config_label="model/a | cot | constrained | xgrammar | function",
+    )
 
     assert out_file.exists()
     lines = out_file.read_text(encoding="utf-8").strip().splitlines()
@@ -302,7 +308,16 @@ def test_parallel_results_jsonl_created_with_expected_entries(tmp_path, capsys):
 
     obj = json.loads(lines[0])
 
-    assert obj["id"].startswith("nt-")
+    assert obj["id"] == results.request_id
+    assert obj["request_id"] == results.request_id
+    assert obj["example_id"] == results.request_id
+    assert obj["metadata"]["example_id"] == results.request_id
+    assert obj["metadata"]["config_key"] == "config-key-123"
+    assert obj["metadata"]["config_label"] == "model/a | cot | constrained | xgrammar | function"
+    assert obj["metadata"]["is_correct"] is True
+    assert obj["is_correct"] is True
+    assert obj["comparison"]["label"] == "correct"
+    assert obj["generated_answers"] is None
     assert obj["question"] == results.question
     assert obj["ground_truth_answers"] == results.ground_truth_answers
 

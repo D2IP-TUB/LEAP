@@ -3,11 +3,10 @@
 We strongly recommend using [uv](https://docs.astral.sh/uv/) for environment and package management.
 
 ```bash
-uv sync
-source .venv/bin/activate
+uv sync --group dev --extra vllm-modern
 ```
 
-This creates the common project environment. The selected vLLM runtime is installed separately on first use as described below.
+This creates the common project environment with development dependencies. The selected vLLM runtime is installed separately on first use as described below.
 
 ## vLLM Runtime Selection
 
@@ -47,10 +46,11 @@ matrix:
   use_constraints: [false, true]
   use_global_constraints: [false, true]
   constraint_backends: [legacy_state_machine, xgrammar]
-  output_formats: [function, json]
+  output_formats: [function, json, mcp]
+  force_zero_temperature: [false, true]
 ```
 
-Only unique supported jobs are generated. Unconstrained runs use the modern xgrammar runtime, legacy constrained decoding supports function output only, and `direct_query` is emitted once per model and repeat because action constraints do not affect it. Enabling all four documented models, all matrix values, and three repeats produces 252 jobs. Every job failure is recorded in the experiment report and the runner continues with the remaining jobs; the final command exits nonzero if any job failed. Invalid suite configuration and explicit user interruption still stop the runner.
+Only unique supported jobs are generated. Unconstrained runs use the modern xgrammar runtime, legacy constrained decoding supports function output only, and `direct_query` is emitted once per model, repeat, and temperature mode because action constraints do not affect it. Set `force_zero_temperature: true` to force every model request in that run to use temperature 0, including dynamic-plan, generate-args, and answer-extraction calls. The temperature-mode sweep roughly doubles the matrix size. Every job failure is recorded in the experiment report and the runner continues with the remaining jobs; the final command exits nonzero if any job failed. Invalid suite configuration and explicit user interruption still stop the runner.
 
 Model reuse is enabled by default and can be controlled explicitly:
 
@@ -75,13 +75,39 @@ With constraints enabled, JSON mode uses vLLM JSON Schema structured outputs on 
 
 JSON operations use named fields, for example `{"action":"select_row","rows":["row 0"]}` and `{"action":"sort_by","column":"Year","order":"desc"}`. CoT remains two-phase: action selection emits only the `action` field, followed by a selected-action argument object.
 
+## MCP operation mode
+
+Set `generation.output_format: mcp` to have the model emit official JSON-RPC `tools/call` envelopes and execute transformations through a local MCP Python SDK server over stdio:
+
+```yaml
+generation:
+  strategy: iterative  # or cot
+  output_format: mcp
+  constraint_backend: xgrammar
+  enabled_actions: [select_row, select_column, group_by, sort_by, end]
+```
+
+The server is stateless with respect to table data. Each vLLM worker owns one persistent MCP client context whose serialized broker lazily starts the stdio server on the first MCP operation and reuses that session until worker shutdown. Function/JSON-only runs never launch the MCP subprocess. If the transport fails, the broker reconnects and retries the stateless call once.
+
+LEAP injects the current table into every MCP tool invocation, and the server returns the complete new table state. It exposes one tool for each supported operation: `select_row`, `select_column`, `group_by`, `sort_by`, and `end`. `add_column` is intentionally unsupported in this prototype.
+
+Iterative mode generates one complete MCP request per step. CoT remains two-phase: phase one emits a `tools/call`-shaped selection with an empty `arguments` object, and phase two emits the complete request that LEAP sends through the MCP client. The runtime, not the model, injects the table argument. Existing function and JSON modes are unchanged.
+
+MCP mode uses the modern runtime. Selecting `legacy_state_machine` continues to force function mode for backward compatibility. Profiling reports total `mcp_table_transformation` time in the operation breakdown and reports `mcp_startup` and warm `mcp_call` diagnostics separately. See [`docs/mcp-architecture.md`](docs/mcp-architecture.md) for before/after architecture and information-flow diagrams.
+
+Run the standalone server with:
+
+```bash
+uv run python -m leap.mcp.server
+```
+
 ## Developer Setup
 
 If you plan to contribute to the codebase, install the development dependencies and enable the pre-commit hooks:
 
 ```bash
-uv sync --group dev
-pre-commit install
+uv sync --group dev --extra vllm-modern
+uv run pre-commit install
 ```
 
 This installs the linting/formatting tools defined in pyproject.toml and ensures they run automatically before each commit.

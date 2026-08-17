@@ -26,7 +26,7 @@ class DirectQueryExtractor:
             worker=context.worker,
         )
         params = SamplingParams(
-            temperature=0.0,
+            temperature=getattr(context.worker, "effective_temperature", lambda value: value)(0.0),
             max_tokens=200,
             stop_token_ids=[context.worker.tokenizer.eos_token_id],
             stop=["\n", "\n\n"],

@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 from leap.config.loader import (
@@ -11,7 +12,15 @@ from leap.config.loader import (
     RunConfig,
     TokenizerConfig,
 )
-from main import RunOutputPaths, RuntimeContext, ServerExecutionError, run_experiment_session, write_run_manifest
+from main import (
+    RunOutputPaths,
+    RuntimeContext,
+    ServerExecutionError,
+    build_config_key,
+    build_config_label,
+    run_experiment_session,
+    write_run_manifest,
+)
 
 
 def _app_config(tmp_path):
@@ -35,6 +44,38 @@ def _app_config(tmp_path):
         logging=LoggingConfig(True, str(tmp_path / "logs"), False, False, "readable", 1000),
         extractors=("direct_query",),
     )
+
+
+def test_config_label_omits_inapplicable_dimensions(tmp_path):
+    app_config = _app_config(tmp_path)
+
+    assert build_config_label(app_config) == "model/test | cot | constrained | xgrammar | function"
+
+    unconstrained = replace(
+        app_config,
+        generation=replace(
+            app_config.generation,
+            use_constraints=False,
+            use_global_constraints=False,
+            constraint_backend="xgrammar",
+            output_format="json",
+            force_zero_temperature=True,
+        ),
+    )
+    assert build_config_label(unconstrained) == "model/test | cot | unconstrained | json | zero_temp"
+
+    direct_query = replace(
+        app_config,
+        generation=replace(
+            app_config.generation,
+            strategy="direct_query",
+            use_constraints=False,
+            constraint_backend="xgrammar",
+            output_format="function",
+            force_zero_temperature=True,
+        ),
+    )
+    assert build_config_label(direct_query) == "model/test | direct_query | zero_temp"
 
 
 def test_run_manifest_records_vllm_runtime(tmp_path):
@@ -65,12 +106,16 @@ def test_run_manifest_records_vllm_runtime(tmp_path):
         extractor_accuracy_file=tmp_path / "extractor_accuracy.json",
         manifest_file=tmp_path / "run_config.json",
         config_slug="test",
+        config_key=build_config_key(app_config),
+        config_label=build_config_label(app_config),
         timestamp="now",
     )
 
     write_run_manifest(app_config, paths, tmp_path / "config.yaml")
 
     manifest = json.loads(paths.manifest_file.read_text(encoding="utf-8"))
+    assert manifest["config_key"] == paths.config_key
+    assert manifest["config_label"] == paths.config_label
     assert manifest["vllm_runtime"]["runtime"] == "modern"
     assert manifest["vllm_runtime"]["constraint_backend"] == "xgrammar"
     assert manifest["vllm_runtime"]["vllm_version"] is not None
@@ -105,12 +150,16 @@ def test_unconstrained_legacy_backend_manifest_records_modern_runtime(tmp_path):
         extractor_accuracy_file=tmp_path / "extractor_accuracy.json",
         manifest_file=tmp_path / "run_config.json",
         config_slug="test",
+        config_key=build_config_key(app_config),
+        config_label=build_config_label(app_config),
         timestamp="now",
     )
 
     write_run_manifest(app_config, paths, tmp_path / "config.yaml")
 
     manifest = json.loads(paths.manifest_file.read_text(encoding="utf-8"))
+    assert manifest["config_key"] == paths.config_key
+    assert manifest["config_label"] == paths.config_label
     assert manifest["vllm_runtime"]["runtime"] == "modern"
     assert manifest["vllm_runtime"]["constraint_backend"] == "legacy_state_machine"
     assert manifest["vllm_runtime"]["use_constraints"] is False

@@ -48,7 +48,7 @@ async def generate_single_action(worker, prompt, table: Table, request_id, state
                 )
                 schema = builder.build_single_step_schema(spec)
                 sampling_params = SamplingParams(
-                    temperature=0.7,
+                    temperature=getattr(worker, "effective_temperature", lambda value: value)(0.7),
                     max_tokens=300,
                     stop_token_ids=[worker.tokenizer.eos_token_id],
                     **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
@@ -63,7 +63,7 @@ async def generate_single_action(worker, prompt, table: Table, request_id, state
                 )
                 grammar = builder.build_single_step_grammar(spec)
                 sampling_params = SamplingParams(
-                    temperature=0.7,
+                    temperature=getattr(worker, "effective_temperature", lambda value: value)(0.7),
                     max_tokens=300,
                     stop_token_ids=[worker.tokenizer.eos_token_id],
                     **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
@@ -81,14 +81,14 @@ async def generate_single_action(worker, prompt, table: Table, request_id, state
                 )
 
                 sampling_params = SamplingParams(
-                    temperature=0.7,
+                    temperature=getattr(worker, "effective_temperature", lambda value: value)(0.7),
                     max_tokens=900,  # increased for more row params
                     stop_token_ids=[worker.tokenizer.eos_token_id],
                     logits_processors=[constraint_processor],
                 )
         else:
             sampling_params = SamplingParams(
-                temperature=0.7,
+                temperature=getattr(worker, "effective_temperature", lambda value: value)(0.7),
                 max_tokens=100,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
                 stop=["\n", "Next", "Step"],
@@ -132,7 +132,7 @@ async def generate_action_selection(
             )
             schema = builder.build_action_schema(spec)
             sampling_params = SamplingParams(
-                temperature=temperature,
+                temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
                 max_tokens=60,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
                 **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
@@ -147,7 +147,7 @@ async def generate_action_selection(
             )
             grammar = builder.build_action_grammar(spec)
             sampling_params = SamplingParams(
-                temperature=temperature,
+                temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
                 max_tokens=60,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
                 **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
@@ -162,14 +162,14 @@ async def generate_action_selection(
             )
 
             sampling_params = SamplingParams(
-                temperature=temperature,
+                temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
                 max_tokens=20,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
                 logits_processors=[constraint_processor],
             )
         else:
             sampling_params = SamplingParams(
-                temperature=temperature,
+                temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
                 max_tokens=100,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
             )
@@ -213,7 +213,7 @@ async def generate_action_arguments(
 
     try:
         sampling_params = SamplingParams(
-            temperature=temperature,
+            temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
             max_tokens=900,
             stop_token_ids=[worker.tokenizer.eos_token_id],
             stop=["\n", "Next", "Step"],
@@ -229,7 +229,7 @@ async def generate_action_arguments(
             )
             schema = builder.build_arguments_schema(spec)
             sampling_params = SamplingParams(
-                temperature=temperature,
+                temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
                 max_tokens=300,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
                 **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
@@ -245,7 +245,7 @@ async def generate_action_arguments(
             )
             grammar = builder.build_arguments_grammar(spec)
             sampling_params = SamplingParams(
-                temperature=temperature,
+                temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
                 max_tokens=300,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
                 **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
