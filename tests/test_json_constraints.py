@@ -30,7 +30,7 @@ def table():
         ({"action": "select_column", "columns": ["Name"]}, Action("select_column", ["Name"])),
         ({"action": "group_by", "column": "Name"}, Action("group_by", ["Name"])),
         ({"action": "sort_by", "column": "Name", "order": "desc"}, Action("sort_by", ["Name", "desc"])),
-        ({"action": "add_column", "column": "Rank", "values": [1, 2]}, Action("add_column", ["Rank", ["1", "2"]])),
+        ({"action": "add_column", "column": "Rank", "values": ["1", "2"]}, Action("add_column", ["Rank", ["1", "2"]])),
         ({"action": "end"}, Action("end", [])),
     ],
 )
@@ -51,6 +51,7 @@ def test_json_codec_round_trip(payload, expected, table):
         '{"action":"select_column","columns":["Name","Name"]}',
         '{"action":"sort_by","column":"Name","order":"ascending"}',
         '[{"action":"end"}]',
+        '{"action":"add_column","column":"Rank","values":[1,2]}',
     ],
 )
 def test_json_codec_is_strict(text, table):
@@ -70,12 +71,67 @@ def test_json_schema_is_contextual_and_disallows_extra_properties(table):
     assert by_action["add_column"]["properties"]["values"]["minItems"] == len(table.rows)
 
 
-def test_cot_argument_schema_allows_partial_add_column_for_row_completion(table):
+def test_cot_argument_schema_requires_complete_add_column(table):
     builder = JsonActionSchemaBuilder()
     spec = builder.build_spec(table=table, action_history=[], use_global_constraints=False, phase="arguments", selected_action="add_column")
     values = builder.build_arguments_schema(spec)["properties"]["values"]
-    assert values["minItems"] == 1
+    assert values["minItems"] == len(table.rows)
     assert values["maxItems"] == len(table.rows)
+    assert values["items"] == {"type": "string", "maxLength": 256}
+    assert builder.build_arguments_schema(spec)["properties"]["column"]["maxLength"] == 128
+
+
+def test_add_column_renames_duplicate_column_header():
+    table = Table(columns=["Name", "Name extracted"], rows=[["Ada"], ["Grace"]])
+    action = JsonActionCodec.parse_single_step(
+        json.dumps({"action": "add_column", "column": "Name", "values": ["1", "2"]}),
+        table,
+    )
+
+    assert action == Action("add_column", ["Name extracted 2", ["1", "2"]])
+
+
+def test_add_column_preserves_text_and_normalizes_whitespace():
+    table = Table(columns=["Source"], rows=[["a"], ["b"], ["c"], ["d"]])
+    payload = {
+        "action": "add_column",
+        "column": 'Derived\n"Name"',
+        "values": ['The "Best" Award', r"C:\\data\\table", "München", "line\r\nbreak\tvalue"],
+    }
+
+    action = JsonActionCodec.parse_single_step(json.dumps(payload, ensure_ascii=False), table)
+
+    assert action == Action(
+        "add_column",
+        ['Derived "Name"', ['The "Best" Award', r"C:\\data\\table", "München", "line break value"]],
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "failure_code"),
+    [
+        ({"action": "add_column", "column": "Derived", "values": ["\u0004", "ok"]}, "disallowed_control_character"),
+        ({"action": "add_column", "column": "x" * 129, "values": ["a", "b"]}, "string_too_long"),
+        ({"action": "add_column", "column": "Derived", "values": ["x" * 257, "b"]}, "string_too_long"),
+        ({"action": "add_column", "column": "Derived", "values": ["a"]}, "incorrect_value_count"),
+    ],
+)
+def test_add_column_inspection_reports_decoded_and_table_validation_failures(table, payload, failure_code):
+    inspection = JsonActionCodec.inspect_single_step(json.dumps(payload), table)
+
+    assert inspection.action is None
+    assert inspection.failure_code == failure_code
+
+
+def test_add_column_accepts_exact_string_length_limits(table):
+    action = JsonActionCodec.parse_single_step(
+        json.dumps({"action": "add_column", "column": "x" * 128, "values": ["y" * 256, "z"]}),
+        table,
+    )
+
+    assert action is not None
+    assert action.arguments[0] == "x" * 128
+    assert action.arguments[1][0] == "y" * 256
 
 
 def test_empty_table_schema_falls_back_to_end():

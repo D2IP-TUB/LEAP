@@ -415,6 +415,27 @@ class TestPromptStructure:
         print("=" * 80)
 
 
+def test_iterative_prompt_excludes_add_column_when_full_table_exceeds_context(prompt_builder_non_instruct, mock_worker):
+    previous = REGISTRY._enabled_actions
+    REGISTRY.set_enabled_actions(["select_row", "add_column", "end"])
+    mock_worker.max_model_len = 100
+    mock_worker.use_global_constraints = False
+    table = Table(columns=["Name"], rows=[["x" * 100] for _ in range(20)])
+    try:
+        prompt = prompt_builder_non_instruct.build_iterative_prompt(
+            question="Derive one value for every row",
+            table=table,
+            action_history=[],
+            worker=mock_worker,
+            step=0,
+        )
+    finally:
+        REGISTRY._enabled_actions = previous
+
+    assert "add_column" not in prompt
+    assert "f_select_row" in prompt
+
+
 class TestCoTFirstActionRestrictions:
     """Test that CoT action prompts exclude terminating actions on first step."""
 

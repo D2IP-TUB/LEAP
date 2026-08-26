@@ -26,6 +26,7 @@ def build_generation_config_label(
     constraint_backend: str | None = None,
     output_format: str | None = None,
     force_zero_temperature: bool | None = None,
+    add_column_enabled: bool | None = None,
 ) -> str:
     """Build a compact label containing only meaningful generation dimensions.
 
@@ -39,6 +40,9 @@ def build_generation_config_label(
     constraint_backend = _get(generation, "constraint_backend", constraint_backend)
     output_format = _get(generation, "output_format", output_format)
     force_zero_temperature = bool(_get(generation, "force_zero_temperature", force_zero_temperature))
+    enabled_actions = _get(generation, "enabled_actions", None)
+    if isinstance(enabled_actions, (list, tuple)):
+        add_column_enabled = "add_column" in enabled_actions
 
     parts = [model_id]
     if strategy:
@@ -53,6 +57,8 @@ def build_generation_config_label(
             parts.append("global")
         if output_format:
             parts.append(str(output_format))
+        if add_column_enabled is not None:
+            parts.append("add_column" if add_column_enabled else "no_add_column")
 
     if force_zero_temperature:
         parts.append("zero_temp")

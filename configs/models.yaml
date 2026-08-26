@@ -27,7 +27,7 @@ models:
     hardware:
       num_workers: 2
       tensor_parallel_size: 1
-      gpu_allocation: [1,2]
+      gpu_allocation: [2,3]
       max_model_len: 32000
     tokenizer:
       llama_tokenizer: true

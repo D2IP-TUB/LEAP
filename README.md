@@ -28,7 +28,9 @@ Run LEAP normally with `uv run main.py`, or run a benchmark matrix with `uv run 
 
 The first run for each runtime downloads and installs its vLLM and PyTorch stack, so it can take substantially longer than later runs. Unconstrained configs use the modern runtime regardless of `constraint_backend`. Constrained configs inherit their backend from the experiment `base_config`; older constrained configs without `generation.constraint_backend` select the legacy runtime for backward compatibility.
 
-The backend/version pairing is strict. If LEAP reports a mismatch, update the lockfile with `uv lock` and retry. If an environment was interrupted or corrupted during installation, remove only the named generated environment from the error message and rerun the command. The `xgrammar` backend does not support the `add_column` action.
+The backend/version pairing is strict. If LEAP reports a mismatch, update the lockfile with `uv lock` and retry. If an environment was interrupted or corrupted during installation, remove only the named generated environment from the error message and rerun the command. The `xgrammar` backend supports `add_column` with exact value cardinality: generated output must contain one quoted cell value per table row. Unconstrained runs enforce the same cardinality after parsing and discard malformed candidates.
+
+Iterative `add_column` emits the complete operation in one response and is hidden when the full table cannot fit the model context. CoT emits the complete column in one argument-generation response by default. Set `generation.batch_truncated_add_column: true` to opt into exact row-aligned batches when the table exceeds the configured argument-table budget; LEAP assembles those batches into one `add_column` operation and never fills cells one row at a time.
 
 ## Experiment matrices
 
@@ -84,12 +86,12 @@ generation:
   strategy: iterative  # or cot
   output_format: mcp
   constraint_backend: xgrammar
-  enabled_actions: [select_row, select_column, group_by, sort_by, end]
+  enabled_actions: [select_row, select_column, add_column, group_by, sort_by, end]
 ```
 
 The server is stateless with respect to table data. Each vLLM worker owns one persistent MCP client context whose serialized broker lazily starts the stdio server on the first MCP operation and reuses that session until worker shutdown. Function/JSON-only runs never launch the MCP subprocess. If the transport fails, the broker reconnects and retries the stateless call once.
 
-LEAP injects the current table into every MCP tool invocation, and the server returns the complete new table state. It exposes one tool for each supported operation: `select_row`, `select_column`, `group_by`, `sort_by`, and `end`. `add_column` is intentionally unsupported in this prototype.
+LEAP injects the current table into every MCP tool invocation, and the server returns the complete new table state. It exposes one tool for each supported operation: `select_row`, `select_column`, `add_column`, `group_by`, `sort_by`, and `end`. `add_column` requires exactly one quoted string value per table row.
 
 Iterative mode generates one complete MCP request per step. CoT remains two-phase: phase one emits a `tools/call`-shaped selection with an empty `arguments` object, and phase two emits the complete request that LEAP sends through the MCP client. The runtime, not the model, injects the table argument. Existing function and JSON modes are unchanged.
 

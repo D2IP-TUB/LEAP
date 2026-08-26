@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import pytest
 import yaml
 
 from scripts.build_engine_grammar import build_engine_grammar_report, main
@@ -125,11 +124,12 @@ def test_report_renders_mcp_envelope_schemas(tmp_path):
     assert '"arguments"' in report
 
 
-def test_report_rejects_add_column_for_active_xgrammar(tmp_path):
+def test_report_supports_add_column_for_active_xgrammar(tmp_path):
     config_path = _config(tmp_path)
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     config["generation"]["enabled_actions"].append("add_column")
     _write_yaml(config_path, config)
 
-    with pytest.raises(ValueError, match="add_column"):
-        build_engine_grammar_report(config_path=config_path, table_source="sample")
+    report = build_engine_grammar_report(config_path=config_path, table_source="sample")
+    assert "f_add_column" in report
+    assert "value_list" in report

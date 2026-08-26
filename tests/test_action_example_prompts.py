@@ -21,7 +21,7 @@ def test_phase_two_examples_use_canonical_argument_only_syntax():
     expected_first_answers = {
         "select_row": "[*]",
         "select_column": '["cardiff win", "draw"]',
-        "add_column": '"attendance number", [32092, 34186, 17503]',
+        "add_column": '"attendance number", ["32092", "34186", "17503"]',
         "group_by": '"country"',
         "sort_by": '"position", "desc"',
     }
@@ -135,7 +135,7 @@ def test_global_constraints_keep_add_column_prompt_variant_when_supported():
     assert "add_column" in prompt_content
 
 
-def test_xgrammar_uses_no_add_column_prompt_variant():
+def test_xgrammar_uses_add_column_prompt_variant():
     tokenizer = RecordingTokenizer()
     builder = PromptBuilder(tokenizer=tokenizer, is_instruct=True)
     worker = SimpleNamespace(
@@ -156,7 +156,7 @@ def test_xgrammar_uses_no_add_column_prompt_variant():
     finally:
         REGISTRY._enabled_actions = previous_enabled
 
-    assert "add_column" not in "\n".join(message["content"] for message in tokenizer.messages)
+    assert "add_column" in "\n".join(message["content"] for message in tokenizer.messages)
 
 
 def test_phase_one_examples_use_direct_questions_and_requested_chains():
@@ -244,7 +244,7 @@ def test_iterative_system_variants_include_second_cot_example_per_operation():
     assert "add_column" not in without_add_column
 
 
-def test_iterative_xgrammar_prompt_has_no_add_column_evidence():
+def test_iterative_xgrammar_prompt_includes_add_column_evidence():
     tokenizer = RecordingTokenizer()
     builder = PromptBuilder(tokenizer=tokenizer, is_instruct=True)
     worker = SimpleNamespace(
@@ -267,7 +267,7 @@ def test_iterative_xgrammar_prompt_has_no_add_column_evidence():
         REGISTRY._enabled_actions = previous_enabled
 
     prompt = "\n".join(message["content"] for message in tokenizer.messages)
-    assert "add_column" not in prompt
+    assert "add_column" in prompt
     assert "Return only the single next operation" in prompt
     assert any("->" in message["content"] for message in tokenizer.messages if message["role"] == "assistant")
 

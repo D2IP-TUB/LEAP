@@ -11,7 +11,7 @@ from leap.core.actions import REGISTRY
 GrammarPhase = Literal["action", "arguments", "single_step"]
 
 ROW_LIMIT = 500
-SUPPORTED_XGRAMMAR_ACTIONS = {"select_row", "select_column", "group_by", "sort_by", "end"}
+SUPPORTED_XGRAMMAR_ACTIONS = {"select_row", "select_column", "add_column", "group_by", "sort_by", "end"}
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,7 @@ class ActionGrammarSpec:
     selected_action: str | None
     rows: tuple[str, ...]
     columns: tuple[str, ...]
+    table_row_count: int
     row_limit: int = ROW_LIMIT
 
 
@@ -65,7 +66,14 @@ class ActionGrammarBuilder:
     ) -> ActionGrammarSpec:
         rows = tuple(f"row {idx}" for idx in range(min(ROW_LIMIT, len(table.rows))))
         columns = tuple(str(column) for column in table.columns)
-        allowed = tuple(available_actions(action_history, use_global_constraints=use_global_constraints))
+        allowed_actions = available_actions(action_history, use_global_constraints=use_global_constraints)
+        if not table.rows:
+            allowed_actions = [name for name in allowed_actions if name not in {"select_row", "add_column"}]
+        if not table.columns:
+            allowed_actions = [name for name in allowed_actions if name not in {"select_column", "group_by", "sort_by"}]
+        if not allowed_actions and REGISTRY.is_enabled("end"):
+            allowed_actions = ["end"]
+        allowed = tuple(allowed_actions)
         if selected_action and selected_action not in SUPPORTED_XGRAMMAR_ACTIONS:
             raise ValueError(f"Action '{selected_action}' is not supported by the xgrammar backend.")
         return ActionGrammarSpec(
@@ -74,6 +82,7 @@ class ActionGrammarBuilder:
             selected_action=selected_action,
             rows=rows,
             columns=columns,
+            table_row_count=len(table.rows),
         )
 
     def build_action_grammar(self, spec: ActionGrammarSpec) -> str:
@@ -122,6 +131,12 @@ class ActionGrammarBuilder:
             return ["root ::= column", *self._column_rules(spec.columns)]
         if action == "sort_by":
             return ["root ::= column " + self._literal(", ") + " order", *self._column_rules(spec.columns), self._order_rule()]
+        if action == "add_column":
+            return [
+                "root ::= json_string " + self._literal(", ") + " value_list",
+                self._exact_value_list_rule(spec.table_row_count),
+                *self._json_string_rules(),
+            ]
         if action == "end":
             return ["root ::= " + self._literal("")]
         raise ValueError(f"Action '{action}' is not supported by the xgrammar backend.")
@@ -134,6 +149,8 @@ class ActionGrammarBuilder:
             rules.extend(self._column_rules(spec.columns))
         if "sort_by" in spec.allowed_actions:
             rules.append(self._order_rule())
+        if "add_column" in spec.allowed_actions:
+            rules.extend([self._exact_value_list_rule(spec.table_row_count), *self._json_string_rules()])
         return rules
 
     def _call_rule(self, rule_name: str, action: str) -> str:
@@ -145,6 +162,8 @@ class ActionGrammarBuilder:
             return f"{rule_name} ::= {self._literal('f_group_by(')} column {self._literal(')')}"
         if action == "sort_by":
             return f"{rule_name} ::= {self._literal('f_sort_by(')} column {self._literal(', ')} order {self._literal(')')}"
+        if action == "add_column":
+            return f"{rule_name} ::= {self._literal('f_add_column(')} json_string {self._literal(', ')} value_list {self._literal(')')}"
         if action == "end":
             return f"{rule_name} ::= {self._literal('f_end()')}"
         raise ValueError(f"Action '{action}' is not supported by the xgrammar backend.")
@@ -167,6 +186,26 @@ class ActionGrammarBuilder:
 
     def _order_rule(self) -> str:
         return "order ::= " + self._choice([self._literal('"asc"'), self._literal('"desc"')])
+
+    def build_value_list_grammar(self, value_count: int) -> str:
+        """Build a grammar for a JSON string array with exactly value_count items."""
+        return self._grammar("\n".join(["root ::= value_list", self._exact_value_list_rule(value_count), *self._json_string_rules()]))
+
+    def _exact_value_list_rule(self, value_count: int) -> str:
+        if value_count < 1:
+            raise ValueError("add_column requires at least one row")
+        values = (" " + self._literal(", ") + " ").join(["json_string"] * value_count)
+        return "value_list ::= " + self._literal("[") + " " + values + " " + self._literal("]")
+
+    @staticmethod
+    def _json_string_rules() -> list[str]:
+        return [
+            'json_string ::= "\\"" json_chars "\\""',
+            "json_chars ::= json_char*",
+            r'json_char ::= [^"\\\x00-\x1f] | "\\" escape',
+            r'escape ::= ["\\/bfnrt] | "u" hex hex hex hex',
+            "hex ::= [0-9a-fA-F]",
+        ]
 
     def _quoted_value_choices(self, values: tuple[str, ...]) -> str:
         if not values:

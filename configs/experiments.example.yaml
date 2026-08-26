@@ -29,6 +29,11 @@ matrix:
   force_zero_temperature:
     - true
 
+  # Generate one run with derived-column creation enabled and one without it.
+  add_column:
+    - true
+    - false
+
 repeats: 3
 max_examples: 500
 output_root: results/experiments
@@ -36,15 +41,16 @@ output_root: results/experiments
 # Run every answer extraction method on every strategy's final table.
 extractors:
   - direct_query
-  - nl2sql
-  - nl2code
-  - end2ender
-  - cot_end2ender
+  # - nl2sql
+  # - nl2code
+  # - end2ender
+  # - cot_end2ender
 
-# add_column is intentionally disabled for the entire matrix.
+# Base action set. matrix.add_column toggles add_column in each generated config.
 enabled_actions:
   - select_row
   - select_column
+  - add_column
   - group_by
   - sort_by
   - end

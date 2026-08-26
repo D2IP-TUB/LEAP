@@ -8,13 +8,13 @@ from leap.core import Table
 from leap.core.actions import REGISTRY
 from leap.mcp.client import McpTableClient
 from leap.mcp.protocol import McpToolCall
-from leap.mcp.server import group_by, select_column, select_row, sort_by
+from leap.mcp.server import add_column, group_by, select_column, select_row, sort_by
 
 
 @pytest.fixture(autouse=True)
 def enabled_actions():
     previous = REGISTRY._enabled_actions
-    REGISTRY.set_enabled_actions(["select_row", "select_column", "group_by", "sort_by", "end"])
+    REGISTRY.set_enabled_actions(["select_row", "select_column", "add_column", "group_by", "sort_by", "end"])
     yield
     REGISTRY._enabled_actions = previous
 
@@ -24,6 +24,11 @@ def enabled_actions():
     [
         (select_row, {"rows": ["row 1"]}, Table(columns=["Name", "Score"], rows=[["Grace", "1"]])),
         (select_column, {"columns": ["Name"]}, Table(columns=["Name"], rows=[["Ada"], ["Grace"]])),
+        (
+            add_column,
+            {"column": "Rank", "values": ["2", "1"]},
+            Table(columns=["Name", "Score", "Rank"], rows=[["Ada", "2", "2"], ["Grace", "1", "1"]]),
+        ),
         (group_by, {"column": "Score"}, Table(columns=["Group", "Score", "Count"], rows=[[1, "2", 1], [2, "1", 1]])),
         (sort_by, {"column": "Score", "order": "asc"}, Table(columns=["Name", "Score"], rows=[["Grace", "1"], ["Ada", "2"]])),
     ],

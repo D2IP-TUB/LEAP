@@ -57,6 +57,7 @@ class GenerationConfig:
     constraint_backend: str = "legacy_state_machine"  # "xgrammar" or "legacy_state_machine"
     output_format: str = "function"  # "function", "json", or "mcp"
     force_zero_temperature: bool = False
+    batch_truncated_add_column: bool = False
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
     enabled_actions: tuple = None  # Tuple of enabled action names (immutable for frozen dataclass)
 
@@ -268,6 +269,7 @@ def _build_generation_config(generation_section: Dict[str, Any], enabled_actions
     constraint_backend = generation_section.get("constraint_backend", "legacy_state_machine")
     output_format = generation_section.get("output_format", "function")
     force_zero_temperature = generation_section.get("force_zero_temperature", False)
+    batch_truncated_add_column = generation_section.get("batch_truncated_add_column", False)
 
     if constraint_backend not in {"xgrammar", "legacy_state_machine"}:
         raise ValueError("generation.constraint_backend must be either 'xgrammar' or 'legacy_state_machine'.")
@@ -275,20 +277,12 @@ def _build_generation_config(generation_section: Dict[str, Any], enabled_actions
         raise ValueError("generation.output_format must be 'function', 'json', or 'mcp'.")
     if type(force_zero_temperature) is not bool:
         raise ValueError("generation.force_zero_temperature must be a boolean.")
+    if type(batch_truncated_add_column) is not bool:
+        raise ValueError("generation.batch_truncated_add_column must be a boolean.")
     if constraint_backend == "legacy_state_machine":
         output_format = "function"
 
     enabled_actions_tuple = tuple(enabled_actions) if enabled_actions else None
-    if output_format == "mcp" and enabled_actions_tuple and "add_column" in enabled_actions_tuple:
-        raise ValueError("add_column is not supported by the prototype MCP server.")
-    if (
-        output_format == "function"
-        and use_constraints
-        and constraint_backend == "xgrammar"
-        and enabled_actions_tuple
-        and "add_column" in enabled_actions_tuple
-    ):
-        raise ValueError("add_column is not supported when generation.constraint_backend is 'xgrammar'.")
 
     return GenerationConfig(
         use_constraints=use_constraints,
@@ -297,6 +291,7 @@ def _build_generation_config(generation_section: Dict[str, Any], enabled_actions
         constraint_backend=constraint_backend,
         output_format=output_format,
         force_zero_temperature=force_zero_temperature,
+        batch_truncated_add_column=batch_truncated_add_column,
         sampling=sampling_config,
         enabled_actions=enabled_actions_tuple,
     )

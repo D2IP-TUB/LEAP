@@ -7,9 +7,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from leap.core import Action, Table
-from leap.inference.json_constraints import JsonActionCodec, JsonActionSchemaBuilder, JsonActionSchemaSpec
+from leap.inference.json_constraints import ActionParseInspection, JsonActionCodec, JsonActionSchemaBuilder, JsonActionSchemaSpec
 
-MCP_ACTIONS = ("select_row", "select_column", "group_by", "sort_by", "end")
+MCP_ACTIONS = ("select_row", "select_column", "add_column", "group_by", "sort_by", "end")
 
 
 @dataclass(frozen=True)
@@ -19,27 +19,46 @@ class McpToolCall:
     arguments: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class McpToolCallInspection:
+    """Detailed outcome of parsing an MCP ``tools/call`` envelope."""
+
+    call: McpToolCall | None
+    stage: str
+    failure_code: str | None = None
+    failure_reason: str | None = None
+
+
 class McpToolCallCodec:
     """Strict conversion between MCP ``tools/call`` requests and LEAP actions."""
 
     @classmethod
     def parse(cls, text: str) -> McpToolCall | None:
+        return cls.inspect(text).call
+
+    @classmethod
+    def inspect(cls, text: str) -> McpToolCallInspection:
         try:
             payload = json.loads(text.strip())
-        except (json.JSONDecodeError, TypeError):
-            return None
-        if not isinstance(payload, dict) or set(payload) != {"jsonrpc", "id", "method", "params"}:
-            return None
-        if payload["jsonrpc"] != "2.0" or payload["method"] != "tools/call":
-            return None
+        except (json.JSONDecodeError, TypeError) as error:
+            return McpToolCallInspection(None, "mcp_json_decode", "invalid_json", str(error))
+        expected_fields = {"jsonrpc", "id", "method", "params"}
+        if not isinstance(payload, dict) or set(payload) != expected_fields:
+            return McpToolCallInspection(None, "mcp_envelope", "invalid_envelope_fields", "Invalid MCP envelope fields.")
+        if payload["jsonrpc"] != "2.0":
+            return McpToolCallInspection(None, "mcp_envelope", "invalid_jsonrpc_version", "jsonrpc must be '2.0'.")
+        if payload["method"] != "tools/call":
+            return McpToolCallInspection(None, "mcp_envelope", "invalid_method", "method must be 'tools/call'.")
         if not isinstance(payload["id"], (str, int)) or isinstance(payload["id"], bool):
-            return None
+            return McpToolCallInspection(None, "mcp_envelope", "invalid_request_id", "id must be a string or integer.")
         params = payload["params"]
         if not isinstance(params, dict) or set(params) != {"name", "arguments"}:
-            return None
-        if params["name"] not in MCP_ACTIONS or not isinstance(params["arguments"], dict):
-            return None
-        return McpToolCall(payload["id"], params["name"], params["arguments"])
+            return McpToolCallInspection(None, "mcp_params", "invalid_params_fields", "Invalid MCP params fields.")
+        if params["name"] not in MCP_ACTIONS:
+            return McpToolCallInspection(None, "mcp_params", "unsupported_tool", "Unsupported MCP tool name.")
+        if not isinstance(params["arguments"], dict):
+            return McpToolCallInspection(None, "mcp_params", "invalid_arguments_type", "arguments must be an object.")
+        return McpToolCallInspection(McpToolCall(payload["id"], params["name"], params["arguments"]), "complete")
 
     @classmethod
     def parse_action_name(cls, text: str, *, allowed_actions: list[str] | tuple[str, ...] | None = None) -> str | None:
@@ -52,10 +71,33 @@ class McpToolCallCodec:
 
     @classmethod
     def parse_action(cls, text: str, table: Table, *, expected_action: str | None = None) -> Action | None:
-        call = cls.parse(text)
-        if call is None or (expected_action is not None and call.name != expected_action):
-            return None
-        return JsonActionCodec._parse_payload({"action": call.name, **call.arguments}, table=table)
+        return cls.inspect_action(text, table, expected_action=expected_action).action
+
+    @classmethod
+    def inspect_action(
+        cls,
+        text: str,
+        table: Table,
+        *,
+        expected_action: str | None = None,
+    ) -> ActionParseInspection:
+        inspection = cls.inspect(text)
+        call = inspection.call
+        if call is None:
+            return ActionParseInspection(
+                action=None,
+                stage=inspection.stage,
+                failure_code=inspection.failure_code,
+                failure_reason=inspection.failure_reason,
+            )
+        if expected_action is not None and call.name != expected_action:
+            return ActionParseInspection(
+                action=None,
+                stage="action_name",
+                failure_code="unexpected_action",
+                failure_reason=f"Expected action {expected_action!r}, got {call.name!r}",
+            )
+        return JsonActionCodec.inspect_payload({"action": call.name, **call.arguments}, table=table)
 
     @classmethod
     def dumps(cls, action: Action, *, request_id: str | int = "step", include_arguments: bool = True) -> str:

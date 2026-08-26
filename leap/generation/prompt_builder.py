@@ -67,18 +67,6 @@ class PromptBuilder:
         table_str = table.to_csv(max_chars=max_chars, crop=crop)
         return f"Table:\n{table_str}"
 
-    @staticmethod
-    def _format_row_csv(table: Table, row: tuple, row_idx: int) -> str:
-        """Format a single row as CSV with the correct row index in the label."""
-        import csv as _csv
-        import io
-
-        out = io.StringIO()
-        writer = _csv.writer(out)
-        writer.writerow([" "] + list(table.columns))
-        writer.writerow([f"row {row_idx}"] + list(row))
-        return out.getvalue().rstrip()
-
     def build_iterative_prompt(
         self,
         *,
@@ -103,11 +91,13 @@ class PromptBuilder:
         if estimated_length > worker.max_model_len - self.iterative_settings.safety_margin_tokens:
             table_str = self._format_table(table, self.iterative_settings.fallback_table_chars, True)
             question_short = self._truncate_text(question, self.iterative_settings.question_truncation)
+            excluded_actions = self._excluded_actions(worker) | {"add_column"}
             prompt = self._compose_iterative_prompt(
                 question=question_short,
                 table_str=table_str,
                 action_history=action_history,
                 worker=worker,
+                excluded_actions=excluded_actions,
             )
 
         return prompt
@@ -119,9 +109,10 @@ class PromptBuilder:
         table_str: str,
         action_history: Sequence[str],
         worker,
+        excluded_actions: set[str] | None = None,
     ) -> str:
         """Render the complete iterative prompt for one current table state."""
-        excluded_actions = self._excluded_actions(worker)
+        excluded_actions = self._excluded_actions(worker) if excluded_actions is None else excluded_actions
         add_column_available = not excluded_actions
         use_global_constraints = getattr(worker, "use_global_constraints", False) is True
         action_descriptions = REGISTRY.get_action_descriptions(
@@ -232,13 +223,7 @@ class PromptBuilder:
         """Whether this run may expose add_column to the model."""
         if not REGISTRY.is_enabled("add_column"):
             return False
-        if getattr(worker, "output_format", "function") == "mcp":
-            return False
-        return not (
-            getattr(worker, "output_format", "function") != "json"
-            and getattr(worker, "use_constraints", False) is True
-            and getattr(worker, "constraint_backend", "legacy_state_machine") == "xgrammar"
-        )
+        return True
 
     def _format_system_for_output(self, text: str) -> str:
         if self.output_format not in {"json", "mcp"}:
@@ -514,9 +499,6 @@ class PromptBuilder:
                 example_answer = McpToolCallCodec.dumps(action)
             messages.append({"role": "assistant", "content": example_answer})
 
-        if action_name == "add_column" and len(table.rows) > 3:
-            table = Table(columns=list(table.columns), rows=[list(r) for r in table.rows[:3]])
-
         table_str = self._format_table(table, self.cot_settings.args_table_chars)
 
         estimated_length = len(instruction) // 4
@@ -545,84 +527,45 @@ class PromptBuilder:
 
             return result
 
-    def build_add_column_per_row_prompt(
+    def split_add_column_batches(self, table: Table) -> list[Table]:
+        """Split rows into the largest batches fitting the configured argument table budget."""
+        if not table.rows:
+            return []
+        if len(table.to_csv()) <= self.cot_settings.args_table_chars:
+            return [table]
+
+        batches: list[Table] = []
+        current: list[list] = []
+        for row in table.rows:
+            candidate = [*current, list(row)]
+            candidate_table = Table(columns=list(table.columns), rows=candidate)
+            if current and len(candidate_table.to_csv()) > self.cot_settings.args_table_chars:
+                batches.append(Table(columns=list(table.columns), rows=current))
+                current = [list(row)]
+            else:
+                current = candidate
+        if current:
+            batches.append(Table(columns=list(table.columns), rows=current))
+        return batches
+
+    def build_add_column_batch_prompt(
         self,
         *,
+        question: str,
         table: Table,
         column_name: str,
-        target_row: tuple,
-        target_row_idx: int,
-        seed_values: list,
-        explanation: str,
     ) -> str:
-        """Prompt to generate the add_column value for a single row.
-
-        Chat-template format: task description in each user turn, each seed row
-        as a user/assistant example, target row as the final user message.
-
-            User:  <task description>\\n\\n<row CSV>\\n\\n<prompt line>
-            Asst:  <seed value>
-            ...
-            User:  <task description>\\n\\n<target row CSV>\\n\\n<prompt line>
-        """
-        # Extract reasoning text — everything before "Therefore the answer is:"
-        for marker in ("Therefore, the answer is:", "Therefore the answer is:"):
-            if marker in explanation:
-                task_description = explanation[: explanation.index(marker)].strip()
-                break
-        else:
-            task_description = explanation.strip()
-
-        messages = []
-
-        if self.is_instruct:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": self.prompt_catalog.render(
-                        self.prompt_catalog.cot_template("add_column_row_system"),
-                        column_name=column_name,
-                    ),
-                }
-            )
-
-        # One user/assistant shot per seed row
-        for i, (row, value) in enumerate(zip(table.rows[:3], seed_values[:3])):
-            row_csv = self._format_row_csv(table, row, i)
-            messages.append(
-                {
-                    "role": "user",
-                    "content": self.prompt_catalog.render(
-                        self.prompt_catalog.cot_template("add_column_row_turn"),
-                        task_description=task_description,
-                        row=row_csv,
-                        column_name=column_name,
-                    ),
-                }
-            )
-            messages.append({"role": "assistant", "content": str(value)})
-
-        # Target row — final user message
-        target_csv = self._format_row_csv(table, target_row, target_row_idx)
-        messages.append(
-            {
-                "role": "user",
-                "content": self.prompt_catalog.render(
-                    self.prompt_catalog.cot_template("add_column_row_turn"),
-                    task_description=task_description,
-                    row=target_csv,
-                    column_name=column_name,
-                ),
-            }
+        """Prompt for a continuation batch of add_column values."""
+        instruction = (
+            f"Generate the values for the existing new column {json.dumps(column_name)} for every displayed row, in order. "
+            "Return only a JSON array containing exactly one double-quoted string per displayed row. "
+            "Use JSON escaping and include no explanation."
         )
-
+        content = f"{self._format_table(table, self.cot_settings.args_table_chars)}\n\nQuestion: {question}"
+        messages = [{"role": "system", "content": instruction}, {"role": "user", "content": content}]
         if self.is_instruct:
             return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        else:
-            result = ""
-            for msg in messages:
-                result += msg["content"] + "\n" if msg["role"] == "user" else msg["content"] + "\n\n"
-            return result
+        return "\n\n".join(message["content"] for message in messages) + "\n"
 
     def build_query_prompt(
         self,

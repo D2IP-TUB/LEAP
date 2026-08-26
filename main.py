@@ -313,6 +313,7 @@ def write_results_to_jsonl(
                         "winner_votes": m.winner_votes,
                         "total_votes": m.total_votes,
                         "fallback_reason": m.fallback_reason,
+                        "add_column_diagnostics": [asdict(diagnostic) for diagnostic in m.add_column_diagnostics],
                     }
                     for m in (result.sampling_metadata or [])
                 ],

@@ -67,6 +67,21 @@ def test_iterative_mcp_current_turn_comes_from_prompt_catalog(context):
     assert "MCP TEMPLATE SENTINEL" in prompt
 
 
+def test_cot_mcp_add_column_prompt_forbids_existing_column_names(context):
+    _tokenizer, builder, worker, table = context
+    REGISTRY.set_enabled_actions(["select_row", "add_column", "end"])
+
+    prompt = builder.build_cot_arguments_prompt(
+        question="Who?",
+        table=table,
+        action_name="add_column",
+        action_history=[],
+        worker=worker,
+    )
+
+    assert "must not duplicate any displayed existing column name" in prompt
+
+
 def test_cot_mcp_prompts_split_selection_and_arguments(context):
     tokenizer, builder, worker, table = context
 

@@ -5,7 +5,7 @@ import pytest
 
 from leap.config.loader import GenerationConfig as GenerationSettings
 from leap.core import Action, ExecutionMetrics, InferenceResult, Table
-from leap.generation.sampling import SamplingConfig, SamplingResult
+from leap.generation.sampling import AddColumnDiagnostic, SamplingConfig, SamplingResult
 from leap.utils.table_logger import TableLogger
 from main import write_results_to_jsonl
 
@@ -155,6 +155,19 @@ def test_create_summary_report_includes_error_summary_from_results(tmp_path):
         candidate_actions=["select_row([99])", "select_column(['missing'])", "select_row([-1])"],
         valid_actions=[],
         fallback_reason="no_valid_candidates",
+        add_column_diagnostics=[
+            AddColumnDiagnostic(
+                request_id="R",
+                step=0,
+                sample_idx=1,
+                selected_action="add_column",
+                table_row_count=3,
+                table_column_count=3,
+                batch_enabled=False,
+                failure_code="invalid_json",
+                failure_reason="Unterminated JSON object.",
+            )
+        ],
     )
     result = InferenceResult(
         action_history=["end()", "direct_query()"],
@@ -186,6 +199,12 @@ def test_create_summary_report_includes_error_summary_from_results(tmp_path):
     assert error_summary["execution_error_count"] == 1
     assert error_summary["total_error_count"] == 6
     assert error_summary["fallback_reason_counts"]["no_valid_candidates"] == 1
+    assert error_summary["add_column_requested_candidate_count"] == 4
+    assert error_summary["add_column_failed_candidate_count"] == 1
+    assert error_summary["add_column_affected_request_count"] == 1
+    assert error_summary["add_column_affected_sampling_step_count"] == 1
+    assert error_summary["add_column_failure_rate"] == pytest.approx(0.25)
+    assert error_summary["add_column_failure_code_counts"] == {"invalid_json": 1}
 
 
 def test_write_summary_report_creates_file_and_prints(tmp_path, capsys):
@@ -267,6 +286,21 @@ def test_parallel_results_jsonl_created_with_expected_entries(tmp_path, capsys):
             "select_row([0, 1])",
             "select_row([0])",
         ],
+        add_column_diagnostics=[
+            AddColumnDiagnostic(
+                request_id="req123",
+                step=1,
+                sample_idx=2,
+                selected_action="add_column",
+                table_row_count=2,
+                table_column_count=3,
+                batch_enabled=False,
+                raw_output='{"column":"Rank","values":["1"',
+                raw_output_length=32,
+                failure_code="invalid_json",
+                failure_reason="Unterminated JSON object.",
+            )
+        ],
     )
 
     results = InferenceResult(
@@ -342,6 +376,8 @@ def test_parallel_results_jsonl_created_with_expected_entries(tmp_path, capsys):
     m0 = sm[0]
     assert m0["candidate_actions"] == sampling_result.candidate_actions
     assert m0["valid_actions"] == sampling_result.valid_actions
+    assert m0["add_column_diagnostics"][0]["raw_output"] == '{"column":"Rank","values":["1"'
+    assert m0["add_column_diagnostics"][0]["failure_code"] == "invalid_json"
     assert m0["n_requested"] == sampling_result.n_requested
     assert m0["n_generated"] == sampling_result.n_generated
     assert m0["n_valid"] == sampling_result.n_valid

@@ -257,11 +257,12 @@ sequenceDiagram
 |---|---|---|
 | `select_row` | `rows: list[str]` | Selected rows |
 | `select_column` | `columns: list[str]` | Selected columns |
+| `add_column` | `column: str`, `values: list[str]` | Table with one new value per row |
 | `group_by` | `column: str` | Group counts |
 | `sort_by` | `column: str`, `order: "asc" \| "desc"` | Sorted rows |
 | `end` | None | Unchanged table with `terminated: true` |
 
-`add_column` is intentionally not exposed by the research-prototype MCP server.
+`add_column` validates that the new column name is unused and that the values list contains exactly one string per table row.
 
 ## State ownership and compatibility
 

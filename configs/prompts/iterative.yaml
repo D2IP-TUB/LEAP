@@ -41,7 +41,7 @@ variants:
       row 1,2,saturday april 20,7:00 p.m.,london monarchs,W 37-3,2-0,waldstadion,34186
       row 2,3,sunday april 28,6:00 p.m.,at barcelona dragons,W 33-29,3-0,estadi olímpic de montjuïc,17503
       Question: What is the date of the competition with the highest attendance?
-      Operation: f_add_column("attendance number", [32092, 34186, 17503])
+      Operation: f_add_column("attendance number", ["32092", "34186", "17503"])
       Explanation: To answer the question, we need to know the attendance number of each competition. We extract the value from column attendance and create a different column attendance number for each row. The datatype is numerical.
 
       Often only a subset of columns is required to answer a question. Use f_select_column() to select the relevant columns that contain the information needed. For example,

@@ -36,13 +36,12 @@ extractors:
 
 generation:
   use_constraints: true
-  use_global_constraints: false
+  use_global_constraints: true
 
   # Operation protocol: "function" preserves f_action(...), "json" uses
   # named JSON objects, and "mcp" emits MCP JSON-RPC tools/call requests and
   # executes table transformations through the local stdio MCP server.
   # legacy_state_machine always forces this setting to "function".
-  # The prototype MCP server does not expose add_column.
   output_format: "mcp"
 
   # Unconstrained generation always uses vLLM >=0.12,<0.13 with the V1 engine.
@@ -51,8 +50,7 @@ generation:
   # If this setting is omitted, constrained runs select legacy_state_machine
   # for backward compatibility. Selecting legacy_state_machine forces the
   # function operation format and the legacy runtime when constraints are on.
-  # add_column is unsupported by function-format xgrammar, but supported by
-  # constrained JSON mode.
+  # xgrammar supports add_column in function, JSON, and MCP formats.
   # constraint_backend: "xgrammar"
   constraint_backend: "xgrammar"
 
@@ -63,13 +61,17 @@ generation:
   strategy: "cot"
   force_zero_temperature: false
 
+  # Opt in to splitting a truncated CoT add_column table across multiple
+  # value-generation calls. Disabled means one complete full-table response.
+  batch_truncated_add_column: false
+
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:
     - select_row
     - select_column
     - group_by
     - sort_by
-    # - add_column
+    - add_column
     - end
     # Note: direct_query is automatically applied after end(), not a separate action
 

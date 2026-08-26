@@ -14,7 +14,7 @@ from leap.inference.function_constraints import (
 
 @pytest.fixture(autouse=True)
 def enabled_actions():
-    REGISTRY.set_enabled_actions(["select_row", "select_column", "group_by", "sort_by", "end"])
+    REGISTRY.set_enabled_actions(["select_row", "select_column", "add_column", "group_by", "sort_by", "end"])
     yield
     REGISTRY._enabled_actions = None
 
@@ -32,6 +32,25 @@ def test_default_generation_config_uses_legacy_backend_for_old_configs():
 
     assert config.constraint_backend == "legacy_state_machine"
     assert config.output_format == "function"
+
+
+def test_truncated_add_column_batching_defaults_off_and_requires_boolean():
+    config = _build_generation_config({}, ["add_column", "end"], SamplingConfig())
+    assert config.batch_truncated_add_column is False
+
+    opted_in = _build_generation_config(
+        {"batch_truncated_add_column": True},
+        ["add_column", "end"],
+        SamplingConfig(),
+    )
+    assert opted_in.batch_truncated_add_column is True
+
+    with pytest.raises(ValueError, match="batch_truncated_add_column"):
+        _build_generation_config(
+            {"batch_truncated_add_column": "yes"},
+            ["add_column", "end"],
+            SamplingConfig(),
+        )
 
 
 def test_generation_config_accepts_constrained_json_add_column():
@@ -67,13 +86,14 @@ def test_generation_config_accepts_mcp_mode():
     assert config.output_format == "mcp"
 
 
-def test_generation_config_rejects_add_column_in_mcp_mode():
-    with pytest.raises(ValueError, match="add_column"):
-        _build_generation_config(
-            {"constraint_backend": "xgrammar", "output_format": "mcp"},
-            ["select_column", "add_column", "end"],
-            SamplingConfig(),
-        )
+def test_generation_config_accepts_add_column_in_mcp_mode():
+    config = _build_generation_config(
+        {"constraint_backend": "xgrammar", "output_format": "mcp"},
+        ["select_column", "add_column", "end"],
+        SamplingConfig(),
+    )
+    assert config.output_format == "mcp"
+    assert "add_column" in config.enabled_actions
 
 
 def test_generation_config_rejects_unknown_output_format():
@@ -81,13 +101,13 @@ def test_generation_config_rejects_unknown_output_format():
         _build_generation_config({"output_format": "xml"}, ["end"], SamplingConfig())
 
 
-def test_generation_config_rejects_add_column_for_xgrammar():
-    with pytest.raises(ValueError, match="add_column"):
-        _build_generation_config(
-            {"use_constraints": True, "constraint_backend": "xgrammar"},
-            ["select_row", "add_column", "end"],
-            SamplingConfig(),
-        )
+def test_generation_config_accepts_add_column_for_xgrammar():
+    config = _build_generation_config(
+        {"use_constraints": True, "constraint_backend": "xgrammar"},
+        ["select_row", "add_column", "end"],
+        SamplingConfig(),
+    )
+    assert config.enabled_actions == ("select_row", "add_column", "end")
 
 
 def test_generation_config_accepts_legacy_state_machine_with_add_column():
@@ -119,7 +139,7 @@ def test_action_grammar_respects_history_and_row_cap():
 
 
 def test_global_available_actions_follow_leap_transition_matrix():
-    assert available_actions([], use_global_constraints=True) == ["select_row", "select_column", "group_by", "sort_by"]
+    assert available_actions([], use_global_constraints=True) == ["add_column", "select_row", "select_column", "group_by", "sort_by"]
     assert available_actions(
         ["select_row(0)"],
         use_global_constraints=True,
@@ -135,8 +155,7 @@ def test_global_available_actions_follow_leap_transition_matrix():
 def test_global_available_actions_intersect_enabled_and_backend_supported_actions():
     REGISTRY.set_enabled_actions(["add_column", "select_row", "group_by", "end"])
 
-    # add_column is enabled, but xgrammar independently does not support it.
-    assert available_actions([], use_global_constraints=True) == ["select_row", "group_by"]
+    assert available_actions([], use_global_constraints=True) == ["add_column", "select_row", "group_by"]
     assert available_actions(["select_row(0)"], use_global_constraints=True) == ["group_by", "end"]
 
 
@@ -187,6 +206,18 @@ def test_argument_grammars_for_supported_actions():
     assert '"\\"asc\\""' in sort_grammar
     assert '"\\"desc\\""' in sort_grammar
 
+    add_spec = builder.build_spec(
+        table=table,
+        action_history=[],
+        use_global_constraints=False,
+        phase="arguments",
+        selected_action="add_column",
+    )
+    add_grammar = builder.build_arguments_grammar(add_spec)
+    assert "root ::= json_string" in add_grammar
+    assert add_grammar.count("json_string") >= len(table.rows) + 1
+    assert 'value_list ::= "[" json_string ", " json_string ", " json_string "]"' in add_grammar
+
 
 def test_select_row_wildcard_is_supported_only_for_non_empty_tables():
     builder = ActionGrammarBuilder()
@@ -227,7 +258,8 @@ def test_action_selection_grammar_outputs_old_action_names():
     )
     grammar = builder.build_action_grammar(spec)
 
-    assert 'root ::= "f_select_row"' in grammar
+    assert 'root ::= "f_add_column"' in grammar
+    assert '"f_select_row"' in grammar
     assert '"f_select_column"' in grammar
     assert '"f_end"' not in grammar
 

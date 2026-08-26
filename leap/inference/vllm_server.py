@@ -105,6 +105,7 @@ class VLLMWorkerProcess(mp.Process):
         self.constraint_backend = generation_config.constraint_backend
         self.output_format = generation_config.output_format
         self.force_zero_temperature = generation_config.force_zero_temperature
+        self.batch_truncated_add_column = generation_config.batch_truncated_add_column
 
         # vLLM components (will be set after engine initialization)
         self.engine = None
@@ -122,6 +123,7 @@ class VLLMWorkerProcess(mp.Process):
         self.constraint_backend = generation_config.constraint_backend
         self.output_format = generation_config.output_format
         self.force_zero_temperature = generation_config.force_zero_temperature
+        self.batch_truncated_add_column = generation_config.batch_truncated_add_column
 
     def run(self):
         """Main worker process loop"""

@@ -6,18 +6,21 @@ action_instruction: |
 argument_instructions:
   select_row: "Return only one official MCP JSON-RPC tools/call request. It must contain exactly jsonrpc, id, method, and params; method must be tools/call; params must contain exactly name and arguments. Include every required tool argument. Do not return prose, Markdown, or a function call. Use only the 'select_row' tool."
   select_column: "Return only one official MCP JSON-RPC tools/call request. It must contain exactly jsonrpc, id, method, and params; method must be tools/call; params must contain exactly name and arguments. Include every required tool argument. Do not return prose, Markdown, or a function call. Use only the 'select_column' tool."
+  add_column: "Return only one official MCP JSON-RPC tools/call request for 'add_column'. The column name must be new and must not duplicate any displayed existing column name, including with different capitalization. Include exactly one double-quoted string value per displayed row, in order."
   group_by: "Return only one official MCP JSON-RPC tools/call request. It must contain exactly jsonrpc, id, method, and params; method must be tools/call; params must contain exactly name and arguments. Include every required tool argument. Do not return prose, Markdown, or a function call. Use only the 'group_by' tool."
   sort_by: "Return only one official MCP JSON-RPC tools/call request. It must contain exactly jsonrpc, id, method, and params; method must be tools/call; params must contain exactly name and arguments. Include every required tool argument. Do not return prose, Markdown, or a function call. Use only the 'sort_by' tool."
   end: "Return only one official MCP JSON-RPC tools/call request. It must contain exactly jsonrpc, id, method, and params; method must be tools/call; params must contain exactly name and arguments. Include every required tool argument. Do not return prose, Markdown, or a function call. Use only the 'end' tool."
 selection_shapes:
   select_row: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"select_row","arguments":{}}}'
   select_column: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"select_column","arguments":{}}}'
+  add_column: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"add_column","arguments":{}}}'
   group_by: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"group_by","arguments":{}}}'
   sort_by: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"sort_by","arguments":{}}}'
   end: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"end","arguments":{}}}'
 operation_shapes:
   select_row: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"select_row","arguments":{"rows":["row 0","row 2"]}}}'
   select_column: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"select_column","arguments":{"columns":["Name","Points"]}}}'
+  add_column: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"add_column","arguments":{"column":"Country","values":["ESP","ITA"]}}}'
   group_by: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"group_by","arguments":{"column":"Country"}}}'
   sort_by: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"sort_by","arguments":{"column":"Year","order":"desc"}}}'
   end: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"end","arguments":{}}}'

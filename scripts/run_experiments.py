@@ -46,6 +46,7 @@ class ExperimentMatrix:
     constraint_backends: list[str]
     output_formats: list[str]
     force_zero_temperature: list[bool]
+    add_column: list[bool] = field(default_factory=lambda: [True])
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,7 @@ class ExperimentJob:
     constraint_backend: str
     output_format: str
     force_zero_temperature: bool
+    add_column: bool
     repeat: int
     config_path: Path
     results_root: Path
@@ -120,6 +122,12 @@ class JobResult:
     invalid_candidate_count: int
     missing_generation_count: int
     total_error_count: int
+    add_column: bool = True
+    add_column_requested_candidate_count: int = 0
+    add_column_failed_candidate_count: int = 0
+    add_column_affected_request_count: int = 0
+    add_column_affected_sampling_step_count: int = 0
+    add_column_failure_code_counts: dict[str, int] = field(default_factory=dict)
     config_key: str | None = None
     config_label: str | None = None
     error: str | None = None
@@ -163,6 +171,8 @@ def load_experiment_spec(spec_path: Path) -> ExperimentSpec:
         raise ValueError("'modes' is no longer supported; use the 'matrix' generation settings instead.")
     if "continue_on_error" in raw:
         raise ValueError("'continue_on_error' is no longer supported; experiment jobs now always continue after failures.")
+    extractors = _string_list(raw, "extractors", VALID_EXTRACTORS)
+    enabled_actions = _string_list(raw, "enabled_actions", VALID_ACTIONS)
     matrix_raw = raw.get("matrix")
     if not isinstance(matrix_raw, dict):
         raise ValueError("'matrix' must be a mapping of generation setting lists.")
@@ -173,6 +183,7 @@ def load_experiment_spec(spec_path: Path) -> ExperimentSpec:
         constraint_backends=_string_list(matrix_raw, "constraint_backends", VALID_CONSTRAINT_BACKENDS),
         output_formats=_string_list(matrix_raw, "output_formats", VALID_OUTPUT_FORMATS),
         force_zero_temperature=_bool_list(matrix_raw, "force_zero_temperature"),
+        add_column=_bool_list(matrix_raw, "add_column", default=["add_column" in enabled_actions]),
     )
     if not expand_matrix(matrix):
         raise ValueError("The experiment matrix contains no supported generation-setting combinations.")
@@ -186,8 +197,6 @@ def load_experiment_spec(spec_path: Path) -> ExperimentSpec:
         if type(max_examples) is not int or max_examples < 0:
             raise ValueError("'max_examples' must be non-negative when provided.")
 
-    extractors = _string_list(raw, "extractors", VALID_EXTRACTORS)
-    enabled_actions = _string_list(raw, "enabled_actions", VALID_ACTIONS)
     reuse_models = raw.get("reuse_models", True)
     if type(reuse_models) is not bool:
         raise ValueError("'reuse_models' must be a boolean.")
@@ -286,7 +295,8 @@ def expand_matrix(matrix: ExperimentMatrix) -> list[dict[str, Any]]:
     for strategy in matrix.strategies:
         if strategy == "direct_query":
             candidates = [
-                (False, False, "xgrammar", "function", force_zero_temperature) for force_zero_temperature in matrix.force_zero_temperature
+                (False, False, "xgrammar", "function", force_zero_temperature, matrix.add_column[0])
+                for force_zero_temperature in matrix.force_zero_temperature
             ]
         else:
             candidates = itertools.product(
@@ -295,13 +305,14 @@ def expand_matrix(matrix: ExperimentMatrix) -> list[dict[str, Any]]:
                 matrix.constraint_backends,
                 matrix.output_formats,
                 matrix.force_zero_temperature,
+                matrix.add_column,
             )
-        for use_constraints, use_global_constraints, constraint_backend, output_format, force_zero_temperature in candidates:
+        for use_constraints, use_global_constraints, constraint_backend, output_format, force_zero_temperature, add_column in candidates:
             if constraint_backend == "legacy_state_machine" and output_format != "function":
                 continue
             if not use_constraints:
                 constraint_backend = "xgrammar"
-            key = (strategy, use_constraints, use_global_constraints, constraint_backend, output_format, force_zero_temperature)
+            key = (strategy, use_constraints, use_global_constraints, constraint_backend, output_format, force_zero_temperature, add_column)
             if key in seen:
                 continue
             seen.add(key)
@@ -313,6 +324,7 @@ def expand_matrix(matrix: ExperimentMatrix) -> list[dict[str, Any]]:
                     "constraint_backend": constraint_backend,
                     "output_format": output_format,
                     "force_zero_temperature": force_zero_temperature,
+                    "add_column": add_column,
                 }
             )
     return settings
@@ -346,6 +358,7 @@ def build_job_config(
     constraint_backend: str,
     output_format: str,
     force_zero_temperature: bool,
+    add_column: bool,
     max_examples: int | None,
     extractors: list[str],
     enabled_actions: list[str],
@@ -365,7 +378,7 @@ def build_job_config(
             "constraint_backend": constraint_backend,
             "output_format": output_format,
             "force_zero_temperature": force_zero_temperature,
-            "enabled_actions": list(enabled_actions),
+            "enabled_actions": _enabled_actions_with_add_column(enabled_actions, add_column),
         }
     )
 
@@ -382,6 +395,7 @@ def run_job(job: ExperimentJob, *, experiment_dir: Path, project_root: Path, pyt
         constraint_backend=job.constraint_backend,
         output_format=job.output_format,
         force_zero_temperature=job.force_zero_temperature,
+        add_column=job.add_column,
         repeat=job.repeat,
     )
     stdout_log = log_dir / f"{log_stem}.stdout.log"
@@ -479,6 +493,7 @@ def _config_identity_from_job(job: ExperimentJob) -> dict[str, Any]:
             "use_global_constraints": job.use_global_constraints,
             "constraint_backend": job.constraint_backend,
             "output_format": job.output_format,
+            "enabled_actions": _enabled_actions_with_add_column([], job.add_column),
         },
     }
 
@@ -501,6 +516,7 @@ def _config_identity_label(job: ExperimentJob) -> str:
         constraint_backend=job.constraint_backend,
         output_format=job.output_format,
         force_zero_temperature=job.force_zero_temperature,
+        add_column_enabled=job.add_column,
     )
 
 
@@ -550,6 +566,12 @@ def _job_result(
         invalid_candidate_count=metrics.get("invalid_candidate_count", 0),
         missing_generation_count=metrics.get("missing_generation_count", 0),
         total_error_count=metrics.get("total_error_count", 0),
+        add_column=job.add_column,
+        add_column_requested_candidate_count=metrics.get("add_column_requested_candidate_count", 0),
+        add_column_failed_candidate_count=metrics.get("add_column_failed_candidate_count", 0),
+        add_column_affected_request_count=metrics.get("add_column_affected_request_count", 0),
+        add_column_affected_sampling_step_count=metrics.get("add_column_affected_sampling_step_count", 0),
+        add_column_failure_code_counts=metrics.get("add_column_failure_code_counts", {}),
         config_key=config_key,
         config_label=config_label,
         error=error,
@@ -805,6 +827,11 @@ def collect_run_metrics(run_dir: Path) -> dict[str, Any]:
         "invalid_candidate_count": error_summary["invalid_candidate_count"],
         "missing_generation_count": error_summary["missing_generation_count"],
         "total_error_count": error_summary["total_error_count"],
+        "add_column_requested_candidate_count": error_summary["add_column_requested_candidate_count"],
+        "add_column_failed_candidate_count": error_summary["add_column_failed_candidate_count"],
+        "add_column_affected_request_count": error_summary["add_column_affected_request_count"],
+        "add_column_affected_sampling_step_count": error_summary["add_column_affected_sampling_step_count"],
+        "add_column_failure_code_counts": error_summary["add_column_failure_code_counts"],
     }
 
 
@@ -822,6 +849,11 @@ def _collect_error_summary(run_dir: Path, rows: list[dict[str, Any]]) -> dict[st
                 "invalid_candidate_count": int(error_summary.get("invalid_candidate_count", 0) or 0),
                 "missing_generation_count": int(error_summary.get("missing_generation_count", 0) or 0),
                 "total_error_count": int(error_summary.get("total_error_count", 0) or 0),
+                "add_column_requested_candidate_count": int(error_summary.get("add_column_requested_candidate_count", 0) or 0),
+                "add_column_failed_candidate_count": int(error_summary.get("add_column_failed_candidate_count", 0) or 0),
+                "add_column_affected_request_count": int(error_summary.get("add_column_affected_request_count", 0) or 0),
+                "add_column_affected_sampling_step_count": int(error_summary.get("add_column_affected_sampling_step_count", 0) or 0),
+                "add_column_failure_code_counts": dict(error_summary.get("add_column_failure_code_counts", {}) or {}),
             }
         except (json.JSONDecodeError, OSError, TypeError, ValueError):
             pass
@@ -830,8 +862,14 @@ def _collect_error_summary(run_dir: Path, rows: list[dict[str, Any]]) -> dict[st
     invalid_candidate_count = 0
     missing_generation_count = 0
     execution_error_count = 0
+    add_column_requested_candidate_count = 0
+    add_column_failed_candidate_count = 0
+    add_column_affected_request_count = 0
+    add_column_affected_sampling_step_count = 0
+    add_column_failure_code_counts: dict[str, int] = {}
 
     for row in rows:
+        request_had_add_column_failure = False
         if row.get("execution_metrics", {}).get("execution_error"):
             execution_error_count += 1
         for metadata in row.get("sampling_metadata", []) or []:
@@ -846,6 +884,19 @@ def _collect_error_summary(run_dir: Path, rows: list[dict[str, Any]]) -> dict[st
                 invalid_generation_end_count += 1
             invalid_candidate_count += max(n_generated - n_valid, 0)
             missing_generation_count += max(n_requested - n_generated, 0)
+            diagnostics = metadata.get("add_column_diagnostics", []) or []
+            selected_add_column = winner.get("action") == "add_column" or bool(diagnostics)
+            if selected_add_column:
+                add_column_requested_candidate_count += n_requested
+            if diagnostics:
+                request_had_add_column_failure = True
+                add_column_affected_sampling_step_count += 1
+                add_column_failed_candidate_count += len(diagnostics)
+                for diagnostic in diagnostics:
+                    code = diagnostic.get("failure_code", "unknown")
+                    add_column_failure_code_counts[code] = add_column_failure_code_counts.get(code, 0) + 1
+        if request_had_add_column_failure:
+            add_column_affected_request_count += 1
 
     total_error_count = invalid_candidate_count + missing_generation_count + execution_error_count
     return {
@@ -854,12 +905,17 @@ def _collect_error_summary(run_dir: Path, rows: list[dict[str, Any]]) -> dict[st
         "invalid_candidate_count": invalid_candidate_count,
         "missing_generation_count": missing_generation_count,
         "total_error_count": total_error_count,
+        "add_column_requested_candidate_count": add_column_requested_candidate_count,
+        "add_column_failed_candidate_count": add_column_failed_candidate_count,
+        "add_column_affected_request_count": add_column_affected_request_count,
+        "add_column_affected_sampling_step_count": add_column_affected_sampling_step_count,
+        "add_column_failure_code_counts": add_column_failure_code_counts,
     }
 
 
 def build_report(spec: ExperimentSpec, experiment_id: str, experiment_dir: Path, job_results: list[JobResult]) -> dict[str, Any]:
     serial_jobs = [asdict(result) for result in job_results]
-    configuration_keys = ("strategy", "use_constraints", "use_global_constraints", "constraint_backend", "output_format")
+    configuration_keys = ("strategy", "use_constraints", "use_global_constraints", "constraint_backend", "output_format", "add_column")
     comparison_inputs = [
         {
             "config_key": result.config_key,
@@ -942,11 +998,11 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         "## Summary By Configuration",
         "",
         table_row(
-            ["Strategy", "Constraints", "Global", "Backend", "Format", "Jobs"]
+            ["Strategy", "Constraints", "Global", "Backend", "Format", "Add Column", "Jobs"]
             + extractor_headers
             + ["Mean Extractor Accuracy", "Std Dev", "Error Rate", "Failed", "Avg Runtime"]
         ),
-        table_row(["---"] * 5 + ["---:"] + ["---:"] * len(extractors) + ["---:"] * 5),
+        table_row(["---"] * 6 + ["---:"] + ["---:"] * len(extractors) + ["---:"] * 5),
     ]
     for row in report["summary_by_configuration"]:
         lines.append(
@@ -957,6 +1013,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
                     _fmt_bool(row["use_global_constraints"]),
                     row["constraint_backend"],
                     row["output_format"],
+                    _fmt_bool(row["add_column"]),
                     row["jobs"],
                 ]
                 + [_fmt_float(row.get("mean_method_accuracies", {}).get(method)) for method in extractors]
@@ -976,11 +1033,11 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             "## Summary By Model And Configuration",
             "",
             table_row(
-                ["Model", "Strategy", "Constraints", "Global", "Backend", "Format", "Runs"]
+                ["Model", "Strategy", "Constraints", "Global", "Backend", "Format", "Add Column", "Runs"]
                 + extractor_headers
                 + ["Mean Extractor Accuracy", "Error Rate", "Successful Examples", "Avg Runtime"]
             ),
-            table_row(["---"] * 6 + ["---:"] + ["---:"] * len(extractors) + ["---:"] * 4),
+            table_row(["---"] * 7 + ["---:"] + ["---:"] * len(extractors) + ["---:"] * 4),
         ]
     )
     for row in report["summary_by_model_and_configuration"]:
@@ -993,6 +1050,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
                     _fmt_bool(row["use_global_constraints"]),
                     row["constraint_backend"],
                     row["output_format"],
+                    _fmt_bool(row["add_column"]),
                     row["jobs"],
                 ]
                 + [_fmt_float(row.get("mean_method_accuracies", {}).get(method)) for method in extractors]
@@ -1510,10 +1568,23 @@ def _summarize(results: list[JobResult], keys: tuple[str, ...]) -> list[dict[str
                 "invalid_candidate_count": sum(result.invalid_candidate_count for result in ok_results),
                 "missing_generation_count": sum(result.missing_generation_count for result in ok_results),
                 "total_error_count": sum(result.total_error_count for result in ok_results),
+                "add_column_requested_candidate_count": sum(result.add_column_requested_candidate_count for result in ok_results),
+                "add_column_failed_candidate_count": sum(result.add_column_failed_candidate_count for result in ok_results),
+                "add_column_affected_request_count": sum(result.add_column_affected_request_count for result in ok_results),
+                "add_column_affected_sampling_step_count": sum(result.add_column_affected_sampling_step_count for result in ok_results),
+                "add_column_failure_code_counts": _sum_failure_code_counts(result.add_column_failure_code_counts for result in ok_results),
             }
         )
         rows.append(row)
     return rows
+
+
+def _sum_failure_code_counts(counts_by_result) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for counts in counts_by_result:
+        for code, count in counts.items():
+            totals[code] = totals.get(code, 0) + count
+    return totals
 
 
 def _find_new_run_dir(results_root: Path, existing_manifests: set[Path]) -> Path | None:
@@ -1590,6 +1661,7 @@ def _job_stem(
     constraint_backend: str,
     output_format: str,
     force_zero_temperature: bool,
+    add_column: bool,
     repeat: int,
 ) -> str:
     return "_".join(
@@ -1601,6 +1673,7 @@ def _job_stem(
             _slugify(constraint_backend),
             _slugify(output_format),
             "zero-temp" if force_zero_temperature else "standard-temp",
+            "add-column-on" if add_column else "add-column-off",
             f"r{repeat}",
         ]
     )
@@ -1615,12 +1688,23 @@ def _job_identifier(job: ExperimentJob) -> str:
         constraint_backend=job.constraint_backend,
         output_format=job.output_format,
         force_zero_temperature=job.force_zero_temperature,
+        add_column=job.add_column,
         repeat=job.repeat,
     )
 
 
 def _slugify(value: str) -> str:
     return "".join(ch if ch.isalnum() else "-" for ch in value.lower()).strip("-")
+
+
+def _enabled_actions_with_add_column(enabled_actions: list[str], add_column: bool) -> list[str]:
+    actions = [action for action in enabled_actions if action != "add_column"]
+    if add_column:
+        try:
+            actions.insert(actions.index("end"), "add_column")
+        except ValueError:
+            actions.append("add_column")
+    return actions
 
 
 def _string_list(raw: dict[str, Any], key: str, valid_values: set[str]) -> list[str]:
@@ -1635,8 +1719,8 @@ def _string_list(raw: dict[str, Any], key: str, valid_values: set[str]) -> list[
     return values
 
 
-def _bool_list(raw: dict[str, Any], key: str) -> list[bool]:
-    values = raw.get(key)
+def _bool_list(raw: dict[str, Any], key: str, default: list[bool] | None = None) -> list[bool]:
+    values = raw.get(key, default)
     if not isinstance(values, list) or not values or not all(type(value) is bool for value in values):
         raise ValueError(f"'{key}' must be a non-empty list of booleans.")
     if len(values) != len(set(values)):

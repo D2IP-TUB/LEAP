@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -11,6 +12,8 @@ from leap.core.actions import REGISTRY
 
 JsonPhase = Literal["action", "arguments", "single_step"]
 ROW_LIMIT = 500
+MAX_ADD_COLUMN_NAME_LENGTH = 128
+MAX_ADD_COLUMN_VALUE_LENGTH = 256
 
 
 def uses_json_operations(worker) -> bool:
@@ -38,6 +41,17 @@ def available_json_actions(
     return enabled
 
 
+@dataclass(frozen=True)
+class ActionParseInspection:
+    """Detailed outcome of parsing one JSON action payload."""
+
+    action: Action | None
+    stage: str
+    failure_code: str | None = None
+    failure_reason: str | None = None
+    payload: dict[str, Any] | None = None
+
+
 class JsonActionCodec:
     """Strict conversion between the public JSON protocol and internal Actions."""
 
@@ -53,8 +67,14 @@ class JsonActionCodec:
 
     @classmethod
     def parse_single_step(cls, text: str, table: Table | None = None) -> Action | None:
-        payload = cls._load_object(text)
-        return cls._parse_payload(payload, table=table) if payload is not None else None
+        return cls.inspect_single_step(text, table).action
+
+    @classmethod
+    def inspect_single_step(cls, text: str, table: Table | None = None) -> ActionParseInspection:
+        payload, failure = cls._load_object_with_error(text)
+        if payload is None:
+            return failure
+        return cls.inspect_payload(payload, table=table)
 
     @classmethod
     def parse_action_name(
@@ -75,10 +95,55 @@ class JsonActionCodec:
 
     @classmethod
     def parse_arguments(cls, text: str, action_name: str, table: Table | None = None) -> Action | None:
-        payload = cls._load_object(text)
-        if payload is None or set(payload) != cls._argument_fields.get(action_name):
-            return None
-        return cls._parse_payload({"action": action_name, **payload}, table=table)
+        return cls.inspect_arguments(text, action_name, table).action
+
+    @classmethod
+    def inspect_arguments(cls, text: str, action_name: str, table: Table | None = None) -> ActionParseInspection:
+        payload, failure = cls._load_object_with_error(text)
+        if payload is None:
+            return failure
+        expected_fields = cls._argument_fields.get(action_name)
+        if expected_fields is None:
+            return ActionParseInspection(
+                action=None,
+                stage="action_name",
+                failure_code="unsupported_action",
+                failure_reason=f"Unsupported action: {action_name!r}",
+                payload=payload,
+            )
+        if set(payload) != expected_fields:
+            return ActionParseInspection(
+                action=None,
+                stage="argument_fields",
+                failure_code="unexpected_argument_fields",
+                failure_reason=f"Expected fields {sorted(expected_fields)!r}, got {sorted(payload)!r}",
+                payload=payload,
+            )
+        return cls.inspect_payload({"action": action_name, **payload}, table=table)
+
+    @classmethod
+    @staticmethod
+    def normalize_add_column_text(value: str, *, field_name: str, max_length: int) -> tuple[str | None, str | None, str | None]:
+        """Normalize permitted whitespace and reject unsafe decoded control characters."""
+        normalized = value.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").replace("\t", " ")
+        if len(normalized) > max_length:
+            return None, "string_too_long", f"{field_name} exceeds the {max_length}-character limit."
+        for position, character in enumerate(normalized):
+            if unicodedata.category(character) == "Cc":
+                return None, "disallowed_control_character", f"{field_name} contains a control character at position {position}."
+        return normalized, None, None
+
+    @staticmethod
+    def unique_extracted_column_name(column: str, existing_columns: list[str]) -> str:
+        """Return a unique derived-column name for an existing table header."""
+        suffix = " extracted"
+        index = 1
+        while True:
+            numbered_suffix = suffix if index == 1 else f"{suffix} {index}"
+            candidate = f"{column[: MAX_ADD_COLUMN_NAME_LENGTH - len(numbered_suffix)]}{numbered_suffix}"
+            if candidate not in existing_columns:
+                return candidate
+            index += 1
 
     @classmethod
     def to_dict(cls, action: Action, *, include_action: bool = True) -> dict[str, Any]:
@@ -112,64 +177,134 @@ class JsonActionCodec:
 
     @staticmethod
     def _load_object(text: str) -> dict[str, Any] | None:
+        payload, _ = JsonActionCodec._load_object_with_error(text)
+        return payload
+
+    @staticmethod
+    def _load_object_with_error(text: str) -> tuple[dict[str, Any] | None, ActionParseInspection]:
         try:
             value = json.loads(text.strip())
-        except (json.JSONDecodeError, TypeError):
-            return None
-        return value if isinstance(value, dict) else None
+        except (json.JSONDecodeError, TypeError) as error:
+            return None, ActionParseInspection(
+                action=None,
+                stage="json_decode",
+                failure_code="invalid_json",
+                failure_reason=str(error),
+            )
+        if not isinstance(value, dict):
+            return None, ActionParseInspection(
+                action=None,
+                stage="json_decode",
+                failure_code="top_level_not_object",
+                failure_reason=f"Expected JSON object, got {type(value).__name__}",
+            )
+        return value, ActionParseInspection(action=None, stage="json_decode")
 
     @classmethod
     def _parse_payload(cls, payload: dict[str, Any], *, table: Table | None) -> Action | None:
+        return cls.inspect_payload(payload, table=table).action
+
+    @classmethod
+    def inspect_payload(cls, payload: dict[str, Any], *, table: Table | None) -> ActionParseInspection:
         name = payload.get("action")
-        if not isinstance(name, str) or set(payload) != cls._fields.get(name):
-            return None
+        if not isinstance(name, str):
+            return ActionParseInspection(None, "action_name", "missing_or_invalid_action", "Action must be a string.", payload)
+        expected_fields = cls._fields.get(name)
+        if expected_fields is None:
+            return ActionParseInspection(None, "action_name", "unsupported_action", f"Unsupported action: {name!r}", payload)
+        if set(payload) != expected_fields:
+            return ActionParseInspection(
+                None,
+                "payload_fields",
+                "unexpected_payload_fields",
+                f"Expected fields {sorted(expected_fields)!r}, got {sorted(payload)!r}",
+                payload,
+            )
         if REGISTRY.get(name) is None or not REGISTRY.is_enabled(name):
-            return None
+            return ActionParseInspection(None, "action_name", "disabled_action", f"Action is disabled: {name!r}", payload)
+
         try:
             if name == "select_row":
                 rows = payload["rows"]
                 if not isinstance(rows, list) or not rows or not all(isinstance(row, str) for row in rows):
-                    return None
+                    return ActionParseInspection(None, "arguments", "invalid_rows", "Rows must be a non-empty string list.", payload)
                 if len(rows) != len(set(rows)):
-                    return None
+                    return ActionParseInspection(None, "arguments", "duplicate_rows", "Rows must be unique.", payload)
                 if rows == ["*"]:
                     arguments = ["*"]
                 elif "*" in rows:
-                    return None
+                    return ActionParseInspection(None, "arguments", "mixed_wildcard_rows", "Wildcard rows cannot be mixed.", payload)
                 else:
                     arguments = []
                     for row in rows:
                         prefix, separator, index = row.partition(" ")
                         if prefix != "row" or separator != " " or not index.isdigit():
-                            return None
+                            return ActionParseInspection(None, "arguments", "invalid_row_identifier", f"Invalid row: {row!r}", payload)
                         arguments.append(int(index))
             elif name == "select_column":
                 arguments = payload["columns"]
                 if not isinstance(arguments, list) or not arguments or not all(isinstance(value, str) for value in arguments):
-                    return None
+                    return ActionParseInspection(None, "arguments", "invalid_columns", "Columns must be a non-empty string list.", payload)
                 if len(arguments) != len(set(arguments)):
-                    return None
+                    return ActionParseInspection(None, "arguments", "duplicate_columns", "Columns must be unique.", payload)
             elif name == "group_by":
                 if not isinstance(payload["column"], str):
-                    return None
+                    return ActionParseInspection(None, "arguments", "invalid_column", "Column must be a string.", payload)
                 arguments = [payload["column"]]
             elif name == "sort_by":
                 if not isinstance(payload["column"], str) or payload["order"] not in {"asc", "desc"}:
-                    return None
+                    return ActionParseInspection(None, "arguments", "invalid_sort_arguments", "Invalid sort column or order.", payload)
                 arguments = [payload["column"], payload["order"]]
             elif name == "add_column":
-                if not isinstance(payload["column"], str) or not payload["column"]:
-                    return None
+                if not isinstance(payload["column"], str):
+                    return ActionParseInspection(None, "arguments", "invalid_column_type", "Column must be a string.", payload)
+                column, error_code, error_reason = cls.normalize_add_column_text(
+                    payload["column"],
+                    field_name="Column name",
+                    max_length=MAX_ADD_COLUMN_NAME_LENGTH,
+                )
+                if error_code:
+                    return ActionParseInspection(None, "decoded_value_validation", error_code, error_reason, payload)
+                if not column:
+                    return ActionParseInspection(None, "arguments", "empty_column_name", "Column must not be empty.", payload)
                 values = payload["values"]
-                if not isinstance(values, list) or not values or any(value is None or isinstance(value, (dict, list)) for value in values):
-                    return None
-                arguments = [payload["column"], [str(value) for value in values]]
+                if not isinstance(values, list):
+                    return ActionParseInspection(None, "arguments", "invalid_values_type", "Values must be a list.", payload)
+                if not values:
+                    return ActionParseInspection(None, "arguments", "empty_values", "Values must not be empty.", payload)
+                if not all(isinstance(value, str) for value in values):
+                    return ActionParseInspection(None, "arguments", "invalid_value_type", "Every value must be a string.", payload)
+                normalized_values = []
+                for index, value in enumerate(values):
+                    normalized_value, error_code, error_reason = cls.normalize_add_column_text(
+                        value,
+                        field_name=f"Value {index}",
+                        max_length=MAX_ADD_COLUMN_VALUE_LENGTH,
+                    )
+                    if error_code:
+                        return ActionParseInspection(None, "decoded_value_validation", error_code, error_reason, payload)
+                    normalized_values.append(normalized_value)
+                if table is not None and column in table.columns:
+                    column = cls.unique_extracted_column_name(column, table.columns)
+                if table is not None and len(normalized_values) != len(table.rows):
+                    return ActionParseInspection(
+                        None,
+                        "table_validation",
+                        "incorrect_value_count",
+                        f"Expected {len(table.rows)} values, got {len(normalized_values)}.",
+                        payload,
+                    )
+                arguments = [column, normalized_values]
             else:
                 arguments = []
             action = Action(name, arguments)
-            return action if table is None or action.is_valid_for_table(table) else None
-        except (KeyError, TypeError, ValueError):
-            return None
+            if table is not None and not action.is_valid_for_table(table):
+                return ActionParseInspection(
+                    None, "table_validation", "invalid_for_table", "Action is invalid for the current table.", payload
+                )
+            return ActionParseInspection(action, "complete", payload=payload)
+        except (KeyError, TypeError, ValueError) as error:
+            return ActionParseInspection(None, "arguments", "argument_parse_error", str(error), payload)
 
 
 @dataclass(frozen=True)
@@ -250,19 +385,34 @@ class JsonActionSchemaBuilder:
                 properties["order"] = {"type": "string", "enum": ["asc", "desc"]}
                 required.append("order")
         elif action == "add_column":
-            # llguidance does not implement `not`; Action validation rejects
-            # an existing column name after decoding.
-            properties["column"] = {"type": "string", "minLength": 1}
-            values: dict[str, Any] = {"type": "array", "items": {"type": ["string", "number", "boolean"]}, "minItems": 1}
-            if spec.table_row_count:
-                values["maxItems"] = spec.table_row_count
-                if spec.phase == "single_step":
-                    values["minItems"] = spec.table_row_count
-            properties["values"] = values
+            # Existing names are renamed to an `` extracted`` variant after decoding.
+            properties["column"] = {"type": "string", "minLength": 1, "maxLength": MAX_ADD_COLUMN_NAME_LENGTH}
+            properties["values"] = self.value_list_schema(spec.table_row_count)
             required.extend(["column", "values"])
         elif action != "end":
             raise ValueError(f"Unsupported JSON action: {action!r}")
         return self._object(properties, required)
+
+    @staticmethod
+    def value_list_schema(value_count: int) -> dict[str, Any]:
+        if value_count < 1:
+            raise ValueError("add_column requires at least one row")
+        return {
+            "type": "array",
+            "items": {"type": "string", "maxLength": MAX_ADD_COLUMN_VALUE_LENGTH},
+            "minItems": value_count,
+            "maxItems": value_count,
+        }
+
+    @staticmethod
+    def parse_value_list(text: str, expected_count: int) -> list[str] | None:
+        try:
+            values = json.loads(text.strip())
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(values, list) or len(values) != expected_count or not all(isinstance(value, str) for value in values):
+            return None
+        return values
 
     @staticmethod
     def _enum_array(values: tuple[str, ...]) -> dict[str, Any]:

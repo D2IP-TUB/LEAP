@@ -18,6 +18,7 @@ terminology:
 operation_shapes:
   select_row: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"select_row","arguments":{"rows":["row 0","row 2"]}}}'
   select_column: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"select_column","arguments":{"columns":["Name","Points"]}}}'
+  add_column: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"add_column","arguments":{"column":"Country","values":["ESP","ITA"]}}}'
   group_by: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"group_by","arguments":{"column":"Country"}}}'
   sort_by: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"sort_by","arguments":{"column":"Year","order":"desc"}}}'
   end: '{"jsonrpc":"2.0","id":"step","method":"tools/call","params":{"name":"end","arguments":{}}}'

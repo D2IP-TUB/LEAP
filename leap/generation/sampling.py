@@ -10,7 +10,8 @@ The design is intentionally simple but allows for extension through subclassing.
 """
 
 import asyncio
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field, replace
 from typing import List, Optional
 
 from vllm import SamplingParams
@@ -25,6 +26,7 @@ from leap.inference.function_constraints import (
     uses_xgrammar,
 )
 from leap.inference.json_constraints import (
+    MAX_ADD_COLUMN_VALUE_LENGTH,
     JsonActionCodec,
     JsonActionSchemaBuilder,
     JsonSchemaSamplingParamsFactory,
@@ -44,6 +46,12 @@ from leap.mcp.protocol import (
     uses_mcp_operations,
     uses_mcp_schema,
 )
+
+ADD_COLUMN_MIN_TOKENS = 1024
+ADD_COLUMN_BASE_TOKENS = 320
+ADD_COLUMN_TOKENS_PER_ROW = 64
+ADD_COLUMN_MAX_TOKENS = 4096
+ADD_COLUMN_CONTEXT_SAFETY_TOKENS = 128
 
 
 @dataclass
@@ -68,6 +76,65 @@ class SamplingConfig:
 
 
 @dataclass
+class AddColumnBatchDiagnostic:
+    """Forensic details for one continuation batch of an ``add_column`` candidate."""
+
+    batch_index: int
+    table_row_count: int
+    generation_submitted: bool = False
+    final_result_received: bool = False
+    output_present: bool = False
+    raw_output: str | None = None
+    raw_output_length: int = 0
+    finish_reason: str | None = None
+    output_token_count: int | None = None
+    output_token_ids: list[int] | None = None
+    expected_value_count: int | None = None
+    decoded_value_count: int | None = None
+    failure_code: str | None = None
+    failure_reason: str | None = None
+
+
+@dataclass
+class AddColumnDiagnostic:
+    """Forensic details for one failed ``add_column`` candidate.
+
+    Values are retained in their decoded form only after parsing succeeds; the
+    complete model response is retained in ``raw_output`` for failures.
+    """
+
+    request_id: str
+    step: int
+    sample_idx: int
+    selected_action: str
+    table_row_count: int
+    table_column_count: int
+    batch_enabled: bool
+    batch_index: int = 0
+    batch_count: int = 1
+    generation_submitted: bool = False
+    final_result_received: bool = False
+    output_present: bool = False
+    raw_output: str | None = None
+    raw_output_length: int = 0
+    finish_reason: str | None = None
+    output_token_count: int | None = None
+    output_token_ids: list[int] | None = None
+    engine_exception: str | None = None
+    parse_stage: str | None = None
+    parse_failure_reason: str | None = None
+    expected_value_count: int | None = None
+    decoded_value_count: int | None = None
+    normalized_values: list[str] | None = None
+    invalid_control_character_positions: list[int] = field(default_factory=list)
+    length_violation_positions: list[int] = field(default_factory=list)
+    packed_value_signals: list[str] = field(default_factory=list)
+    batch_diagnostics: list[AddColumnBatchDiagnostic] = field(default_factory=list)
+    failure_code: str | None = None
+    failure_reason: str | None = None
+
+
+@dataclass
 class SamplingResult:
     """Result of sampling with metadata."""
 
@@ -80,6 +147,7 @@ class SamplingResult:
     candidate_actions: list[str] | None = None
     valid_actions: list[str] | None = None
     fallback_reason: str | None = None
+    add_column_diagnostics: list[AddColumnDiagnostic] = field(default_factory=list)
 
 
 class SamplingLayer:
@@ -394,6 +462,7 @@ class SamplingLayer:
         if self.config.debug:
             print(f"[SAMPLING DEBUG] Phase 2 - Generating {n_samples} argument sets for '{action_type}'")
 
+        add_column_diagnostics: list[AddColumnDiagnostic] = []
         args_candidates = await self.generate_arguments(
             worker,
             action_type,
@@ -406,6 +475,7 @@ class SamplingLayer:
             state_machines,
             prompt_builder,
             question,
+            diagnostics=add_column_diagnostics,
         )
 
         if self.config.debug:
@@ -451,6 +521,7 @@ class SamplingLayer:
             candidate_actions=[self._serialize_action(c, worker) for c in args_candidates],
             valid_actions=[self._serialize_action(c, worker) for c in valid_candidates],
             fallback_reason=fallback_reason,
+            add_column_diagnostics=add_column_diagnostics,
         )
 
     async def generate_candidates(
@@ -501,10 +572,11 @@ class SamplingLayer:
                         use_global_constraints=worker.use_global_constraints,
                         phase="single_step",
                     )
+                    spec = self._exclude_hidden_iterative_add_column(spec, prompt)
                     schema = self.mcp_schema_builder.build_single_step_schema(spec)
                     sampling_params = SamplingParams(
                         temperature=getattr(worker, "effective_temperature", lambda value: value)(0.7),
-                        max_tokens=400,
+                        max_tokens=900 if "add_column" in spec.allowed_actions else 400,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         n=1,
                         **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
@@ -516,10 +588,11 @@ class SamplingLayer:
                         use_global_constraints=worker.use_global_constraints,
                         phase="single_step",
                     )
+                    spec = self._exclude_hidden_iterative_add_column(spec, prompt)
                     schema = self.json_schema_builder.build_single_step_schema(spec)
                     sampling_params = SamplingParams(
                         temperature=getattr(worker, "effective_temperature", lambda value: value)(0.7),
-                        max_tokens=300,
+                        max_tokens=900 if "add_column" in spec.allowed_actions else 300,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         n=1,
                         **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
@@ -531,10 +604,11 @@ class SamplingLayer:
                         use_global_constraints=worker.use_global_constraints,
                         phase="single_step",
                     )
+                    spec = self._exclude_hidden_iterative_add_column(spec, prompt)
                     grammar = self.grammar_builder.build_single_step_grammar(spec)
                     sampling_params = SamplingParams(
                         temperature=getattr(worker, "effective_temperature", lambda value: value)(0.7),
-                        max_tokens=300,
+                        max_tokens=900 if "add_column" in spec.allowed_actions else 300,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         n=1,
                         **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
@@ -585,6 +659,8 @@ class SamplingLayer:
                         action = StructuredActionParser.parse_single_step(response_text, modified_table)
                     else:
                         action = Action.parse(response_text)
+                    if action and action.name == "add_column" and "add_column" not in prompt:
+                        return None
                     return action
                 return None
             except Exception as e:
@@ -601,6 +677,12 @@ class SamplingLayer:
         candidates = [r for r in results if r is not None and not isinstance(r, Exception)]
 
         return candidates
+
+    @staticmethod
+    def _exclude_hidden_iterative_add_column(spec, prompt: str):
+        if "add_column" in spec.allowed_actions and "add_column" not in prompt:
+            return replace(spec, allowed_actions=tuple(name for name in spec.allowed_actions if name != "add_column"))
+        return spec
 
     async def generate_action_types(
         self,
@@ -727,6 +809,7 @@ class SamplingLayer:
         state_machines,
         prompt_builder: PromptBuilder,
         question: str,
+        diagnostics: list[AddColumnDiagnostic] | None = None,
     ) -> List[Action]:
         """
         Generate N argument sets for a given action type with context transformation.
@@ -739,26 +822,60 @@ class SamplingLayer:
         All samples are generated concurrently for maximum throughput.
         """
 
-        async def _generate_single_argument_set(sample_idx: int) -> Optional[Action]:
+        async def _generate_single_argument_set(sample_idx: int) -> tuple[Optional[Action], AddColumnDiagnostic | None]:
             """Generate a single argument set with its own context transformation."""
+            diagnostic = (
+                AddColumnDiagnostic(
+                    request_id=request_id,
+                    step=step,
+                    sample_idx=sample_idx,
+                    selected_action=action_name,
+                    table_row_count=len(table.rows),
+                    table_column_count=len(table.columns),
+                    batch_enabled=bool(getattr(worker, "batch_truncated_add_column", False)),
+                )
+                if action_name == "add_column"
+                else None
+            )
+
+            def failed(code: str, reason: str, *, stage: str | None = None) -> tuple[None, AddColumnDiagnostic | None]:
+                if diagnostic is not None:
+                    diagnostic.failure_code = code
+                    diagnostic.failure_reason = reason
+                    diagnostic.parse_stage = stage
+                return None, diagnostic
+
             try:
                 # Transform context for this sample
                 modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
+                add_column_batches = (
+                    self._get_add_column_batches(
+                        prompt_builder,
+                        modified_table,
+                        worker,
+                    )
+                    if action_name == "add_column"
+                    else [modified_table]
+                )
+                generation_table = add_column_batches[0]
+                if diagnostic is not None:
+                    diagnostic.batch_count = len(add_column_batches)
                 # Build fresh args prompt with modified context
                 args_prompt = prompt_builder.build_cot_arguments_prompt(
                     question=question,
-                    table=modified_table,
+                    table=generation_table,
                     action_name=action_name,
                     action_history=modified_history,
                     worker=worker,
                 )
 
                 step_id = f"{request_id}_args_step{step}_sample{sample_idx}"
+                add_column_max_tokens = self._add_column_max_tokens(generation_table, args_prompt, worker)
 
                 # Generate single argument set
                 if uses_mcp_schema(worker):
                     spec = self.mcp_schema_builder.build_spec(
-                        table=modified_table,
+                        table=generation_table,
                         action_history=modified_history,
                         use_global_constraints=worker.use_global_constraints,
                         phase="arguments",
@@ -767,14 +884,14 @@ class SamplingLayer:
                     schema = self.mcp_schema_builder.build_arguments_schema(spec)
                     sampling_params = SamplingParams(
                         temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
-                        max_tokens=400,
+                        max_tokens=add_column_max_tokens if action_name == "add_column" else 400,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         n=1,
                         **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
                     )
                 elif uses_json_schema(worker):
                     spec = self.json_schema_builder.build_spec(
-                        table=modified_table,
+                        table=generation_table,
                         action_history=modified_history,
                         use_global_constraints=worker.use_global_constraints,
                         phase="arguments",
@@ -783,14 +900,14 @@ class SamplingLayer:
                     schema = self.json_schema_builder.build_arguments_schema(spec)
                     sampling_params = SamplingParams(
                         temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
-                        max_tokens=300,
+                        max_tokens=add_column_max_tokens if action_name == "add_column" else 300,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         n=1,
                         **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
                     )
                 elif uses_xgrammar(worker):
                     spec = self.grammar_builder.build_spec(
-                        table=modified_table,
+                        table=generation_table,
                         action_history=modified_history,
                         use_global_constraints=worker.use_global_constraints,
                         phase="arguments",
@@ -799,7 +916,7 @@ class SamplingLayer:
                     grammar = self.grammar_builder.build_arguments_grammar(spec)
                     sampling_params = SamplingParams(
                         temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
-                        max_tokens=300,
+                        max_tokens=add_column_max_tokens if action_name == "add_column" else 300,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         n=1,
                         **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
@@ -836,61 +953,78 @@ class SamplingLayer:
                 #     f"\n{'=' * 80}\n[PHASE 2 PROMPT - ARGUMENTS | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_prompt}\n{'=' * 80}\n"  # noqa: E501
                 # )
 
+                if diagnostic is not None:
+                    diagnostic.generation_submitted = True
                 result_generator = worker.engine.generate(args_prompt, sampling_params, step_id)
                 final_result = None
                 async for result in result_generator:
                     final_result = result
 
-                if final_result and final_result.outputs:
-                    args_text = final_result.outputs[0].text.strip()
+                if final_result is None:
+                    return failed("no_final_result", "The engine yielded no final result.")
+                if diagnostic is not None:
+                    diagnostic.final_result_received = True
+                if not final_result.outputs:
+                    return failed("no_output", "The final result contained no outputs.")
 
-                    print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_text}\n{'=' * 80}\n")  # noqa: E501
+                output = final_result.outputs[0]
+                args_text = output.text.strip()
+                if diagnostic is not None:
+                    diagnostic.output_present = True
+                    diagnostic.raw_output = output.text
+                    diagnostic.raw_output_length = len(output.text)
+                    diagnostic.finish_reason = getattr(output, "finish_reason", None)
+                    token_ids = getattr(output, "token_ids", None)
+                    diagnostic.output_token_ids = list(token_ids) if token_ids is not None else None
+                    diagnostic.output_token_count = len(token_ids) if token_ids is not None else None
+                if not args_text:
+                    return failed("empty_output", "The model output was empty.")
 
-                    if uses_mcp_operations(worker):
-                        return McpToolCallCodec.parse_action(args_text, modified_table, expected_action=action_name)
+                print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_text}\n{'=' * 80}\n")  # noqa: E501
 
-                    if uses_json_operations(worker):
-                        validation_table = None if action_name == "add_column" else modified_table
-                        action = JsonActionCodec.parse_arguments(args_text, action_name, validation_table)
-                        if action and action.name == "add_column":
-                            action = await self._extend_add_column_per_row(
-                                action=action,
-                                table=modified_table,
-                                prompt_builder=prompt_builder,
-                                worker=worker,
-                                step_id=step_id,
-                                request_id=request_id,
-                                step=step,
-                                explanation=args_text,
-                            )
-                        return action
-
-                    if uses_xgrammar(worker):
-                        return StructuredActionParser.parse_arguments(args_text, action_name, modified_table)
-
+                if uses_mcp_operations(worker):
+                    inspection = McpToolCallCodec.inspect_action(args_text, generation_table, expected_action=action_name)
+                    action = inspection.action
+                elif uses_json_operations(worker):
+                    inspection = JsonActionCodec.inspect_arguments(args_text, action_name, generation_table)
+                    action = inspection.action
+                elif uses_xgrammar(worker):
+                    inspection = None
+                    action = StructuredActionParser.parse_arguments(args_text, action_name, generation_table)
+                else:
+                    inspection = None
                     if not worker.use_constraints or action_name == "add_column":
                         args_text = self._clean_argument_text(args_text, action_name)
+                    action = Action.parse(f"{action_name}({args_text})")
 
-                    full_action_str = f"{action_name}({args_text})"
-                    action = Action.parse(full_action_str)
-
-                    if action and action.name == "add_column":
-                        action = await self._extend_add_column_per_row(
-                            action=action,
-                            table=modified_table,
-                            prompt_builder=prompt_builder,
-                            worker=worker,
-                            step_id=step_id,
-                            request_id=request_id,
-                            step=step,
-                            explanation=args_text,
+                if action is None:
+                    if inspection is not None:
+                        return failed(
+                            inspection.failure_code or "action_parse_failed",
+                            inspection.failure_reason or "Action parsing failed.",
+                            stage=inspection.stage,
                         )
+                    return failed("action_parse_failed", "Action parsing failed.")
 
-                    return action
-                return None
+                if action.name == "add_column":
+                    action = await self._complete_add_column_batches(
+                        action=action,
+                        full_table=modified_table,
+                        batches=add_column_batches,
+                        question=question,
+                        prompt_builder=prompt_builder,
+                        worker=worker,
+                        step_id=step_id,
+                        diagnostic=diagnostic,
+                    )
+                    if action is None:
+                        return None, diagnostic
+                return action, None
             except Exception as e:
                 print(f"[SAMPLING ERROR] Sample {sample_idx} failed: {type(e).__name__}: {e}")
-                return None
+                if diagnostic is not None:
+                    diagnostic.engine_exception = f"{type(e).__name__}: {e}"
+                return failed("generation_exception", diagnostic.engine_exception if diagnostic else str(e))
 
         # Create all argument generation tasks concurrently
         tasks = [_generate_single_argument_set(i) for i in range(n)]
@@ -898,80 +1032,172 @@ class SamplingLayer:
         # Execute all samples concurrently and wait for all to complete
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Filter out None values and exceptions, keeping only valid actions
-        candidates = [r for r in results if r is not None and not isinstance(r, Exception)]
+        # Filter out None values and exceptions, retaining diagnostics for failed add_column candidates.
+        candidates = []
+        for result in results:
+            if isinstance(result, Exception):
+                continue
+            action, diagnostic = result
+            if action is not None:
+                candidates.append(action)
+            elif diagnostic is not None and diagnostics is not None:
+                diagnostics.append(diagnostic)
 
         return candidates
 
-    async def _extend_add_column_per_row(
+    @staticmethod
+    def _add_column_max_tokens(table: Table, prompt: str, worker) -> int:
+        """Allocate add-column output tokens from row count, bounded by remaining context."""
+        requested = min(
+            ADD_COLUMN_MAX_TOKENS,
+            max(ADD_COLUMN_MIN_TOKENS, ADD_COLUMN_BASE_TOKENS + ADD_COLUMN_TOKENS_PER_ROW * len(table.rows)),
+        )
+        max_model_len = getattr(worker, "max_model_len", None)
+        if not max_model_len:
+            return requested
+        try:
+            prompt_tokens = len(worker.tokenizer.encode(prompt, add_special_tokens=False))
+        except (AttributeError, TypeError):
+            prompt_tokens = len(prompt) // 4
+        remaining = max_model_len - prompt_tokens - ADD_COLUMN_CONTEXT_SAFETY_TOKENS
+        return max(1, min(requested, remaining))
+
+    @staticmethod
+    def _get_add_column_batches(prompt_builder: PromptBuilder, table: Table, worker) -> list[Table]:
+        if not getattr(worker, "batch_truncated_add_column", False):
+            return [table]
+        return prompt_builder.split_add_column_batches(table)
+
+    async def _complete_add_column_batches(
         self,
         *,
         action: Action,
-        table: Table,
-        prompt_builder,
+        full_table: Table,
+        batches: list[Table],
+        question: str,
+        prompt_builder: PromptBuilder,
         worker,
         step_id: str,
-        request_id: str,
-        step: int,
-        explanation: str,
-    ) -> Action:
-        """Extend an add_column action by generating any missing row values one at a time.
+        diagnostic: AddColumnDiagnostic | None = None,
+    ) -> Action | None:
+        """Generate truncated CoT row batches and assemble one complete add_column action."""
 
-        If the action already has values for all rows, returns it unchanged.
-        Otherwise uses the existing values as seed examples and generates the rest row-by-row.
-        """
-        col_name, seed_values = action.arguments
-        if len(seed_values) >= len(table.rows):
-            return action
+        def fail(code: str, reason: str) -> None:
+            if diagnostic is not None:
+                diagnostic.failure_code = f"batch_{code}"
+                diagnostic.failure_reason = reason
+                diagnostic.parse_stage = "batch_completion"
 
-        all_values = list(seed_values)
+        if not batches:
+            fail("missing_initial_batch", "No add_column batches were available.")
+            return None
+        if not action.is_valid_for_table(batches[0]):
+            fail("invalid_initial_batch_action", "The initial add_column action is invalid for its batch.")
+            return None
 
-        for row_idx in range(len(seed_values), len(table.rows)):
-            per_row_prompt = prompt_builder.build_add_column_per_row_prompt(
-                table=table,
-                column_name=col_name,
-                target_row=table.rows[row_idx],
-                target_row_idx=row_idx,
-                seed_values=list(seed_values),
-                explanation=explanation,
+        column_name, first_values = action.arguments
+        all_values = list(first_values)
+        for batch_idx, batch in enumerate(batches[1:], start=1):
+            batch_diagnostic = AddColumnBatchDiagnostic(
+                batch_index=batch_idx,
+                table_row_count=len(batch.rows),
+                expected_value_count=len(batch.rows),
             )
-            row_id = f"{step_id}_row{row_idx}"
-            row_params = SamplingParams(
+            if diagnostic is not None:
+                diagnostic.batch_diagnostics.append(batch_diagnostic)
+            prompt = prompt_builder.build_add_column_batch_prompt(
+                question=question,
+                table=batch,
+                column_name=column_name,
+            )
+            kwargs = {}
+            if uses_xgrammar(worker):
+                grammar = self.grammar_builder.build_value_list_grammar(len(batch.rows))
+                kwargs = StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar)
+            elif uses_json_schema(worker) or uses_mcp_schema(worker):
+                schema = self.json_schema_builder.value_list_schema(len(batch.rows))
+                kwargs = JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema)
+            params = SamplingParams(
                 temperature=getattr(worker, "effective_temperature", lambda value: value)(0.0),
-                max_tokens=50,
+                max_tokens=self._add_column_max_tokens(batch, prompt, worker),
                 stop_token_ids=[worker.tokenizer.eos_token_id],
-                stop=["\n"],
                 n=1,
+                **kwargs,
             )
-            # print(
-            #     f"\n{'=' * 80}\n[PHASE 2 PROMPT - ADD_COLUMN ROW {row_idx} | {request_id} step={step}]\n{'=' * 80}\n{per_row_prompt}\n{'=' * 80}\n"  # noqa: E501
-            # )
-            row_gen = worker.engine.generate(per_row_prompt, row_params, row_id)
-            row_result = None
-            async for r in row_gen:
-                row_result = r
-            val = row_result.outputs[0].text.strip() if row_result and row_result.outputs else ""
-            # Take only the first non-empty line in case the model generated extra text
-            val = next((line.strip() for line in val.splitlines() if line.strip()), val)
-            # If the model produced a verbose sentence instead of a bare value, extract just the value.
-            # Handles patterns like "The value ... is <X>" and "The value ... is an empty string".
-            import re as _re
+            batch_diagnostic.generation_submitted = True
+            generator = worker.engine.generate(prompt, params, f"{step_id}_batch{batch_idx}")
+            result = None
+            async for generated in generator:
+                result = generated
+            if result is None:
+                batch_diagnostic.failure_code = "no_final_result"
+                batch_diagnostic.failure_reason = "The engine yielded no final result."
+                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
+                return None
+            batch_diagnostic.final_result_received = True
+            if not result.outputs:
+                batch_diagnostic.failure_code = "no_output"
+                batch_diagnostic.failure_reason = "The final result contained no outputs."
+                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
+                return None
 
-            _verbose = _re.search(
-                r"\bthe value\b.*?\bis\s+(an empty string|['\"]?(.*?)['\"]?)[,.]?\s*$",
-                val,
-                _re.IGNORECASE,
-            )
-            if _verbose:
-                candidate = _verbose.group(1)
-                if candidate.lower() == "an empty string":
-                    val = ""
-                else:
-                    val = _verbose.group(2).strip() if _verbose.group(2) else candidate.strip()
-            # print(f"\n[PHASE 2 RESPONSE - ADD_COLUMN ROW {row_idx} | {request_id}]\n{'=' * 80}\n{val}\n{'=' * 80}\n")
-            all_values.append(val)
+            output = result.outputs[0]
+            text = output.text.strip()
+            batch_diagnostic.output_present = True
+            batch_diagnostic.raw_output = output.text
+            batch_diagnostic.raw_output_length = len(output.text)
+            batch_diagnostic.finish_reason = getattr(output, "finish_reason", None)
+            token_ids = getattr(output, "token_ids", None)
+            batch_diagnostic.output_token_ids = list(token_ids) if token_ids is not None else None
+            batch_diagnostic.output_token_count = len(token_ids) if token_ids is not None else None
+            if not text:
+                batch_diagnostic.failure_code = "empty_output"
+                batch_diagnostic.failure_reason = "The model output was empty."
+                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
+                return None
+            try:
+                values = json.loads(text)
+            except json.JSONDecodeError as error:
+                batch_diagnostic.failure_code = "invalid_json"
+                batch_diagnostic.failure_reason = str(error)
+                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
+                return None
+            if not isinstance(values, list):
+                batch_diagnostic.failure_code = "top_level_not_array"
+                batch_diagnostic.failure_reason = f"Expected JSON array, got {type(values).__name__}."
+                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
+                return None
+            batch_diagnostic.decoded_value_count = len(values)
+            if len(values) != len(batch.rows):
+                batch_diagnostic.failure_code = "incorrect_value_count"
+                batch_diagnostic.failure_reason = f"Expected {len(batch.rows)} values, got {len(values)}."
+                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
+                return None
+            if not all(isinstance(value, str) for value in values):
+                batch_diagnostic.failure_code = "invalid_value_type"
+                batch_diagnostic.failure_reason = "Every batch value must be a string."
+                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
+                return None
+            normalized_values = []
+            for index, value in enumerate(values):
+                normalized_value, error_code, error_reason = JsonActionCodec.normalize_add_column_text(
+                    value,
+                    field_name=f"Value {index}",
+                    max_length=MAX_ADD_COLUMN_VALUE_LENGTH,
+                )
+                if error_code:
+                    batch_diagnostic.failure_code = error_code
+                    batch_diagnostic.failure_reason = error_reason
+                    fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
+                    return None
+                normalized_values.append(normalized_value)
+            all_values.extend(normalized_values)
 
-        return Action("add_column", [col_name, all_values])
+        completed = Action("add_column", [column_name, all_values])
+        if not completed.is_valid_for_table(full_table):
+            fail("assembled_action_invalid", "The assembled add_column action is invalid for the full table.")
+            return None
+        return completed
 
     @staticmethod
     def _serialize_action(action: Action, worker) -> str:

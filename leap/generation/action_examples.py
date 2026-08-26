@@ -328,12 +328,7 @@ class PromptCatalog:
     """Load and validate prompt assets grouped by generation workflow."""
 
     _ITERATIVE_TEMPLATES = {"example_turn", "current_turn"}
-    _COT_TEMPLATES = {
-        "action_selection_turn",
-        "argument_turn",
-        "add_column_row_system",
-        "add_column_row_turn",
-    }
+    _COT_TEMPLATES = {"action_selection_turn", "argument_turn"}
     _DIRECT_QUERY_TEMPLATES = {"turn"}
 
     def __init__(
@@ -507,8 +502,6 @@ class PromptCatalog:
                 {"table", "question", "action_history", "available_label", "available_actions", "question_suffix"},
             ),
             (self.cot_path, self.cot["templates"], "argument_turn", {"table", "question"}),
-            (self.cot_path, self.cot["templates"], "add_column_row_system", {"column_name"}),
-            (self.cot_path, self.cot["templates"], "add_column_row_turn", {"task_description", "row", "column_name"}),
             (self.iterative_path, self.iterative["templates"], "example_turn", {"table", "question"}),
             (
                 self.iterative_path,

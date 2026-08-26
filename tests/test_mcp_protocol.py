@@ -10,7 +10,7 @@ from leap.mcp.protocol import McpToolCallCodec, McpToolCallSchemaBuilder
 @pytest.fixture(autouse=True)
 def enabled_actions():
     previous = REGISTRY._enabled_actions
-    REGISTRY.set_enabled_actions(["select_row", "select_column", "group_by", "sort_by", "end"])
+    REGISTRY.set_enabled_actions(["select_row", "select_column", "add_column", "group_by", "sort_by", "end"])
     yield
     REGISTRY._enabled_actions = previous
 
@@ -37,7 +37,7 @@ def test_mcp_codec_parses_official_tools_call_envelope(table):
     [
         {"jsonrpc": "1.0", "id": "1", "method": "tools/call", "params": {"name": "end", "arguments": {}}},
         {"jsonrpc": "2.0", "id": "1", "method": "call_tool", "params": {"name": "end", "arguments": {}}},
-        {"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {"name": "add_column", "arguments": {}}},
+        {"jsonrpc": "2.0", "id": "1", "method": "tools/call", "params": {"name": "unknown", "arguments": {}}},
         {
             "jsonrpc": "2.0",
             "id": "1",
@@ -49,6 +49,29 @@ def test_mcp_codec_parses_official_tools_call_envelope(table):
 )
 def test_mcp_codec_rejects_non_protocol_or_unsupported_requests(payload):
     assert McpToolCallCodec.parse(json.dumps(payload)) is None
+
+
+def test_mcp_inspection_classifies_envelope_and_action_failures(table):
+    invalid_envelope = McpToolCallCodec.inspect('{"jsonrpc":"2.0"')
+    assert invalid_envelope.call is None
+    assert invalid_envelope.stage == "mcp_json_decode"
+    assert invalid_envelope.failure_code == "invalid_json"
+
+    unexpected_action = McpToolCallCodec.inspect_action(
+        McpToolCallCodec.dumps_call("sort_by", {"column": "Score", "order": "desc"}),
+        table,
+        expected_action="add_column",
+    )
+    assert unexpected_action.action is None
+    assert unexpected_action.failure_code == "unexpected_action"
+
+    invalid_values = McpToolCallCodec.inspect_action(
+        McpToolCallCodec.dumps_call("add_column", {"column": "Derived", "values": ["1"]}),
+        table,
+    )
+    assert invalid_values.action is None
+    assert invalid_values.stage == "table_validation"
+    assert invalid_values.failure_code == "incorrect_value_count"
 
 
 def test_cot_action_selection_requires_empty_arguments():
@@ -73,7 +96,7 @@ def test_mcp_schema_wraps_contextual_operation_schema(table):
     select_column = branches["select_column"]
     arguments = select_column["properties"]["params"]["properties"]["arguments"]
 
-    assert "add_column" not in branches
+    assert branches["add_column"]["properties"]["params"]["properties"]["arguments"]["properties"]["values"]["minItems"] == 2
     assert arguments["properties"]["columns"]["items"]["enum"] == ["Name", "Score"]
     assert select_column["properties"]["method"] == {"const": "tools/call"}
     assert select_column["additionalProperties"] is False

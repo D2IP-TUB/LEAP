@@ -51,6 +51,12 @@ def select_column(table: dict[str, Any], columns: list[str]) -> dict[str, Any]:
 
 
 @mcp.tool()
+def add_column(table: dict[str, Any], column: str, values: list[str]) -> dict[str, Any]:
+    """Add a new column with exactly one string value per table row."""
+    return _apply(table, Action("add_column", [column, values]))
+
+
+@mcp.tool()
 def group_by(table: dict[str, Any], column: str) -> dict[str, Any]:
     """Group rows by one column and count occurrences."""
     return _apply(table, Action("group_by", [column]))

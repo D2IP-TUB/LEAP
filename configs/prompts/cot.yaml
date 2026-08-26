@@ -13,14 +13,6 @@ templates:
     ${table}
 
     Question: ${question}
-  add_column_row_system: |
-    Output only the cell value for the '${column_name}' column. Reply with a single word, number, or short phrase only. No explanation, no sentences, no punctuation at the end.
-  add_column_row_turn: |
-    ${task_description}
-
-    ${row}
-
-    We need to determine the value for column '${column_name}'. The value:
 
 examples:
   select_row:
@@ -153,8 +145,9 @@ examples:
 
       Do not answer the question in this step.
       Return only the arguments for f_add_column, without the function name or outer parentheses.
-      Double-quote the new column name and all string values. Leave numerical values unquoted.
-      Your answer must be exactly: "<column>", [values]
+      Double-quote the new column name and every cell value using JSON string escaping.
+      Return exactly one value per displayed row, in row order.
+      Your answer must be exactly: "<column>", ["value 1", "value 2"]
 
       The added columns should have these data types:
       1. Numerical: the numerical strings that can be used in sort, sum
@@ -168,7 +161,7 @@ examples:
           row 2,3,sunday april 28,6:00 p.m.,at barcelona dragons,W 33-29,3-0,estadi olímpic de montjuïc,17503
         question: "What is the date of the competition with the highest attendance?"
         explanation: "To answer the question, we need to know the attendance number of each competition. We extract the value from column attendance and create a different column attendance number for each row. The datatype is numerical."
-        answer: '"attendance number", [32092, 34186, 17503]'
+        answer: '"attendance number", ["32092", "34186", "17503"]'
 
       - table: |
           ,rank,lane,player,time
@@ -186,7 +179,7 @@ examples:
           row 2,1996,european indoor championships,"stockholm, sweden",14th (q),5.45 m
         question: "In which year did the athlete place 1st in a competition?"
         explanation: "To answer the question, we need to know the placing of each competition. We extract the value from column position and create a different column placing result for each row. The datatype is numerical."
-        answer: '"placing result", [10, 1, 14]'
+        answer: '"placing result", ["10", "1", "14"]'
 
       - table: |
           ,iso/iec standard,status,wg
@@ -195,7 +188,7 @@ examples:
           row 2,iso/iec 12207,published (2008),7
         question: "How many standards were published in 2008?"
         explanation: "To answer the question, we need to know the year of each standard. We extract the value from column status and create a different column year of standard for each row. The datatype is datetype."
-        answer: '"year of standard", [2005, 2008, 2008]'
+        answer: '"year of standard", ["2005", "2008", "2008"]'
 
       - table: |
           ,match,date,ground,opponent,score1,pos.,pts.,gd
@@ -213,7 +206,7 @@ examples:
           row 2,t3,david canipe,united states,69 + 69 = 138,- 2
         question: "What is the total score of each player in the 1984 U.S. Open?"
         explanation: "To answer the question, we need to know the score values of each player. We extract the value from column score and create a different column score value for each row. The datatype is numerical."
-        answer: '"score value", [136, 137, 138]'
+        answer: '"score value", ["136", "137", "138"]'
 
       - table: |
           ,code,county,former province,area (km2),population; census 2009,capital
@@ -222,7 +215,7 @@ examples:
           row 2,3,kilifi,coast,12245.9,1109735,kilifi
         question: "Which county has the highest population according to the 2009 census?"
         explanation: "To answer the question, we need to know the population of each county. We extract the value from column population; census 2009 and create a different column population for each row. The datatype is numerical."
-        answer: '"population", [939370, 649931, 1109735]'
+        answer: '"population", ["939370", "649931", "1109735"]'
 
   group_by:
     system: |

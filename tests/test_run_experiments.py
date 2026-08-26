@@ -111,6 +111,7 @@ def _job(tmp_path, **overrides):
         "constraint_backend": "xgrammar",
         "output_format": "function",
         "force_zero_temperature": False,
+        "add_column": True,
         "repeat": 1,
         "config_path": tmp_path / "config.yaml",
         "results_root": tmp_path / "runs",
@@ -132,6 +133,7 @@ def test_build_job_config_applies_all_matrix_and_fixed_settings(tmp_path):
         constraint_backend="xgrammar",
         output_format="json",
         force_zero_temperature=True,
+        add_column=False,
         max_examples=10,
         extractors=extractors,
         enabled_actions=actions,
@@ -147,6 +149,22 @@ def test_build_job_config_applies_all_matrix_and_fixed_settings(tmp_path):
     assert config["generation"]["force_zero_temperature"] is True
     assert config["generation"]["enabled_actions"] == actions
     assert "add_column" not in config["generation"]["enabled_actions"]
+
+    add_column_config = build_job_config(
+        base_config,
+        model="model/b",
+        strategy="iterative",
+        use_constraints=True,
+        use_global_constraints=True,
+        constraint_backend="xgrammar",
+        output_format="json",
+        force_zero_temperature=True,
+        add_column=True,
+        max_examples=10,
+        extractors=extractors,
+        enabled_actions=actions,
+    )
+    assert add_column_config["generation"]["enabled_actions"] == [*actions[:-1], "add_column", "end"]
     assert config["extractors"] == extractors
     assert base_config["generation"]["enabled_actions"] == ["select_row", "end"]
 
@@ -167,6 +185,7 @@ def test_expand_matrix_produces_42_unique_settings_and_canonical_direct_query():
             "constraint_backend": "xgrammar",
             "output_format": "function",
             "force_zero_temperature": False,
+            "add_column": True,
         },
         {
             "strategy": "direct_query",
@@ -175,6 +194,7 @@ def test_expand_matrix_produces_42_unique_settings_and_canonical_direct_query():
             "constraint_backend": "xgrammar",
             "output_format": "function",
             "force_zero_temperature": True,
+            "add_column": True,
         },
     ]
 

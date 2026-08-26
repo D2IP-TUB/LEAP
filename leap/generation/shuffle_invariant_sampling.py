@@ -20,7 +20,7 @@ import random
 from typing import List, Optional, Tuple
 
 from leap.core import Action, Table
-from leap.generation.sampling import SamplingConfig, SamplingLayer
+from leap.generation.sampling import AddColumnDiagnostic, SamplingConfig, SamplingLayer
 
 
 class ShuffleInvariantSamplingLayer(SamplingLayer):
@@ -201,6 +201,7 @@ class ShuffleInvariantSamplingLayer(SamplingLayer):
         state_machines,
         prompt_builder,
         question: str,
+        diagnostics: list[AddColumnDiagnostic] | None = None,
     ) -> List[Action]:
         """
         Generate N argument sets with permutation tracking.
@@ -232,6 +233,7 @@ class ShuffleInvariantSamplingLayer(SamplingLayer):
             state_machines,
             prompt_builder,
             question,
+            diagnostics=diagnostics,
         )
 
         # Map candidates to sample indices
@@ -308,8 +310,8 @@ class ShuffleInvariantSamplingLayer(SamplingLayer):
         Returns:
             Action with original indices (sorted), or None if mapping fails
         """
-        # Only select_row actions need mapping
-        if action.name != "select_row":
+        # Row-index selections and generated columns depend on displayed row order.
+        if action.name not in {"select_row", "add_column"}:
             return action
 
         # Get sample index for this candidate
@@ -317,9 +319,10 @@ class ShuffleInvariantSamplingLayer(SamplingLayer):
         sample_idx = self._candidate_sample_map.get(candidate_id)
 
         if sample_idx is None:
-            # Fallback: if we can't find sample idx, just sort the indices
             if self.config.debug:
                 print(f"[SHUFFLE DEBUG] No sample_idx found for {action.to_string()}")
+            if action.name == "add_column":
+                return None
             sorted_indices = tuple(sorted(action.arguments))
             return Action(action.name, sorted_indices)
 
@@ -329,11 +332,21 @@ class ShuffleInvariantSamplingLayer(SamplingLayer):
         permutation = self._permutations.get(permutation_key)
 
         if permutation is None:
-            # Fallback: no permutation found, just sort
             if self.config.debug:
                 print(f"[SHUFFLE DEBUG] No permutation found for sample {sample_idx}")
+            if action.name == "add_column":
+                return None
             sorted_indices = tuple(sorted(action.arguments))
             return Action(action.name, sorted_indices)
+
+        if action.name == "add_column":
+            column_name, values = action.arguments
+            if len(values) != len(permutation):
+                return None
+            original_values = [None] * len(values)
+            for shuffled_idx, original_idx in enumerate(permutation):
+                original_values[original_idx] = values[shuffled_idx]
+            return Action("add_column", [column_name, original_values])
 
         # Validate indices are in bounds
         # Note: Handle both ints and string digits (for robustness, though parse should normalize)
