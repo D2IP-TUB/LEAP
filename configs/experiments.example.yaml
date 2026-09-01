@@ -3,7 +3,7 @@ models:
   - Qwen/Qwen2.5-7B-Instruct
   - Qwen/Qwen2.5-32B-Instruct
   - meta-llama/Llama-4-Scout-17B-16E-Instruct
-  - mistralai/Mistral-7B-Instruct-v0.2
+  # - mistralai/Mistral-7B-Instruct-v0.2
 
 # The runner expands all unique, supported combinations. Unconstrained jobs use
 # xgrammar's modern runtime, legacy_state_machine + structured formats are
@@ -20,7 +20,7 @@ matrix:
     - false
     - true
   constraint_backends:
-    # - legacy_state_machine
+    - legacy_state_machine
     - xgrammar
   output_formats:
     - function
@@ -41,7 +41,7 @@ output_root: results/experiments
 # Run every answer extraction method on every strategy's final table.
 extractors:
   - direct_query
-  # - nl2sql
+  - nl2sql
   # - nl2code
   # - end2ender
   # - cot_end2ender

@@ -10,7 +10,6 @@ The design is intentionally simple but allows for extension through subclassing.
 """
 
 import asyncio
-import json
 from dataclasses import dataclass, field, replace
 from typing import List, Optional
 
@@ -26,7 +25,6 @@ from leap.inference.function_constraints import (
     uses_xgrammar,
 )
 from leap.inference.json_constraints import (
-    MAX_ADD_COLUMN_VALUE_LENGTH,
     JsonActionCodec,
     JsonActionSchemaBuilder,
     JsonSchemaSamplingParamsFactory,
@@ -76,26 +74,6 @@ class SamplingConfig:
 
 
 @dataclass
-class AddColumnBatchDiagnostic:
-    """Forensic details for one continuation batch of an ``add_column`` candidate."""
-
-    batch_index: int
-    table_row_count: int
-    generation_submitted: bool = False
-    final_result_received: bool = False
-    output_present: bool = False
-    raw_output: str | None = None
-    raw_output_length: int = 0
-    finish_reason: str | None = None
-    output_token_count: int | None = None
-    output_token_ids: list[int] | None = None
-    expected_value_count: int | None = None
-    decoded_value_count: int | None = None
-    failure_code: str | None = None
-    failure_reason: str | None = None
-
-
-@dataclass
 class AddColumnDiagnostic:
     """Forensic details for one failed ``add_column`` candidate.
 
@@ -109,9 +87,6 @@ class AddColumnDiagnostic:
     selected_action: str
     table_row_count: int
     table_column_count: int
-    batch_enabled: bool
-    batch_index: int = 0
-    batch_count: int = 1
     generation_submitted: bool = False
     final_result_received: bool = False
     output_present: bool = False
@@ -129,7 +104,6 @@ class AddColumnDiagnostic:
     invalid_control_character_positions: list[int] = field(default_factory=list)
     length_violation_positions: list[int] = field(default_factory=list)
     packed_value_signals: list[str] = field(default_factory=list)
-    batch_diagnostics: list[AddColumnBatchDiagnostic] = field(default_factory=list)
     failure_code: str | None = None
     failure_reason: str | None = None
 
@@ -832,7 +806,6 @@ class SamplingLayer:
                     selected_action=action_name,
                     table_row_count=len(table.rows),
                     table_column_count=len(table.columns),
-                    batch_enabled=bool(getattr(worker, "batch_truncated_add_column", False)),
                 )
                 if action_name == "add_column"
                 else None
@@ -848,18 +821,7 @@ class SamplingLayer:
             try:
                 # Transform context for this sample
                 modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
-                add_column_batches = (
-                    self._get_add_column_batches(
-                        prompt_builder,
-                        modified_table,
-                        worker,
-                    )
-                    if action_name == "add_column"
-                    else [modified_table]
-                )
-                generation_table = add_column_batches[0]
-                if diagnostic is not None:
-                    diagnostic.batch_count = len(add_column_batches)
+                generation_table = modified_table
                 # Build fresh args prompt with modified context
                 args_prompt = prompt_builder.build_cot_arguments_prompt(
                     question=question,
@@ -1006,19 +968,6 @@ class SamplingLayer:
                         )
                     return failed("action_parse_failed", "Action parsing failed.")
 
-                if action.name == "add_column":
-                    action = await self._complete_add_column_batches(
-                        action=action,
-                        full_table=modified_table,
-                        batches=add_column_batches,
-                        question=question,
-                        prompt_builder=prompt_builder,
-                        worker=worker,
-                        step_id=step_id,
-                        diagnostic=diagnostic,
-                    )
-                    if action is None:
-                        return None, diagnostic
                 return action, None
             except Exception as e:
                 print(f"[SAMPLING ERROR] Sample {sample_idx} failed: {type(e).__name__}: {e}")
@@ -1061,143 +1010,6 @@ class SamplingLayer:
             prompt_tokens = len(prompt) // 4
         remaining = max_model_len - prompt_tokens - ADD_COLUMN_CONTEXT_SAFETY_TOKENS
         return max(1, min(requested, remaining))
-
-    @staticmethod
-    def _get_add_column_batches(prompt_builder: PromptBuilder, table: Table, worker) -> list[Table]:
-        if not getattr(worker, "batch_truncated_add_column", False):
-            return [table]
-        return prompt_builder.split_add_column_batches(table)
-
-    async def _complete_add_column_batches(
-        self,
-        *,
-        action: Action,
-        full_table: Table,
-        batches: list[Table],
-        question: str,
-        prompt_builder: PromptBuilder,
-        worker,
-        step_id: str,
-        diagnostic: AddColumnDiagnostic | None = None,
-    ) -> Action | None:
-        """Generate truncated CoT row batches and assemble one complete add_column action."""
-
-        def fail(code: str, reason: str) -> None:
-            if diagnostic is not None:
-                diagnostic.failure_code = f"batch_{code}"
-                diagnostic.failure_reason = reason
-                diagnostic.parse_stage = "batch_completion"
-
-        if not batches:
-            fail("missing_initial_batch", "No add_column batches were available.")
-            return None
-        if not action.is_valid_for_table(batches[0]):
-            fail("invalid_initial_batch_action", "The initial add_column action is invalid for its batch.")
-            return None
-
-        column_name, first_values = action.arguments
-        all_values = list(first_values)
-        for batch_idx, batch in enumerate(batches[1:], start=1):
-            batch_diagnostic = AddColumnBatchDiagnostic(
-                batch_index=batch_idx,
-                table_row_count=len(batch.rows),
-                expected_value_count=len(batch.rows),
-            )
-            if diagnostic is not None:
-                diagnostic.batch_diagnostics.append(batch_diagnostic)
-            prompt = prompt_builder.build_add_column_batch_prompt(
-                question=question,
-                table=batch,
-                column_name=column_name,
-            )
-            kwargs = {}
-            if uses_xgrammar(worker):
-                grammar = self.grammar_builder.build_value_list_grammar(len(batch.rows))
-                kwargs = StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar)
-            elif uses_json_schema(worker) or uses_mcp_schema(worker):
-                schema = self.json_schema_builder.value_list_schema(len(batch.rows))
-                kwargs = JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema)
-            params = SamplingParams(
-                temperature=getattr(worker, "effective_temperature", lambda value: value)(0.0),
-                max_tokens=self._add_column_max_tokens(batch, prompt, worker),
-                stop_token_ids=[worker.tokenizer.eos_token_id],
-                n=1,
-                **kwargs,
-            )
-            batch_diagnostic.generation_submitted = True
-            generator = worker.engine.generate(prompt, params, f"{step_id}_batch{batch_idx}")
-            result = None
-            async for generated in generator:
-                result = generated
-            if result is None:
-                batch_diagnostic.failure_code = "no_final_result"
-                batch_diagnostic.failure_reason = "The engine yielded no final result."
-                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
-                return None
-            batch_diagnostic.final_result_received = True
-            if not result.outputs:
-                batch_diagnostic.failure_code = "no_output"
-                batch_diagnostic.failure_reason = "The final result contained no outputs."
-                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
-                return None
-
-            output = result.outputs[0]
-            text = output.text.strip()
-            batch_diagnostic.output_present = True
-            batch_diagnostic.raw_output = output.text
-            batch_diagnostic.raw_output_length = len(output.text)
-            batch_diagnostic.finish_reason = getattr(output, "finish_reason", None)
-            token_ids = getattr(output, "token_ids", None)
-            batch_diagnostic.output_token_ids = list(token_ids) if token_ids is not None else None
-            batch_diagnostic.output_token_count = len(token_ids) if token_ids is not None else None
-            if not text:
-                batch_diagnostic.failure_code = "empty_output"
-                batch_diagnostic.failure_reason = "The model output was empty."
-                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
-                return None
-            try:
-                values = json.loads(text)
-            except json.JSONDecodeError as error:
-                batch_diagnostic.failure_code = "invalid_json"
-                batch_diagnostic.failure_reason = str(error)
-                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
-                return None
-            if not isinstance(values, list):
-                batch_diagnostic.failure_code = "top_level_not_array"
-                batch_diagnostic.failure_reason = f"Expected JSON array, got {type(values).__name__}."
-                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
-                return None
-            batch_diagnostic.decoded_value_count = len(values)
-            if len(values) != len(batch.rows):
-                batch_diagnostic.failure_code = "incorrect_value_count"
-                batch_diagnostic.failure_reason = f"Expected {len(batch.rows)} values, got {len(values)}."
-                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
-                return None
-            if not all(isinstance(value, str) for value in values):
-                batch_diagnostic.failure_code = "invalid_value_type"
-                batch_diagnostic.failure_reason = "Every batch value must be a string."
-                fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
-                return None
-            normalized_values = []
-            for index, value in enumerate(values):
-                normalized_value, error_code, error_reason = JsonActionCodec.normalize_add_column_text(
-                    value,
-                    field_name=f"Value {index}",
-                    max_length=MAX_ADD_COLUMN_VALUE_LENGTH,
-                )
-                if error_code:
-                    batch_diagnostic.failure_code = error_code
-                    batch_diagnostic.failure_reason = error_reason
-                    fail(batch_diagnostic.failure_code, batch_diagnostic.failure_reason)
-                    return None
-                normalized_values.append(normalized_value)
-            all_values.extend(normalized_values)
-
-        completed = Action("add_column", [column_name, all_values])
-        if not completed.is_valid_for_table(full_table):
-            fail("assembled_action_invalid", "The assembled add_column action is invalid for the full table.")
-            return None
-        return completed
 
     @staticmethod
     def _serialize_action(action: Action, worker) -> str:

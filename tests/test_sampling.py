@@ -4,8 +4,8 @@ from types import SimpleNamespace
 from leap.core import Table
 from leap.core.actions import REGISTRY
 from leap.core.actions.action import Action
-from leap.generation.prompt_builder import CotPromptSettings, PromptBuilder
-from leap.generation.sampling import AddColumnDiagnostic, SamplingConfig, SamplingLayer
+from leap.generation.prompt_builder import PromptBuilder
+from leap.generation.sampling import SamplingConfig, SamplingLayer
 from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
 
 
@@ -117,77 +117,6 @@ def test_echoed_list_argument_cleaning_preserves_escaped_quotes():
     assert action.arguments == ('Writer "A" (lead)',)
 
 
-def test_add_column_batches_use_existing_argument_character_budget():
-    table = Table(columns=["Name"], rows=[["A" * 20], ["B" * 20], ["C" * 20]])
-    builder = PromptBuilder(
-        tokenizer=None,
-        is_instruct=False,
-        cot_settings=CotPromptSettings(args_table_chars=45),
-    )
-
-    batches = builder.split_add_column_batches(table)
-
-    assert [len(batch.rows) for batch in batches] == [1, 1, 1]
-    assert [batch.rows[0][0] for batch in batches] == ["A" * 20, "B" * 20, "C" * 20]
-
-
-def test_truncated_add_column_batching_is_opt_in():
-    table = Table(columns=["Name"], rows=[["A" * 20], ["B" * 20], ["C" * 20]])
-    builder = PromptBuilder(
-        tokenizer=None,
-        is_instruct=False,
-        cot_settings=CotPromptSettings(args_table_chars=45),
-    )
-
-    default_batches = SamplingLayer._get_add_column_batches(builder, table, SimpleNamespace())
-    opted_in_batches = SamplingLayer._get_add_column_batches(
-        builder,
-        table,
-        SimpleNamespace(batch_truncated_add_column=True),
-    )
-
-    assert default_batches == [table]
-    assert [len(batch.rows) for batch in opted_in_batches] == [1, 1, 1]
-
-
-def test_add_column_batches_are_collected_into_one_action():
-    class Engine:
-        def generate(self, _prompt, _params, _request_id):
-            async def results():
-                yield SimpleNamespace(outputs=[SimpleNamespace(text='["second, value", "third"]')])
-
-            return results()
-
-    full_table = Table(columns=["Name"], rows=[["A"], ["B"], ["C"]])
-    batches = [
-        Table(columns=["Name"], rows=[["A"]]),
-        Table(columns=["Name"], rows=[["B"], ["C"]]),
-    ]
-    worker = SimpleNamespace(
-        engine=Engine(),
-        tokenizer=SimpleNamespace(eos_token_id=0),
-        output_format="function",
-        use_constraints=False,
-        effective_temperature=lambda value: value,
-    )
-    builder = PromptBuilder(tokenizer=None, is_instruct=False)
-    layer = SamplingLayer(SamplingConfig())
-
-    result = asyncio.run(
-        layer._complete_add_column_batches(
-            action=Action("add_column", ["Derived", ["first"]]),
-            full_table=full_table,
-            batches=batches,
-            question="Derive values",
-            prompt_builder=builder,
-            worker=worker,
-            step_id="test",
-        )
-    )
-
-    assert result == Action("add_column", ["Derived", ["first", "second, value", "third"]])
-
-
 def test_add_column_argument_failures_capture_raw_output_and_parse_reason():
     class Engine:
         def generate(self, _prompt, _params, _request_id):
@@ -210,7 +139,6 @@ def test_add_column_argument_failures_capture_raw_output_and_parse_reason():
                     tokenizer=SimpleNamespace(eos_token_id=0),
                     output_format="json",
                     use_constraints=False,
-                    batch_truncated_add_column=False,
                     max_model_len=32_000,
                     effective_temperature=lambda value: value,
                 ),
@@ -259,7 +187,6 @@ def test_add_column_empty_output_records_diagnostic():
                     tokenizer=SimpleNamespace(eos_token_id=0),
                     output_format="json",
                     use_constraints=False,
-                    batch_truncated_add_column=False,
                     max_model_len=32_000,
                     effective_temperature=lambda value: value,
                 ),
@@ -302,7 +229,6 @@ def test_add_column_argument_exceptions_capture_engine_failure():
                     tokenizer=SimpleNamespace(eos_token_id=0),
                     output_format="json",
                     use_constraints=False,
-                    batch_truncated_add_column=False,
                     max_model_len=32_000,
                     effective_temperature=lambda value: value,
                 ),
@@ -325,50 +251,6 @@ def test_add_column_argument_exceptions_capture_engine_failure():
     assert candidates == []
     assert diagnostics[0].failure_code == "generation_exception"
     assert diagnostics[0].engine_exception == "RuntimeError: engine unavailable"
-
-
-def test_add_column_batch_failure_records_batch_diagnostics():
-    class Engine:
-        def generate(self, _prompt, _params, _request_id):
-            async def results():
-                yield SimpleNamespace(outputs=[SimpleNamespace(text='["unterminated"', finish_reason="length", token_ids=[1])])
-
-            return results()
-
-    full_table = Table(columns=["Name"], rows=[["A"], ["B"]])
-    diagnostic = AddColumnDiagnostic(
-        request_id="request",
-        step=0,
-        sample_idx=0,
-        selected_action="add_column",
-        table_row_count=2,
-        table_column_count=1,
-        batch_enabled=True,
-    )
-    result = asyncio.run(
-        SamplingLayer(SamplingConfig())._complete_add_column_batches(
-            action=Action("add_column", ["Derived", ["first"]]),
-            full_table=full_table,
-            batches=[Table(columns=["Name"], rows=[["A"]]), Table(columns=["Name"], rows=[["B"]])],
-            question="Derive values",
-            prompt_builder=PromptBuilder(tokenizer=None, is_instruct=False),
-            worker=SimpleNamespace(
-                engine=Engine(),
-                tokenizer=SimpleNamespace(eos_token_id=0),
-                output_format="function",
-                use_constraints=False,
-                effective_temperature=lambda value: value,
-            ),
-            step_id="request_args_step0_sample0",
-            diagnostic=diagnostic,
-        )
-    )
-
-    assert result is None
-    assert diagnostic.failure_code == "batch_invalid_json"
-    assert diagnostic.batch_diagnostics[0].raw_output == '["unterminated"'
-    assert diagnostic.batch_diagnostics[0].finish_reason == "length"
-    assert diagnostic.batch_diagnostics[0].failure_code == "invalid_json"
 
 
 def test_shuffle_sampling_restores_add_column_values_to_original_row_order():

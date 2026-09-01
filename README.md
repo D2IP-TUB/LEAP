@@ -30,7 +30,7 @@ The first run for each runtime downloads and installs its vLLM and PyTorch stack
 
 The backend/version pairing is strict. If LEAP reports a mismatch, update the lockfile with `uv lock` and retry. If an environment was interrupted or corrupted during installation, remove only the named generated environment from the error message and rerun the command. The `xgrammar` backend supports `add_column` with exact value cardinality: generated output must contain one quoted cell value per table row. Unconstrained runs enforce the same cardinality after parsing and discard malformed candidates.
 
-Iterative `add_column` emits the complete operation in one response and is hidden when the full table cannot fit the model context. CoT emits the complete column in one argument-generation response by default. Set `generation.batch_truncated_add_column: true` to opt into exact row-aligned batches when the table exceeds the configured argument-table budget; LEAP assembles those batches into one `add_column` operation and never fills cells one row at a time.
+Iterative `add_column` emits the complete operation in one response and is hidden when the full table cannot fit the model context. CoT also emits the complete column in one argument-generation response.
 
 ## Experiment matrices
 

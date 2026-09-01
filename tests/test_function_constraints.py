@@ -34,20 +34,10 @@ def test_default_generation_config_uses_legacy_backend_for_old_configs():
     assert config.output_format == "function"
 
 
-def test_truncated_add_column_batching_defaults_off_and_requires_boolean():
-    config = _build_generation_config({}, ["add_column", "end"], SamplingConfig())
-    assert config.batch_truncated_add_column is False
-
-    opted_in = _build_generation_config(
-        {"batch_truncated_add_column": True},
-        ["add_column", "end"],
-        SamplingConfig(),
-    )
-    assert opted_in.batch_truncated_add_column is True
-
+def test_generation_config_rejects_removed_add_column_batching():
     with pytest.raises(ValueError, match="batch_truncated_add_column"):
         _build_generation_config(
-            {"batch_truncated_add_column": "yes"},
+            {"batch_truncated_add_column": True},
             ["add_column", "end"],
             SamplingConfig(),
         )

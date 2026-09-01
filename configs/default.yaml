@@ -1,7 +1,8 @@
 model:
   # id: "meta-llama/Llama-4-Scout-17B-16E-Instruct"
   # id: "mistralai/Mistral-7B-Instruct-v0.2"
-  id: Qwen/Qwen2.5-32B-Instruct
+  # id: Qwen/Qwen2.5-32B-Instruct
+  id: Qwen/Qwen2.5-7B-Instruct
   # id: "gpt2"
   presets_path: "configs/models.yaml"
   # possible alternatives:
@@ -42,7 +43,7 @@ generation:
   # named JSON objects, and "mcp" emits MCP JSON-RPC tools/call requests and
   # executes table transformations through the local stdio MCP server.
   # legacy_state_machine always forces this setting to "function".
-  output_format: "mcp"
+  output_format: "function"
 
   # Unconstrained generation always uses vLLM >=0.12,<0.13 with the V1 engine.
   # When constraints are enabled, "xgrammar" also uses V1, while
@@ -52,7 +53,7 @@ generation:
   # function operation format and the legacy runtime when constraints are on.
   # xgrammar supports add_column in function, JSON, and MCP formats.
   # constraint_backend: "xgrammar"
-  constraint_backend: "xgrammar"
+  constraint_backend: "legacy_state_machine"
 
   # Generation strategy: "iterative", "cot", or "direct_query"
   # - "iterative": single-phase iterative generation
@@ -60,10 +61,6 @@ generation:
   # - "direct_query": skip all table transformations, answer directly (baseline)
   strategy: "cot"
   force_zero_temperature: false
-
-  # Opt in to splitting a truncated CoT add_column table across multiple
-  # value-generation calls. Disabled means one complete full-table response.
-  batch_truncated_add_column: false
 
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:

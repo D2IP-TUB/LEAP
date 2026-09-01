@@ -527,46 +527,6 @@ class PromptBuilder:
 
             return result
 
-    def split_add_column_batches(self, table: Table) -> list[Table]:
-        """Split rows into the largest batches fitting the configured argument table budget."""
-        if not table.rows:
-            return []
-        if len(table.to_csv()) <= self.cot_settings.args_table_chars:
-            return [table]
-
-        batches: list[Table] = []
-        current: list[list] = []
-        for row in table.rows:
-            candidate = [*current, list(row)]
-            candidate_table = Table(columns=list(table.columns), rows=candidate)
-            if current and len(candidate_table.to_csv()) > self.cot_settings.args_table_chars:
-                batches.append(Table(columns=list(table.columns), rows=current))
-                current = [list(row)]
-            else:
-                current = candidate
-        if current:
-            batches.append(Table(columns=list(table.columns), rows=current))
-        return batches
-
-    def build_add_column_batch_prompt(
-        self,
-        *,
-        question: str,
-        table: Table,
-        column_name: str,
-    ) -> str:
-        """Prompt for a continuation batch of add_column values."""
-        instruction = (
-            f"Generate the values for the existing new column {json.dumps(column_name)} for every displayed row, in order. "
-            "Return only a JSON array containing exactly one double-quoted string per displayed row. "
-            "Use JSON escaping and include no explanation."
-        )
-        content = f"{self._format_table(table, self.cot_settings.args_table_chars)}\n\nQuestion: {question}"
-        messages = [{"role": "system", "content": instruction}, {"role": "user", "content": content}]
-        if self.is_instruct:
-            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        return "\n\n".join(message["content"] for message in messages) + "\n"
-
     def build_query_prompt(
         self,
         *,
