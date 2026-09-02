@@ -199,21 +199,16 @@ def test_expand_matrix_produces_42_unique_settings_and_canonical_direct_query():
     ]
 
 
-def test_expand_matrix_accepts_mcp_only_on_modern_runtime():
-    matrix = ExperimentMatrix(
-        strategies=["iterative", "cot"],
-        use_constraints=[False, True],
-        use_global_constraints=[False],
-        constraint_backends=["legacy_state_machine", "xgrammar"],
-        output_formats=["mcp"],
-        force_zero_temperature=[False, True],
-    )
+def test_load_experiment_spec_rejects_removed_output_format(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    base_path, _ = _base_config(tmp_path)
+    data = _spec_data(base_path)
+    data["matrix"]["output_formats"] = ["mc" + "p"]
+    spec_path = tmp_path / "configs" / "experiments.yaml"
+    _write_yaml(spec_path, data)
 
-    settings = expand_matrix(matrix)
-
-    assert len(settings) == 8
-    assert all(setting["output_format"] == "mcp" for setting in settings)
-    assert all(setting["constraint_backend"] == "xgrammar" for setting in settings)
+    with pytest.raises(ValueError, match="Unknown output_formats"):
+        load_experiment_spec(spec_path)
 
 
 def test_load_experiment_spec_rejects_legacy_modes(tmp_path, monkeypatch):

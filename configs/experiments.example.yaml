@@ -25,7 +25,6 @@ matrix:
   output_formats:
     - function
     - json
-    - mcp
   force_zero_temperature:
     - true
 

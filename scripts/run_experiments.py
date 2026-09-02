@@ -31,7 +31,7 @@ from leap.vllm_runtime import BOOTSTRAPPED_ENV_VAR, runtime_for_generation  # no
 
 VALID_STRATEGIES = {"iterative", "cot", "direct_query"}
 VALID_CONSTRAINT_BACKENDS = {"legacy_state_machine", "xgrammar"}
-VALID_OUTPUT_FORMATS = {"function", "json", "mcp"}
+VALID_OUTPUT_FORMATS = {"function", "json"}
 VALID_EXTRACTORS = {"direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"}
 VALID_ACTIONS = {"select_row", "select_column", "group_by", "sort_by", "add_column", "end"}
 DEFAULT_SPEC_PATH = PROJECT_ROOT / "configs/experiments.example.yaml"
@@ -333,7 +333,7 @@ def expand_matrix(matrix: ExperimentMatrix) -> list[dict[str, Any]]:
 def describe_matrix_adjustments(matrix: ExperimentMatrix) -> list[str]:
     notes = []
     transformation_strategies = set(matrix.strategies) & {"iterative", "cot"}
-    structured_formats = {"json", "mcp"} & set(matrix.output_formats)
+    structured_formats = {"json"} & set(matrix.output_formats)
     if transformation_strategies and "legacy_state_machine" in matrix.constraint_backends and structured_formats:
         notes.append(
             "Omitted legacy_state_machine + structured-output combinations because the legacy backend only supports function output."

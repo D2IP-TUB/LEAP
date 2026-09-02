@@ -18,7 +18,6 @@ from leap.core import Table  # noqa: E402
 from leap.core.actions import REGISTRY  # noqa: E402
 from leap.inference.function_constraints import ROW_LIMIT, SUPPORTED_XGRAMMAR_ACTIONS, ActionGrammarBuilder  # noqa: E402
 from leap.inference.json_constraints import JsonActionSchemaBuilder  # noqa: E402
-from leap.mcp.protocol import McpToolCallSchemaBuilder  # noqa: E402
 
 DEFAULT_CONFIG_PATH = Path("configs/default.yaml")
 DEFAULT_OUTPUT_PATH = Path("logs/engine_grammar.txt")
@@ -70,8 +69,8 @@ def build_engine_grammar_report(
     builder = ActionGrammarBuilder()
     action_history = action_history or []
 
-    if generation_config.output_format in {"json", "mcp"}:
-        schema_builder = McpToolCallSchemaBuilder() if generation_config.output_format == "mcp" else JsonActionSchemaBuilder()
+    if generation_config.output_format == "json":
+        schema_builder = JsonActionSchemaBuilder()
         action_spec = schema_builder.build_spec(
             table=table,
             action_history=action_history,

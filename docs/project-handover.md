@@ -20,11 +20,10 @@ Constraints generation marks one of the key contribution of LEAP. Constraints li
 | Legacy state machine | A Python state machine tracks the function-call phase, action, arguments, and action history. Its logits processor masks token IDs at each decoding step. | Parser and table validation apply. | vLLM 0.10.0 with V0. Function output only. |
 | XGrammar function | An XGrammar grammar restricts function syntax, enabled action names, current row identifiers, current column names, sort order, and `add_column` value count. | Parser and table validation apply. | vLLM >=0.12,<0.13 with V1. |
 | XGrammar JSON | A JSON Schema restricts action fields and most argument domains. The modern structured-output backend turns the schema into token-level decoding constraints. | The JSON codec rejects duplicate selections and operations invalid for the current table. | Modern V1 only. |
-| XGrammar MCP | A JSON Schema restricts the model's JSON-RPC tool-call envelope. The same structured-output machinery masks invalid envelope and argument tokens. | LEAP validates and normalizes the request; the MCP protocol and server validate the tool call. | Modern V1 only. |
 
 The two constrained approaches use different kinds of state machine. The legacy backend implements one directly in Python. It tracks states such as the expected function name, argument position, and whether a list item has already been selected, then applies a custom logits processor to mask the tokenizer's next-token choices. It emits the legacy function-style COT output. 
 
-[XGrammar](https://github.com/mlc-ai/xgrammar) is a library for structured generation. It accepts a context-free grammar or JSON Schema, compiles it against the model's tokenizer, and tracks which output prefixes remain valid. At each decoding step, it masks tokens that would make the prefix invalid, so the model samples only from structurally valid continuations. LEAP builds a grammar or JSON Schema from the current table and action history for each request, and vLLM uses XGrammar as its structured-output backend. Function mode describes calls such as `f_sort_by(...)`, JSON mode describes a flat action object, and MCP mode wraps the action object in a JSON-RPC `tools/call` envelope. All three still pass through LEAP's parser and table validation after decoding.
+[XGrammar](https://github.com/mlc-ai/xgrammar) is a library for structured generation. It accepts a context-free grammar or JSON Schema, compiles it against the model's tokenizer, and tracks which output prefixes remain valid. At each decoding step, it masks tokens that would make the prefix invalid, so the model samples only from structurally valid continuations. LEAP builds a grammar or JSON Schema from the current table and action history for each request, and vLLM uses XGrammar as its structured-output backend. Function mode describes calls such as `f_sort_by(...)`, while JSON mode describes a flat action object. Both pass through LEAP's parser and table validation after decoding.
 
 Since the legacy constraint mode requires an older vLLM version, the depedency is loaded dynamically. `main.py` chooses `.venv-vllm-legacy` only when active legacy function constraints require it. Unconstrained runs and XGrammar runs use `.venv-vllm-modern`. The environments remain separate because their supported vLLM versions are incompatible.
 
@@ -51,7 +50,6 @@ For example using global constraints after `select_row` has been invoked `sort_b
 |---|---|
 | `function` | A call such as `f_sort_by("Score", "desc")`. Legacy state-machine constraints explicitly use this format. XGrammar function constraints may also use it. |
 | `json` | A named object such as `{"action":"sort_by","column":"Score","order":"desc"}`. Only XGrammar JSON constraints use this format. |
-| `mcp` | A JSON-RPC `tools/call` envelope with an operation name and arguments. XGrammar MCP constraints use this format explicitly. |
 
 ## Strategies
 
@@ -79,14 +77,12 @@ flowchart TB
     G --> J[Function parser and local action registry]
     I -->|function| J
     I -->|json| K[JSON codec and local action registry]
-    I -->|mcp| L[MCP codec, client, and local server]
     J --> M[Updated table]
     K --> M
-    L --> M
     M --> N[Next strategy step or answer extraction]
 ```
 
-Function and JSON execution keep table state in the LEAP worker process. MCP changes only the transformation boundary: LEAP still owns the current table, sends it with the selected operation, and replaces its local state with the server response. The MCP server does not retain table state between calls. See `docs/mcp-architecture.md` for the detailed client and server lifecycle.
+Function and JSON execution keep table state in the LEAP worker process.
 
 ### Operation examples
 
@@ -108,7 +104,7 @@ Structured function and JSON modes restrict `sort_by` to a current column and to
 f_add_column("Rank", ["1", "2", "3"])
 ```
 
-A two-value or four-value list fails validation. JSON and MCP modes also validate decoded text and the exact value count. A valid `add_column` call can still be wrong if its generated values do not answer the question.
+A two-value or four-value list fails validation. JSON mode also validates decoded text and the exact value count. A valid `add_column` call can still be wrong if its generated values do not answer the question.
 
 ## Backend architecture and data flow
 
@@ -137,7 +133,7 @@ flowchart LR
 
 The runtime bootstrap happens before imports that load vLLM. It reads the constraint state, backend, and output format, then re-executes `main.py` in the matching generated environment. The resolved configuration controls the tokenizer, model hardware, enabled actions, generation method, extractors, dataset, and logging.
 
-The strategy owns the current table and action history for one example. It passes both into the prompt builder. The sampling layer obtains one or more model candidates and accepts a valid operation. LEAP applies that operation locally, except in MCP mode, where the local MCP server returns the replacement table. This loop ends at `end()`, after three generation failures, after three validity failures, or after ten action steps.
+The strategy owns the current table and action history for one example. It passes both into the prompt builder. The sampling layer obtains one or more model candidates and accepts a valid operation. LEAP applies that operation locally. This loop ends at `end()`, after three generation failures, after three validity failures, or after ten action steps.
 
 The final table, action history, reference answers, and extractor output go to evaluation. `main.py` writes `results.jsonl` with one record per example, `end_to_end_accuracy.json` with the run-level execution score, `extractor_accuracy.json` with per-extractor scores, and `run_config.json` with the resolved configuration and runtime metadata. When logging is enabled, workers also produce table-step logs under the run's `table_logs/` directory.
 
@@ -158,7 +154,6 @@ flowchart TB
     X -->|false| U[Unconstrained decoding and post-parse validation]
     X -->|true| G[Constrained operation decoding]
     F -->|function or JSON| R[In-process action execution]
-    F -->|MCP| M[MCP table execution]
     P --> V[Candidate voting and request temperature]
     A --> Q[Prompt choices and allowed operations]
 ```
@@ -172,7 +167,7 @@ flowchart TB
 | `generation.use_constraints` | Turns structured decoding on or off. With it off, LEAP still parses output and validates actions against the table after generation. |
 | `generation.use_global_constraints` | Selects either local action-history restrictions or fixed global action transitions. |
 | `generation.constraint_backend` | Selects the historical state-machine backend or XGrammar. The selection may also choose a different vLLM environment. |
-| `generation.output_format` | Selects function-call, JSON, or MCP operation messages. Legacy constraints force function output. |
+| `generation.output_format` | Selects function-call or JSON operation messages. Legacy constraints force function output. |
 | `generation.sampling` | Sets candidate counts, per-action sample counts, voting, and optional shuffle-invariant sampling. |
 | `generation.force_zero_temperature` | Sets every model request to temperature 0, including CoT selection, arguments, and answer extraction. |
 | `extractors` | Selects answer-generation methods run independently on the final table. Legacy end-to-end accuracy uses the `direct_query` extractor. |

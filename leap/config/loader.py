@@ -55,7 +55,7 @@ class GenerationConfig:
     use_global_constraints: bool
     strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
     constraint_backend: str = "legacy_state_machine"  # "xgrammar" or "legacy_state_machine"
-    output_format: str = "function"  # "function", "json", or "mcp"
+    output_format: str = "function"  # "function" or "json"
     force_zero_temperature: bool = False
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
     enabled_actions: tuple = None  # Tuple of enabled action names (immutable for frozen dataclass)
@@ -274,8 +274,8 @@ def _build_generation_config(generation_section: Dict[str, Any], enabled_actions
 
     if constraint_backend not in {"xgrammar", "legacy_state_machine"}:
         raise ValueError("generation.constraint_backend must be either 'xgrammar' or 'legacy_state_machine'.")
-    if output_format not in {"function", "json", "mcp"}:
-        raise ValueError("generation.output_format must be 'function', 'json', or 'mcp'.")
+    if output_format not in {"function", "json"}:
+        raise ValueError("generation.output_format must be 'function' or 'json'.")
     if type(force_zero_temperature) is not bool:
         raise ValueError("generation.force_zero_temperature must be a boolean.")
     if constraint_backend == "legacy_state_machine":

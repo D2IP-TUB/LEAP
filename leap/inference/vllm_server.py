@@ -21,7 +21,6 @@ from vllm.engine.arg_utils import AsyncEngineArgs
 
 from leap.config.loader import GenerationConfig, LoggingConfig, TokenizerConfig
 from leap.core import ExecutionMetrics, InferenceRequest, InferenceResult, Table
-from leap.mcp.client import McpTableClient
 
 # Import the table logger
 from leap.utils.table_logger import TableLogger
@@ -110,7 +109,6 @@ class VLLMWorkerProcess(mp.Process):
         self.engine = None
         self.tokenizer = None
         self.max_model_len = None  # Will be set from engine after initialization
-        self.mcp_client = None
         self.model_loaded = mp.Event()
 
     def _apply_run_config(self, generation_config: GenerationConfig, logging_config: LoggingConfig) -> None:
@@ -274,13 +272,8 @@ class VLLMWorkerProcess(mp.Process):
         gc.collect()
 
     async def _process_requests(self):
-        """Own the lazy MCP client while processing requests."""
-        async with McpTableClient() as mcp_client:
-            self.mcp_client = mcp_client
-            try:
-                await self._process_request_loop()
-            finally:
-                self.mcp_client = None
+        """Process requests until the worker receives a shutdown signal."""
+        await self._process_request_loop()
 
     async def _process_request_loop(self):
         """Process incoming requests with concurrent batching support."""

@@ -2,7 +2,7 @@ model:
   # id: "meta-llama/Llama-4-Scout-17B-16E-Instruct"
   # id: "mistralai/Mistral-7B-Instruct-v0.2"
   # id: Qwen/Qwen2.5-32B-Instruct
-  id: Qwen/Qwen2.5-7B-Instruct
+  id: Qwen/Qwen2.5-32B-Instruct
   # id: "gpt2"
   presets_path: "configs/models.yaml"
   # possible alternatives:
@@ -25,7 +25,7 @@ dataset:
   path: null
 
 run:
-  max_examples: 300
+  max_examples: 30
 
 # Answer extraction methods run independently on every strategy's final table.
 extractors:
@@ -39,9 +39,8 @@ generation:
   use_constraints: true
   use_global_constraints: true
 
-  # Operation protocol: "function" preserves f_action(...), "json" uses
-  # named JSON objects, and "mcp" emits MCP JSON-RPC tools/call requests and
-  # executes table transformations through the local stdio MCP server.
+  # Operation protocol: "function" preserves f_action(...), while "json" uses
+  # named JSON objects.
   # legacy_state_machine always forces this setting to "function".
   output_format: "function"
 
@@ -51,9 +50,9 @@ generation:
   # If this setting is omitted, constrained runs select legacy_state_machine
   # for backward compatibility. Selecting legacy_state_machine forces the
   # function operation format and the legacy runtime when constraints are on.
-  # xgrammar supports add_column in function, JSON, and MCP formats.
+  # xgrammar supports add_column in function and JSON formats.
   # constraint_backend: "xgrammar"
-  constraint_backend: "legacy_state_machine"
+  constraint_backend: "xgrammar"
 
   # Generation strategy: "iterative", "cot", or "direct_query"
   # - "iterative": single-phase iterative generation

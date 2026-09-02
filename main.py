@@ -452,7 +452,7 @@ def finalize_results(
 
 def build_generation_functions(app_config: AppConfig, tokenizer) -> dict[str, Any]:
     functions = {}
-    for output_format in ("function", "json", "mcp"):
+    for output_format in ("function", "json"):
         prompt_builder = PromptBuilder(
             tokenizer=tokenizer,
             is_instruct=app_config.model.instruct,

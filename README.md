@@ -48,7 +48,7 @@ matrix:
   use_constraints: [false, true]
   use_global_constraints: [false, true]
   constraint_backends: [legacy_state_machine, xgrammar]
-  output_formats: [function, json, mcp]
+  output_formats: [function, json]
   force_zero_temperature: [false, true]
 ```
 
@@ -76,32 +76,6 @@ generation:
 With constraints enabled, JSON mode uses vLLM JSON Schema structured outputs on the modern V1 runtime. Selecting `constraint_backend: legacy_state_machine` automatically forces `output_format: function`; JSON operation mode therefore requires the modern `xgrammar` backend setting. With constraints disabled, the same JSON prompts and strict JSON parser are used without structured decoding when `constraint_backend` is modern. The default remains `output_format: function` for backward compatibility.
 
 JSON operations use named fields, for example `{"action":"select_row","rows":["row 0"]}` and `{"action":"sort_by","column":"Year","order":"desc"}`. CoT remains two-phase: action selection emits only the `action` field, followed by a selected-action argument object.
-
-## MCP operation mode
-
-Set `generation.output_format: mcp` to have the model emit official JSON-RPC `tools/call` envelopes and execute transformations through a local MCP Python SDK server over stdio:
-
-```yaml
-generation:
-  strategy: iterative  # or cot
-  output_format: mcp
-  constraint_backend: xgrammar
-  enabled_actions: [select_row, select_column, add_column, group_by, sort_by, end]
-```
-
-The server is stateless with respect to table data. Each vLLM worker owns one persistent MCP client context whose serialized broker lazily starts the stdio server on the first MCP operation and reuses that session until worker shutdown. Function/JSON-only runs never launch the MCP subprocess. If the transport fails, the broker reconnects and retries the stateless call once.
-
-LEAP injects the current table into every MCP tool invocation, and the server returns the complete new table state. It exposes one tool for each supported operation: `select_row`, `select_column`, `add_column`, `group_by`, `sort_by`, and `end`. `add_column` requires exactly one quoted string value per table row.
-
-Iterative mode generates one complete MCP request per step. CoT remains two-phase: phase one emits a `tools/call`-shaped selection with an empty `arguments` object, and phase two emits the complete request that LEAP sends through the MCP client. The runtime, not the model, injects the table argument. Existing function and JSON modes are unchanged.
-
-MCP mode uses the modern runtime. Selecting `legacy_state_machine` continues to force function mode for backward compatibility. Profiling reports total `mcp_table_transformation` time in the operation breakdown and reports `mcp_startup` and warm `mcp_call` diagnostics separately. See [`docs/mcp-architecture.md`](docs/mcp-architecture.md) for before/after architecture and information-flow diagrams.
-
-Run the standalone server with:
-
-```bash
-uv run python -m leap.mcp.server
-```
 
 ## Developer Setup
 

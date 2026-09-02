@@ -81,8 +81,8 @@ def load_output_format(config_path: Path) -> str:
     config = _load_yaml(config_path)
     generation = config.get("generation") or {}
     output_format = generation.get("output_format", "function")
-    if output_format not in {"function", "json", "mcp"}:
-        raise ValueError(f"{config_path}: generation.output_format must be 'function', 'json', or 'mcp'.")
+    if output_format not in {"function", "json"}:
+        raise ValueError(f"{config_path}: generation.output_format must be 'function' or 'json'.")
     if load_constraint_backend(config_path) == LEGACY_BACKEND:
         return "function"
     return output_format
@@ -107,7 +107,7 @@ def runtime_for_generation(*, use_constraints: bool, constraint_backend: str, ou
     """Select V0 only when the legacy logits processor will actually be used."""
     if constraint_backend not in SUPPORTED_BACKENDS:
         raise ValueError(f"Unsupported constraint backend: {constraint_backend!r}")
-    if output_format not in {"function", "json", "mcp"}:
+    if output_format not in {"function", "json"}:
         raise ValueError(f"Unsupported output format: {output_format!r}")
     if constraint_backend == LEGACY_BACKEND:
         output_format = "function"

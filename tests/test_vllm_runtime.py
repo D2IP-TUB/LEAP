@@ -63,15 +63,13 @@ def test_unconstrained_generation_selects_modern_runtime(backend):
     assert runtime_for_generation(use_constraints=False, constraint_backend=backend).name == "modern"
 
 
-def test_mcp_generation_selects_modern_runtime():
-    assert (
+def test_removed_output_format_is_rejected():
+    with pytest.raises(ValueError, match="Unsupported output format"):
         runtime_for_generation(
             use_constraints=True,
             constraint_backend=MODERN_BACKEND,
-            output_format="mcp",
-        ).name
-        == "modern"
-    )
+            output_format="mc" + "p",
+        )
 
 
 def test_configured_legacy_backend_forces_function_format_before_runtime_selection(tmp_path):

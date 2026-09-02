@@ -306,31 +306,18 @@ class TestVLLMWorkerProcess:
             max_model_len=1234,
         )
 
-    def test_request_loop_owns_one_worker_mcp_client(self, monkeypatch):
+    def test_process_requests_runs_request_loop(self, monkeypatch):
         worker = self._worker()
         events = []
 
-        class FakeClient:
-            async def __aenter__(self):
-                events.append("enter")
-                return self
-
-            async def __aexit__(self, *_args):
-                events.append("exit")
-
-        client = FakeClient()
-
         async def fake_loop():
             events.append("loop")
-            assert worker.mcp_client is client
 
-        monkeypatch.setattr("leap.inference.vllm_server.McpTableClient", lambda: client)
         monkeypatch.setattr(worker, "_process_request_loop", fake_loop)
 
         asyncio.run(worker._process_requests())
 
-        assert events == ["enter", "loop", "exit"]
-        assert worker.mcp_client is None
+        assert events == ["loop"]
 
     def test_apply_run_config_updates_generation_without_reloading_engine(self):
         worker = self._worker()
