@@ -14,21 +14,24 @@ LEAP keeps the incompatible legacy and current vLLM releases in separate, automa
 
 ```yaml
 generation:
-  # Current constrained generation: vLLM >=0.12,<0.13 with the V1 engine.
+  # Current constrained generation: vLLM >=0.28,<0.29 with the V1 engine.
   constraint_backend: xgrammar
 
-  # Historical benchmark reproduction: vLLM 0.10.0 with the V0 engine.
+  # Legancy state machine: vLLM 0.10.0 with the V0 engine.
   # constraint_backend: legacy_state_machine
 ```
 
 Run LEAP normally with `uv run main.py`, or run a benchmark matrix with `uv run scripts/run_experiments.py`. Before importing vLLM, the entrypoint reads the config and re-executes itself in one of these persistent environments:
 
-- `.venv-vllm-modern` for unconstrained generation and `xgrammar`
-- `.venv-vllm-legacy` only for active `legacy_state_machine` constraints
+- `.venv` for unconstrained generation and `xgrammar`
+- `.venv-vllm-legacy` only for active `legacy_state_machine` constraints with Qwen2.5 models
 
-The first run for each runtime downloads and installs its vLLM and PyTorch stack, so it can take substantially longer than later runs. Unconstrained configs use the modern runtime regardless of `constraint_backend`. Constrained configs inherit their backend from the experiment `base_config`; older constrained configs without `generation.constraint_backend` select the legacy runtime for backward compatibility.
+The first run for each runtime downloads and installs its vLLM and PyTorch stack, so it can take substantially longer than later runs. Unconstrained configs use the modern runtime regardless of `constraint_backend`. Constrained configs without `generation.constraint_backend` use xgrammar. Only Qwen2.5 models may use `legacy_state_machine`; all other constrained models must use xgrammar.
+
 
 The backend/version pairing is strict. If LEAP reports a mismatch, update the lockfile with `uv lock` and retry. If an environment was interrupted or corrupted during installation, remove only the named generated environment from the error message and rerun the command. The `xgrammar` backend supports `add_column` with exact value cardinality: generated output must contain one quoted cell value per table row. Unconstrained runs enforce the same cardinality after parsing and discard malformed candidates.
+
+LEAP passes `enable_thinking=False` to chat templates for action generation and answer extraction. Models whose templates support this option generate answers without a thinking phase.
 
 Iterative `add_column` emits the complete operation in one response and is hidden when the full table cannot fit the model context. CoT also emits the complete column in one argument-generation response.
 
@@ -52,7 +55,7 @@ matrix:
   force_zero_temperature: [false, true]
 ```
 
-Only unique supported jobs are generated. Unconstrained runs use the modern xgrammar runtime, legacy constrained decoding supports function output only, and `direct_query` is emitted once per model, repeat, and temperature mode because action constraints do not affect it. Set `force_zero_temperature: true` to force every model request in that run to use temperature 0, including dynamic-plan, generate-args, and answer-extraction calls. The temperature-mode sweep roughly doubles the matrix size. Every job failure is recorded in the experiment report and the runner continues with the remaining jobs; the final command exits nonzero if any job failed. Invalid suite configuration and explicit user interruption still stop the runner.
+Only unique supported jobs are generated. Unconstrained runs use the modern xgrammar runtime. Legacy constrained decoding supports function output only and is generated only for Qwen2.5 models. Other constrained models use xgrammar. `direct_query` is emitted once per model, repeat, and temperature mode because action constraints do not affect it. Set `force_zero_temperature: true` to force every model request in that run to use temperature 0, including dynamic-plan, generate-args, and answer-extraction calls. The temperature-mode sweep roughly doubles the matrix size. Every job failure is recorded in the experiment report and the runner continues with the remaining jobs; the final command exits nonzero if any job failed. Invalid suite configuration and explicit user interruption still stop the runner.
 
 Model reuse is enabled by default and can be controlled explicitly:
 

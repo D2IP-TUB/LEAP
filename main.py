@@ -127,6 +127,7 @@ def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
     # Now load the full config with tokenizer
     app_config: AppConfig = load_runtime_config(config_path, tokenizer)
     validate_installed_runtime(
+        model_id=app_config.model.id,
         use_constraints=app_config.generation.use_constraints,
         constraint_backend=app_config.generation.constraint_backend,
         output_format=app_config.generation.output_format,
@@ -495,6 +496,7 @@ def create_server(app_config: AppConfig, tokenizer) -> ProcessParallelVLLM:
         tensor_parallel_size=model_settings.hardware.tensor_parallel_size,
         max_concurrent_requests=model_settings.hardware.max_concurrent_requests,
         max_model_len=model_settings.hardware.max_model_len,
+        gpu_memory_utilization=model_settings.hardware.gpu_memory_utilization,
     )
 
 

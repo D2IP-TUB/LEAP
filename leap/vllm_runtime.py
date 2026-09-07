@@ -16,6 +16,7 @@ import yaml
 LEGACY_BACKEND = "legacy_state_machine"
 MODERN_BACKEND = "xgrammar"
 SUPPORTED_BACKENDS = {LEGACY_BACKEND, MODERN_BACKEND}
+LEGACY_MODEL_PREFIX = "Qwen/Qwen2.5-"
 RUNTIME_ENV_VAR = "LEAP_VLLM_RUNTIME"
 BOOTSTRAPPED_ENV_VAR = "LEAP_VLLM_BOOTSTRAPPED"
 
@@ -45,12 +46,25 @@ RUNTIMES = {
         name="modern",
         backend=MODERN_BACKEND,
         extra="vllm-modern",
-        environment=".venv-vllm-modern",
-        version_spec=">=0.12,<0.13",
+        # Keep the modern runtime in uv's standard project environment. This
+        # preserves the historical `uv run` behavior; only the incompatible
+        # legacy runtime needs a separate environment.
+        environment=".venv",
+        version_spec=">=0.28,<0.29",
         engine="V1",
         use_v1="1",
     ),
 }
+
+
+def supports_legacy_state_machine(model_id: str) -> bool:
+    """Return whether a model may use the historical V0 constraint backend."""
+    return model_id.startswith(LEGACY_MODEL_PREFIX)
+
+
+def validate_constraint_backend(*, model_id: str, use_constraints: bool, constraint_backend: str) -> None:
+    if use_constraints and constraint_backend == LEGACY_BACKEND and not supports_legacy_state_machine(model_id):
+        raise ValueError(f"Model {model_id!r} may not use {LEGACY_BACKEND}. Only Qwen2.5 models may use it; select {MODERN_BACKEND}.")
 
 
 def load_constraint_backend(config_path: Path) -> str:
@@ -59,7 +73,7 @@ def load_constraint_backend(config_path: Path) -> str:
     generation = config.get("generation") or {}
     if not isinstance(generation, dict):
         raise ValueError(f"{config_path}: 'generation' must be a mapping.")
-    backend = generation.get("constraint_backend", LEGACY_BACKEND)
+    backend = generation.get("constraint_backend", MODERN_BACKEND)
     if backend not in SUPPORTED_BACKENDS:
         raise ValueError(f"{config_path}: generation.constraint_backend must be one of {sorted(SUPPORTED_BACKENDS)}, got {backend!r}.")
     return backend
@@ -116,7 +130,13 @@ def runtime_for_generation(*, use_constraints: bool, constraint_backend: str, ou
 
 
 def runtime_for_config(config_path: Path) -> VLLMRuntime:
+    config = _load_yaml(config_path)
+    model = config.get("model") or {}
+    model_id = model.get("id") if isinstance(model, dict) else None
+    if not isinstance(model_id, str):
+        raise ValueError(f"{config_path}: model.id must be a string.")
     use_constraints, constraint_backend = load_generation_runtime_settings(config_path)
+    validate_constraint_backend(model_id=model_id, use_constraints=use_constraints, constraint_backend=constraint_backend)
     return runtime_for_generation(
         use_constraints=use_constraints,
         constraint_backend=constraint_backend,
@@ -141,7 +161,27 @@ def version_matches(runtime: VLLMRuntime, installed: str | None) -> bool:
         return False
     if runtime.name == "legacy":
         return parsed[:3] == (0, 10, 0)
-    return parsed >= (0, 12, 0) and parsed < (0, 13, 0)
+    return parsed >= (0, 28, 0) and parsed < (0, 29, 0)
+
+
+def _configure_environment_cuda() -> None:
+    """Prefer the CUDA toolkit and libraries installed in the active environment."""
+    site_packages = Path(sys.prefix) / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+    nvidia_root = site_packages / "nvidia"
+    if not nvidia_root.is_dir():
+        return
+
+    nvcc_candidates = sorted(nvidia_root.glob("*/bin/nvcc"))
+    if nvcc_candidates:
+        toolkit = nvcc_candidates[0].parent.parent
+        os.environ["CUDA_HOME"] = str(toolkit)
+        os.environ["CUDA_PATH"] = str(toolkit)
+        os.environ["PATH"] = f"{toolkit / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}"
+
+    library_dirs = sorted({str(path) for path in nvidia_root.glob("*/lib") if path.is_dir()})
+    if library_dirs:
+        existing = os.environ.get("LD_LIBRARY_PATH")
+        os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(library_dirs + ([existing] if existing else []))
 
 
 def ensure_vllm_runtime(runtime: VLLMRuntime, argv: list[str] | None = None, project_root: Path | None = None) -> None:
@@ -156,6 +196,8 @@ def ensure_vllm_runtime(runtime: VLLMRuntime, argv: list[str] | None = None, pro
     os.environ[RUNTIME_ENV_VAR] = runtime.name
 
     if in_selected_environment and version_matches(runtime, installed):
+        # Do not pass the source environment's CUDA paths into another runtime.
+        _configure_environment_cuda()
         return
 
     if os.environ.get(BOOTSTRAPPED_ENV_VAR) == "1":
@@ -187,8 +229,11 @@ def ensure_vllm_runtime(runtime: VLLMRuntime, argv: list[str] | None = None, pro
     os.execvpe(uv, command, child_env)
 
 
-def validate_installed_runtime(*, use_constraints: bool, constraint_backend: str, output_format: str = "function") -> VLLMRuntime:
+def validate_installed_runtime(
+    *, model_id: str, use_constraints: bool, constraint_backend: str, output_format: str = "function"
+) -> VLLMRuntime:
     """Fail early when application configuration and installed vLLM disagree."""
+    validate_constraint_backend(model_id=model_id, use_constraints=use_constraints, constraint_backend=constraint_backend)
     runtime = runtime_for_generation(use_constraints=use_constraints, constraint_backend=constraint_backend, output_format=output_format)
     installed = installed_vllm_version()
     if not version_matches(runtime, installed) or os.environ.get("VLLM_USE_V1") != runtime.use_v1:

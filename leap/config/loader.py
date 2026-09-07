@@ -14,6 +14,7 @@ class HardwareConfig:
     gpu_allocation: List[int]
     max_concurrent_requests: int = 16  # For continuous batching optimization
     max_model_len: int = 2048  # Maximum sequence length for the model
+    gpu_memory_utilization: float = 0.9  # Fraction of GPU memory available to vLLM
 
 
 @dataclass(frozen=True)
@@ -54,7 +55,7 @@ class GenerationConfig:
     use_constraints: bool
     use_global_constraints: bool
     strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
-    constraint_backend: str = "legacy_state_machine"  # "xgrammar" or "legacy_state_machine"
+    constraint_backend: str = "xgrammar"  # "xgrammar" or "legacy_state_machine"
     output_format: str = "function"  # "function" or "json"
     force_zero_temperature: bool = False
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
@@ -154,7 +155,7 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
         shuffle_invariant=sampling_section.get("shuffle_invariant", False),
     )
 
-    generation_config = _build_generation_config(generation_section, enabled_actions, sampling_config)
+    generation_config = _build_generation_config(generation_section, enabled_actions, sampling_config, model_id=model_config.id)
     extractors = _build_extractor_config(raw_config.get("extractors", ["direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"]))
 
     return AppConfig(
@@ -217,7 +218,7 @@ def load_runtime_config_tool(config_path: Path, tokenizer) -> AppConfig:
         shuffle_invariant=sampling_section.get("shuffle_invariant", False),
     )
 
-    generation_config = _build_generation_config(generation_section, enabled_actions, sampling_config)
+    generation_config = _build_generation_config(generation_section, enabled_actions, sampling_config, model_id=model_config.id)
     extractors = _build_extractor_config(raw_config.get("extractors", ["direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"]))
 
     return AppConfig(
@@ -263,12 +264,14 @@ def _load_app_config(config_path: Path) -> Dict[str, Any]:
     return data
 
 
-def _build_generation_config(generation_section: Dict[str, Any], enabled_actions, sampling_config) -> GenerationConfig:
+def _build_generation_config(
+    generation_section: Dict[str, Any], enabled_actions, sampling_config, *, model_id: str | None = None
+) -> GenerationConfig:
     if "batch_truncated_add_column" in generation_section:
         raise ValueError("generation.batch_truncated_add_column is no longer supported.")
 
     use_constraints = generation_section.get("use_constraints", False)
-    constraint_backend = generation_section.get("constraint_backend", "legacy_state_machine")
+    constraint_backend = generation_section.get("constraint_backend", "xgrammar")
     output_format = generation_section.get("output_format", "function")
     force_zero_temperature = generation_section.get("force_zero_temperature", False)
 
@@ -280,6 +283,14 @@ def _build_generation_config(generation_section: Dict[str, Any], enabled_actions
         raise ValueError("generation.force_zero_temperature must be a boolean.")
     if constraint_backend == "legacy_state_machine":
         output_format = "function"
+    if model_id is not None:
+        from leap.vllm_runtime import validate_constraint_backend
+
+        validate_constraint_backend(
+            model_id=model_id,
+            use_constraints=use_constraints,
+            constraint_backend=constraint_backend,
+        )
 
     enabled_actions_tuple = tuple(enabled_actions) if enabled_actions else None
 
@@ -378,6 +389,7 @@ def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any], 
         gpu_allocation=list(hardware_defaults["gpu_allocation"]),
         max_concurrent_requests=hardware_defaults.get("max_concurrent_requests", 16),
         max_model_len=hardware_defaults.get("max_model_len", HardwareConfig.max_model_len),
+        gpu_memory_utilization=hardware_defaults.get("gpu_memory_utilization", HardwareConfig.gpu_memory_utilization),
     )
 
     # Build tokenizer config

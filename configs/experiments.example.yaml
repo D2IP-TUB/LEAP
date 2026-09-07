@@ -1,13 +1,15 @@
 base_config: configs/default.yaml
 models:
-  - Qwen/Qwen2.5-7B-Instruct
+  - Qwen/Qwen3.8-27B
+  - Qwen/Qwen3-235B-A22B
+  # - Qwen/Qwen2.5-7B-Instruct
   - Qwen/Qwen2.5-32B-Instruct
-  - meta-llama/Llama-4-Scout-17B-16E-Instruct
-  # - mistralai/Mistral-7B-Instruct-v0.2
+
 
 # The runner expands all unique, supported combinations. Unconstrained jobs use
-# xgrammar's modern runtime, legacy_state_machine + structured formats are
-# omitted, and direct_query is emitted once per temperature mode because action constraints do not apply.
+# xgrammar's modern runtime. legacy_state_machine jobs run only for Qwen2.5
+# models, structured legacy formats are omitted, and direct_query is emitted
+# once per temperature mode because action constraints do not apply.
 matrix:
   strategies:
     - iterative

@@ -11,7 +11,8 @@ class RecordingTokenizer:
     def __init__(self):
         self.messages = []
 
-    def apply_chat_template(self, messages, **_kwargs):
+    def apply_chat_template(self, messages, **kwargs):
+        assert kwargs.get("enable_thinking") is False, "LEAP prompts must disable thinking mode"
         self.messages = messages
         return "\n".join(f"{message['role']}:{message['content']}" for message in messages)
 

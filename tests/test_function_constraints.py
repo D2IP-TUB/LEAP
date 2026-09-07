@@ -23,14 +23,14 @@ def make_table(num_rows=3):
     return Table(columns=["Name", "Points"], rows=[[f"name {idx}", str(idx)] for idx in range(num_rows)])
 
 
-def test_default_generation_config_uses_legacy_backend_for_old_configs():
+def test_default_generation_config_uses_xgrammar():
     config = _build_generation_config(
         {"use_constraints": True, "use_global_constraints": False},
         ["select_row", "end"],
         SamplingConfig(),
     )
 
-    assert config.constraint_backend == "legacy_state_machine"
+    assert config.constraint_backend == "xgrammar"
     assert config.output_format == "function"
 
 

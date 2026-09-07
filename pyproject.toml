@@ -5,9 +5,9 @@ description = "A fast runner for table reasoning experiments."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "datasets>=4.4.1",
+    "datasets>=3.6,<4",
     "tqdm>=4.0",
-    "transformers>=4.53.2,<5",
+    "transformers>=4.53.2,<6",
     "PyYAML>=6.0",
     "pandas>=2.0",
     "matplotlib>=3.11.1",
@@ -17,8 +17,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-vllm-legacy = ["vllm==0.10.0"]
-vllm-modern = ["vllm>=0.12,<0.13"]
+vllm-legacy = ["vllm==0.10.0", "transformers>=4.53.2,<5"]
+vllm-modern = ["vllm>=0.28,<0.29", "transformers>=5.5.3,<6"]
 
 [dependency-groups]
 dev = [
@@ -35,6 +35,16 @@ fix = true   # formatter/linter auto-fixes
 select = ["E", "F", "I"] # E=pycodestyle, F=pyflakes, I=import sorting
 
 [tool.uv]
+# Keep the CUDA compiler/toolkit aligned with the CUDA 13.0 PyTorch runtime.
+# Without this, uv may resolve a newer nvcc while leaving CUDA 13.0 headers in place.
+override-dependencies = [
+    # vLLM 0.28 pins post3; post4 fixes flashinfer.comm imports on Python 3.11.
+    "flashinfer-python==0.6.16.post4",
+    "nvidia-cuda-nvcc==13.0.88",
+    "nvidia-cuda-crt==13.0.88",
+    "nvidia-nvvm==13.0.88",
+    "nvidia-cuda-cccl==13.0.85",
+]
 conflicts = [
     [
         { extra = "vllm-legacy" },

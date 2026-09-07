@@ -78,6 +78,7 @@ def build_runtime_tool(config_path: Path = CONFIG_PATH) -> RuntimeContext:
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     app_config: AppConfig = load_runtime_config_tool(config_path, tokenizer)
     validate_installed_runtime(
+        model_id=app_config.model.id,
         use_constraints=app_config.generation.use_constraints,
         constraint_backend=app_config.generation.constraint_backend,
         output_format=app_config.generation.output_format,

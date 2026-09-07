@@ -63,6 +63,7 @@ class VLLMWorkerProcess(mp.Process):
         tensor_parallel_size: int = 1,
         max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
         max_model_len: int = 2048,
+        gpu_memory_utilization: float = 0.9,
     ):
         """
         Initialize vLLM worker process
@@ -96,6 +97,7 @@ class VLLMWorkerProcess(mp.Process):
         self.tensor_parallel_size = tensor_parallel_size
         self.max_concurrent_requests = max_concurrent_requests
         self.configured_max_model_len = max_model_len  # Store configured value
+        self.gpu_memory_utilization = gpu_memory_utilization
 
         # Extract commonly used fields for convenience
         self.use_constraints = generation_config.use_constraints
@@ -187,7 +189,7 @@ class VLLMWorkerProcess(mp.Process):
             model=self.model_id,
             trust_remote_code=True,
             max_model_len=self.configured_max_model_len,
-            gpu_memory_utilization=0.8,
+            gpu_memory_utilization=self.gpu_memory_utilization,
             tensor_parallel_size=self.tensor_parallel_size,
             max_num_batched_tokens=max_num_batched_tokens,
             max_num_seqs=32,
@@ -542,6 +544,7 @@ class ProcessParallelVLLM:
         tensor_parallel_size: int = 1,
         max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
         max_model_len: int = 2048,
+        gpu_memory_utilization: float = 0.9,
     ):
         """
         Initialize parallel vLLM engine
@@ -562,7 +565,7 @@ class ProcessParallelVLLM:
         self.num_workers = num_workers
         self.max_concurrent_requests = max_concurrent_requests
         self.max_model_len = max_model_len
-
+        self.gpu_memory_utilization = gpu_memory_utilization
         # Auto-detect GPUs if not specified
         if gpu_allocation is None:
             import subprocess
@@ -644,6 +647,7 @@ class ProcessParallelVLLM:
                 tensor_parallel_size=self.tensor_parallel_size,
                 max_concurrent_requests=self.max_concurrent_requests,
                 max_model_len=self.max_model_len,
+                gpu_memory_utilization=self.gpu_memory_utilization,
             )
             self.workers.append(worker)
 
@@ -983,6 +987,7 @@ def setup_standard_vllm_server(
         generation_functions=generation_functions or {},
         tensor_parallel_size=app_config.model.hardware.tensor_parallel_size,
         max_model_len=app_config.model.hardware.max_model_len,
+        gpu_memory_utilization=app_config.model.hardware.gpu_memory_utilization,
     )
 
 

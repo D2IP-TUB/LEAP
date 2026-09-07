@@ -27,7 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from leap.utils.config_labels import build_generation_config_label  # noqa: E402
-from leap.vllm_runtime import BOOTSTRAPPED_ENV_VAR, runtime_for_generation  # noqa: E402
+from leap.vllm_runtime import BOOTSTRAPPED_ENV_VAR, runtime_for_generation, supports_legacy_state_machine  # noqa: E402
 
 VALID_STRATEGIES = {"iterative", "cot", "direct_query"}
 VALID_CONSTRAINT_BACKENDS = {"legacy_state_machine", "xgrammar"}
@@ -250,6 +250,13 @@ def create_jobs(spec: ExperimentSpec, experiment_dir: Path) -> list[ExperimentJo
     for model in spec.models:
         model_slug = _slugify(model)
         for setting in settings:
+            legacy_backend_not_supported = (
+                setting["use_constraints"]
+                and setting["constraint_backend"] == "legacy_state_machine"
+                and not supports_legacy_state_machine(model)
+            )
+            if legacy_backend_not_supported:
+                continue
             for repeat in range(1, spec.repeats + 1):
                 job_config = build_job_config(
                     base_config,
@@ -338,6 +345,8 @@ def describe_matrix_adjustments(matrix: ExperimentMatrix) -> list[str]:
         notes.append(
             "Omitted legacy_state_machine + structured-output combinations because the legacy backend only supports function output."
         )
+    if transformation_strategies and "legacy_state_machine" in matrix.constraint_backends:
+        notes.append("Omitted legacy_state_machine jobs for non-Qwen2.5 models.")
     if transformation_strategies and False in matrix.use_constraints and len(matrix.constraint_backends) > 1:
         notes.append("Deduplicated unconstrained backend variants and selected xgrammar because unconstrained jobs use the modern runtime.")
     if "direct_query" in matrix.strategies:

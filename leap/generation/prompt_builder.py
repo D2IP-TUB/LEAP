@@ -184,7 +184,7 @@ class PromptBuilder:
 
     def _serialize_messages(self, messages) -> str:
         if self.is_instruct:
-            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
         result = ""
         for message in messages:
             result += message["content"] + "\n" if message["role"] == "user" else message["content"] + "\n\n"
@@ -403,7 +403,7 @@ class PromptBuilder:
         messages.append({"role": "user", "content": instruction_prompt})
 
         if self.is_instruct:
-            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
         else:
             result = ""
             for msg in messages:
@@ -464,7 +464,9 @@ class PromptBuilder:
         messages.append({"role": "user", "content": final_prompt})
 
         if self.is_instruct:
-            instruct_result = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            instruct_result = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+            )
             return instruct_result
         else:
             # For non-instruct models, just concatenate the messages
@@ -517,8 +519,7 @@ class PromptBuilder:
 
         # Use tokenizer to format the conversation - model-agnostic!
         if self.is_instruct:
-            # return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True) + "Answer:"
-            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
         else:
             # For non-instruct models, just concatenate the messages
             result = ""

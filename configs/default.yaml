@@ -1,7 +1,8 @@
 model:
   # id: "meta-llama/Llama-4-Scout-17B-16E-Instruct"
   # id: "mistralai/Mistral-7B-Instruct-v0.2"
-  # id: Qwen/Qwen2.5-32B-Instruct
+  # id: Qwen/Qwen3-235B-A22B  # Set constraint_backend to xgrammar.
+  # id: Qwen/Qwen3.8-27B       # Set constraint_backend to xgrammar.
   id: Qwen/Qwen2.5-32B-Instruct
   # id: "gpt2"
   presets_path: "configs/models.yaml"
@@ -18,7 +19,7 @@ model:
 
 dataset:
   loader: "huggingface"  # options: huggingface, json, disk
-  name: "wikitablequestions"
+  name: "stanfordnlp/wikitablequestions"
   split: "train"
   trust_remote_code: true
   data_files: null
@@ -44,15 +45,15 @@ generation:
   # legacy_state_machine always forces this setting to "function".
   output_format: "function"
 
-  # Unconstrained generation always uses vLLM >=0.12,<0.13 with the V1 engine.
+  # Unconstrained generation always uses vLLM >=0.28,<0.29 with the V1 engine.
   # When constraints are enabled, "xgrammar" also uses V1, while
   # "legacy_state_machine" uses vLLM 0.10.0/V0 for historical reproduction.
-  # If this setting is omitted, constrained runs select legacy_state_machine
-  # for backward compatibility. Selecting legacy_state_machine forces the
-  # function operation format and the legacy runtime when constraints are on.
+  # If this setting is omitted, constrained runs use xgrammar. Select
+  # legacy_state_machine only with a Qwen2.5 model. It forces the function
+  # operation format and the legacy runtime when constraints are on.
   # xgrammar supports add_column in function and JSON formats.
   # constraint_backend: "xgrammar"
-  constraint_backend: "xgrammar"
+  constraint_backend: "legacy_state_machine"
 
   # Generation strategy: "iterative", "cot", or "direct_query"
   # - "iterative": single-phase iterative generation
@@ -77,6 +78,7 @@ generation:
     per_action_samples:
       select_row: 8
       select_column: 8
+      add_column: 1
       group_by: 1  # Deterministic action - fewer samples needed
       sort_by: 1   # Deterministic action - fewer samples needed
       end: 1

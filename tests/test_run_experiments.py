@@ -272,7 +272,7 @@ def test_load_experiment_spec_defaults_python_executable_to_current_interpreter(
     assert spec.python_executable == Path("/tmp/uv/bin/python")
 
 
-def test_example_matrix_creates_504_unique_jobs(tmp_path, monkeypatch):
+def test_example_matrix_creates_408_unique_jobs(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     base_path, _ = _base_config(tmp_path)
     data = _spec_data(base_path)
@@ -283,12 +283,32 @@ def test_example_matrix_creates_504_unique_jobs(tmp_path, monkeypatch):
 
     jobs = create_jobs(spec, tmp_path / "experiment")
 
-    assert len(jobs) == 504
-    assert len({job.config_path.name for job in jobs}) == 504
+    assert len(jobs) == 408
+    assert len({job.config_path.name for job in jobs}) == 408
     generated = yaml.safe_load(jobs[0].config_path.read_text(encoding="utf-8"))
     assert generated["extractors"] == data["extractors"]
     assert generated["generation"]["force_zero_temperature"] in {False, True}
     assert generated["generation"]["enabled_actions"] == data["enabled_actions"]
+
+
+def test_create_jobs_only_assigns_legacy_backend_to_qwen2_5_models(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    base_path, _ = _base_config(tmp_path)
+    data = _spec_data(base_path)
+    data["models"] = [
+        "Qwen/Qwen2.5-7B-Instruct",
+        "Qwen/Qwen3-235B-A22B",
+        "Qwen/Qwen3.8-27B",
+    ]
+    presets_path = tmp_path / "configs" / "models.yaml"
+    _write_yaml(presets_path, {"models": {model: {} for model in data["models"]}})
+    spec_path = tmp_path / "experiments.yaml"
+    _write_yaml(spec_path, data)
+
+    jobs = create_jobs(load_experiment_spec(spec_path), tmp_path / "experiment")
+
+    assert any(job.constraint_backend == "legacy_state_machine" for job in jobs if job.model.startswith("Qwen/Qwen2.5-"))
+    assert all(job.constraint_backend == "xgrammar" for job in jobs if job.model in {"Qwen/Qwen3-235B-A22B", "Qwen/Qwen3.8-27B"})
 
 
 def test_group_jobs_creates_one_session_per_model_and_runtime(tmp_path):
