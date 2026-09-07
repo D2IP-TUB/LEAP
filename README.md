@@ -35,6 +35,32 @@ LEAP passes `enable_thinking=False` to chat templates for action generation and 
 
 Iterative `add_column` emits the complete operation in one response and is hidden when the full table cannot fit the model context. CoT also emits the complete column in one argument-generation response.
 
+## Action sampling and debug output
+
+Iterative generation always makes one complete operation request per attempt, with
+no voting or shuffle sampling. Existing failure limits and the `end` shortcut are
+unchanged. Earlier runs could generate eight iterative candidates, so their
+sampling policy differs from new runs.
+
+CoT selects an action once. With `generation.sampling.enabled: true`, it then
+votes over eight argument candidates for `select_row` and `select_column` only.
+`add_column`, `group_by`, and `sort_by` each get one argument candidate; `end`
+requires no argument request. With sampling disabled, every argument request is
+single-shot. `shuffle_invariant` applies only to CoT row-selection sampling.
+Direct-query answer extraction is unchanged.
+
+Legacy `n_samples` and `per_action_samples` fields remain accepted, but cannot
+override these counts. Startup messages and `run_config.json` report the effective
+policy. Persistent model sessions refresh sampling settings between runs.
+
+Set `generation.sampling.debug: true` to print full prompts, responses, action
+payloads, and per-question summaries. The default is false. Normal stdout retains
+progress, warnings/errors, and aggregate summaries. Structured results, table logs,
+and compact failed-candidate counts are still included in run summaries; raw candidate diagnostics are not persisted.
+
+Action generation requests final-only vLLM output instead of delivering unused
+intermediate responses. Constraint grammars and validation remain unchanged.
+
 ## Experiment matrices
 
 Run the example benchmark matrix with:
@@ -64,6 +90,17 @@ reuse_models: true
 ```
 
 The runner groups jobs by model and vLLM runtime. Strategy, constraint, output-format, and repeat changes within a compatible group reuse the loaded model; changing the model or switching between the modern V1 and legacy V0 runtimes starts a new model session. Set `reuse_models: false` to restore isolated one-process-per-job execution. Reports include the session, model-load count, reuse state, and restart reason for each job.
+
+An interrupted matrix can be resumed from its existing output directory. The runner
+uses the frozen experiment specification and generated job configs, skips jobs with
+terminal status events, and reruns the job that was active when the process stopped:
+
+```bash
+uv run scripts/run_experiments.py --resume results/experiments/<experiment-id>
+```
+
+The resumed process uses the current working-tree code while preserving the original
+matrix configuration. Completed run artifacts are not overwritten.
 
 ## JSON operation mode
 

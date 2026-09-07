@@ -313,6 +313,9 @@ class ShuffleInvariantSamplingLayer(SamplingLayer):
         # Row-index selections and generated columns depend on displayed row order.
         if action.name not in {"select_row", "add_column"}:
             return action
+        # Selecting all rows is independent of their displayed order.
+        if action.name == "select_row" and action.arguments == ("*",):
+            return action
 
         # Get sample index for this candidate
         candidate_id = id(action)

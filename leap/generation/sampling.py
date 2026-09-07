@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, replace
 from typing import List, Optional
 
 from vllm import SamplingParams
+from vllm.sampling_params import RequestOutputKind
 
 from leap.core import Action, Table
 from leap.core.actions import REGISTRY
@@ -59,6 +60,23 @@ class SamplingConfig:
         if self.per_action_samples is None:
             self.per_action_samples = {}
 
+    def for_strategy(self, strategy: str) -> "SamplingConfig":
+        """Resolve legacy sampling settings to the supported action policy."""
+        if strategy == "direct_query":
+            return self
+        enabled = strategy == "cot" and self.enabled
+        counts = {
+            action: 8 if enabled and action in {"select_row", "select_column"} else 1
+            for action in ("select_row", "select_column", "add_column", "group_by", "sort_by", "end")
+        }
+        return replace(
+            self,
+            enabled=enabled,
+            n_samples=1,
+            per_action_samples=counts,
+            shuffle_invariant=enabled and self.shuffle_invariant,
+        )
+
     def get_n_samples(self, action_name: Optional[str] = None) -> int:
         """Get number of samples for a specific action type."""
         if action_name and action_name in self.per_action_samples:
@@ -82,6 +100,7 @@ class AddColumnDiagnostic:
     table_column_count: int
     generation_submitted: bool = False
     final_result_received: bool = False
+    batch_enabled: bool = False
     output_present: bool = False
     raw_output: str | None = None
     raw_output_length: int = 0
@@ -271,7 +290,7 @@ class SamplingLayer:
         question: str,
         step: int,
     ) -> SamplingResult:
-        """Generate and vote on action candidates."""
+        """Generate and validate one complete iterative operation, without voting."""
 
         # Optimization: If only one action is available, skip LLM call (matches official implementation)
         available_actions = self._get_available_actions(action_history, worker)
@@ -299,12 +318,12 @@ class SamplingLayer:
                 # Fall through to normal generation
                 pass
 
-        n_samples = self.config.n_samples
+        # Iterative generation is single-shot regardless of sampling configuration.
+        n_samples = 1
 
         if self.config.debug:
-            print(f"\n[SAMPLING DEBUG] Generating {n_samples} candidates for {request_id}")
+            print(f"\n[SAMPLING DEBUG] Generating one operation for {request_id}")
 
-        # Generate N candidates with context transformation
         candidates = await self.generate_candidates(
             worker, n_samples, table, action_history, request_id, state_machines, prompt_builder, question, step
         )
@@ -327,12 +346,12 @@ class SamplingLayer:
                 for col in table.columns:
                     print(f"    - {col}")
 
-        # Vote on best action
-        action, winner_votes = self.aggregate_candidates(valid_candidates)
+        action = valid_candidates[0] if valid_candidates else None
+        winner_votes = int(action is not None)  # Preserve the result metadata schema; no vote is performed.
 
         if self.config.debug:
             if action:
-                print(f"[SAMPLING DEBUG] Winner: {action.to_string()} ({winner_votes}/{len(valid_candidates)} votes)")
+                print(f"[SAMPLING DEBUG] Operation: {action.to_string()}")
             else:
                 print("[SAMPLING DEBUG] No valid action, using fallback")
 
@@ -372,7 +391,8 @@ class SamplingLayer:
         """
         Two-phase sampling for Chain-of-Table:
         Phase 1: Generate single action type (no sampling)
-        Phase 2: Generate N arguments based on per_action_samples config
+        Phase 2: Sample eight arguments for row/column selection when enabled;
+        generate one argument candidate for every other action.
         """
 
         # if self.config.debug:
@@ -420,9 +440,8 @@ class SamplingLayer:
                 total_votes=1,
             )
 
-        # Phase 2: Generate N argument sets based on action type
-        # Use per_action_samples config to determine how many samples for this action
-        n_samples = self.config.get_n_samples(action_type)
+        # Enforce the shared policy even when the layer was constructed without the config loader.
+        n_samples = self.config.for_strategy("cot").get_n_samples(action_type)
 
         if self.config.debug:
             print(f"[SAMPLING DEBUG] Phase 2 - Generating {n_samples} argument sets for '{action_type}'")
@@ -502,25 +521,18 @@ class SamplingLayer:
         step: int,
     ) -> List[Action]:
         """
-        Generate N action candidates with context transformation.
+        Generate complete iterative operations using the original context.
 
-        For each sample:
-        1. Transform context using transform_context()
-        2. Build fresh prompt with transformed context
-        3. Generate action
-
-        All samples are generated concurrently for maximum throughput.
-
-        Override to customize generation behavior.
+        The iterative strategy requests exactly one candidate. Context transforms
+        are reserved for CoT argument sampling.
         """
 
         async def _generate_single_sample(sample_idx: int) -> Optional[Action]:
-            """Generate a single sample with its own context transformation."""
+            """Generate one complete operation without shuffling its context."""
             try:
-                # Transform context for this sample
-                modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
+                modified_table, modified_history = table, action_history
 
-                # Build fresh prompt with modified context
+                # Build the prompt from the original context
                 prompt = prompt_builder.build_iterative_prompt(
                     question=question,
                     table=modified_table,
@@ -588,9 +600,10 @@ class SamplingLayer:
                         n=1,
                     )
 
-                # DEBUG: Print prompt
-                print(f"\n{'=' * 80}\n[PROMPT] Sample {sample_idx}\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
+                if self.config.debug:
+                    print(f"\n{'=' * 80}\n[PROMPT] Sample {sample_idx}\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
 
+                sampling_params.output_kind = RequestOutputKind.FINAL_ONLY
                 result_generator = worker.engine.generate(prompt, sampling_params, f"{request_id}_sample{sample_idx}")
                 final_result = None
                 async for result in result_generator:
@@ -598,8 +611,8 @@ class SamplingLayer:
 
                 if final_result and final_result.outputs:
                     response_text = final_result.outputs[0].text.strip()
-                    # DEBUG: Print response
-                    print(f"\n[RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
+                    if self.config.debug:
+                        print(f"\n[RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
                     if uses_json_operations(worker):
                         action = JsonActionCodec.parse_single_step(response_text, modified_table)
                     elif uses_xgrammar(worker):
@@ -699,9 +712,10 @@ class SamplingLayer:
                 n=n,
             )
 
-        # DEBUG: Print Phase 1 prompt
-        # print(f"\n{'=' * 80}\n[PHASE 1 PROMPT - ACTION SELECTION | {request_id} step={step}]\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
+        if self.config.debug:
+            print(f"\n[PHASE 1 PROMPT | {request_id} step={step}]\n{prompt}")
 
+        sampling_params.output_kind = RequestOutputKind.FINAL_ONLY
         result_generator = worker.engine.generate(prompt, sampling_params, step_id)
         final_result = None
         async for result in result_generator:
@@ -711,8 +725,8 @@ class SamplingLayer:
         if final_result:
             for output in final_result.outputs:
                 response_text = output.text.strip()
-                # DEBUG: Print Phase 1 response
-                # print(f"\n[PHASE 1 RESPONSE | {request_id} step={step}]\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
+                if self.config.debug:
+                    print(f"\n[PHASE 1 RESPONSE | {request_id} step={step}]\n{response_text}")
                 if uses_json_operations(worker):
                     allowed = self._get_available_actions(action_history, worker)
                     action_name = JsonActionCodec.parse_action_name(response_text, allowed_actions=allowed)
@@ -787,7 +801,9 @@ class SamplingLayer:
                 )
 
                 step_id = f"{request_id}_args_step{step}_sample{sample_idx}"
-                add_column_max_tokens = self._add_column_max_tokens(generation_table, args_prompt, worker)
+                add_column_max_tokens = (
+                    self._add_column_max_tokens(generation_table, args_prompt, worker) if action_name == "add_column" else 300
+                )
 
                 # Generate single argument set
                 if uses_json_schema(worker):
@@ -849,13 +865,12 @@ class SamplingLayer:
                         n=1,
                     )
 
-                # DEBUG: Print Phase 2 prompt
-                # print(
-                #     f"\n{'=' * 80}\n[PHASE 2 PROMPT - ARGUMENTS | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_prompt}\n{'=' * 80}\n"  # noqa: E501
-                # )
+                if self.config.debug:
+                    print(f"\n[PHASE 2 PROMPT | {request_id} step={step} sample={sample_idx}]\n{args_prompt}")
 
                 if diagnostic is not None:
                     diagnostic.generation_submitted = True
+                sampling_params.output_kind = RequestOutputKind.FINAL_ONLY
                 result_generator = worker.engine.generate(args_prompt, sampling_params, step_id)
                 final_result = None
                 async for result in result_generator:
@@ -881,7 +896,8 @@ class SamplingLayer:
                 if not args_text:
                     return failed("empty_output", "The model output was empty.")
 
-                print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_text}\n{'=' * 80}\n")  # noqa: E501
+                if self.config.debug:
+                    print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{args_text}")
 
                 if uses_json_operations(worker):
                     inspection = JsonActionCodec.inspect_arguments(args_text, action_name, generation_table)

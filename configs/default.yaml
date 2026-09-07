@@ -72,9 +72,11 @@ generation:
     - end
     # Note: direct_query is automatically applied after end(), not a separate action
 
+  # Iterative is always single-shot. These settings enable CoT selection voting.
+  # Counts are fixed by strategy; legacy count fields cannot override the policy.
   sampling:
     enabled: true
-    n_samples: 8
+    n_samples: 1  # Fallback for actions other than row/column selection
     per_action_samples:
       select_row: 8
       select_column: 8
@@ -83,8 +85,8 @@ generation:
       sort_by: 1   # Deterministic action - fewer samples needed
       end: 1
       # Note: direct_query doesn't need sampling config (applied automatically)
-    debug: false
-    shuffle_invariant: false  # Enable shuffle-invariant sampling for robustness 
+    debug: false  # Full prompts, responses, and per-question summaries only when true
+    shuffle_invariant: false  # Shuffle rows for CoT select_row candidates only
 
 logging:
   enable_logging: true

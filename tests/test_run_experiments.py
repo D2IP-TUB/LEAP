@@ -15,6 +15,9 @@ from scripts.run_experiments import (
     ExperimentSession,
     ExperimentSpec,
     JobResult,
+    _job_identifier,
+    _latest_session_attempt,
+    _load_resume_results,
     _run_child_process,
     build_job_config,
     build_report,
@@ -807,6 +810,48 @@ def test_persistent_session_crash_marks_active_job_and_continues(tmp_path, monke
     assert len(attempts) == 2
     assert len(attempts[0]) == 2
     assert len(attempts[1]) == 1
+
+
+def test_resume_results_keep_terminal_jobs_and_leave_started_jobs_pending(tmp_path):
+    jobs = [_job(tmp_path, repeat=1), _job(tmp_path, repeat=2)]
+    experiment_dir = tmp_path / "experiment"
+    status_dir = experiment_dir / "sessions" / "model-a-modern-attempt-1"
+    status_dir.mkdir(parents=True)
+    run_dir = tmp_path / "run"
+    _write_result(run_dir, accuracy=1.0, rows=[{"ok": True}])
+    status_dir.joinpath("status.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"event": "started", "job_id": _job_identifier(jobs[0])}),
+                json.dumps(
+                    {
+                        "event": "completed",
+                        "job_id": _job_identifier(jobs[0]),
+                        "run_dir": str(run_dir),
+                        "runtime_seconds": 1.0,
+                    }
+                ),
+                json.dumps({"event": "started", "job_id": _job_identifier(jobs[1])}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    results, terminal_ids = _load_resume_results(experiment_dir, jobs)
+
+    assert terminal_ids == {_job_identifier(jobs[0])}
+    assert [result.status for result in results] == ["ok"]
+    assert [_job_identifier(job) for job in jobs if _job_identifier(job) not in terminal_ids] == [_job_identifier(jobs[1])]
+
+
+def test_resume_session_attempts_do_not_overwrite_previous_attempts(tmp_path):
+    sessions_dir = tmp_path / "sessions"
+    (sessions_dir / "model-a-modern-attempt-1").mkdir(parents=True)
+    (sessions_dir / "model-a-modern-attempt-3").mkdir(parents=True)
+    (sessions_dir / "unrelated").mkdir()
+
+    assert _latest_session_attempt(tmp_path, "model-a-modern") == 3
 
 
 def test_main_defaults_to_example_spec(monkeypatch, tmp_path):

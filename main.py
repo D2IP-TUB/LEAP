@@ -314,7 +314,6 @@ def write_results_to_jsonl(
                         "winner_votes": m.winner_votes,
                         "total_votes": m.total_votes,
                         "fallback_reason": m.fallback_reason,
-                        "add_column_diagnostics": [asdict(diagnostic) for diagnostic in m.add_column_diagnostics],
                     }
                     for m in (result.sampling_metadata or [])
                 ],
@@ -352,22 +351,20 @@ def get_generation_mode_string(generation_config: GenerationSettings):
 
 
 def create_sampling_layer(generation_settings: GenerationSettings) -> SamplingLayer:
-    if not generation_settings.sampling or not generation_settings.sampling.enabled:
-        # When sampling is disabled, use n=1 (no voting, single generation)
-        print("Sampling disabled - using single-sample generation (n=1)")
-        return SamplingLayer(
-            config=SamplingConfig(
-                enabled=True,
-                n_samples=1,
-                debug=False,
-            )
-        )
-    elif generation_settings.sampling.shuffle_invariant:
-        print(f"Shuffle-invariant sampling enabled: {generation_settings.sampling.n_samples} samples per step")
-        return ShuffleInvariantSamplingLayer(config=generation_settings.sampling)
+    config = (generation_settings.sampling or SamplingConfig()).for_strategy(generation_settings.strategy)
+    if generation_settings.strategy == "direct_query":
+        print("Direct query - action sampling is not used")
+        return SamplingLayer(config=config)
+    if generation_settings.strategy == "iterative":
+        print("Effective sampling: iterative uses one complete operation per attempt; no shuffle sampling")
+    elif not config.enabled:
+        print("Effective sampling: CoT uses one action selection and one argument candidate; sampling disabled")
     else:
-        print(f"Sampling enabled: {generation_settings.sampling.n_samples} samples per step")
-        return SamplingLayer(config=generation_settings.sampling)
+        print("Effective sampling: CoT uses one action selection; 8 argument candidates for select_row/select_column, 1 otherwise")
+    if config.shuffle_invariant:
+        print("Shuffle-invariant sampling enabled for CoT row selection")
+        return ShuffleInvariantSamplingLayer(config=config)
+    return SamplingLayer(config=config)
 
 
 def build_inference_requests(runtime: RuntimeContext, max_examples: int | None) -> list[InferenceRequest]:
@@ -446,7 +443,8 @@ def finalize_results(
     write_end_to_end_accuracy(end_to_end_accuracy, run_paths.accuracy_file)
     extractor_report = calculate_extractor_accuracy_report(results, app_config.extractors)
     write_extractor_accuracy_report(extractor_report, run_paths.extractor_accuracy_file)
-    print_sample_results(results)
+    if generation_settings.sampling and generation_settings.sampling.debug:
+        print_sample_results(results)
     get_aggregate_profiler().print_summary()
     return extractor_report
 
@@ -549,7 +547,7 @@ def _session_compatibility_key(app_config: AppConfig) -> str:
             "tokenizer": app_config.model.tokenizer_config,
         },
         "dataset": app_config.dataset,
-        "sampling": app_config.generation.sampling,
+        # Sampling is run-specific and refreshed in the worker when the run changes.
         "enabled_actions": app_config.generation.enabled_actions,
         "extractors": app_config.extractors,
     }

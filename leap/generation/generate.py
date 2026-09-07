@@ -1,4 +1,5 @@
 from vllm import SamplingParams
+from vllm.sampling_params import RequestOutputKind
 
 from leap.core import Action, Table
 from leap.inference.function_constraints import (
@@ -94,6 +95,7 @@ async def generate_single_action(worker, prompt, table: Table, request_id, state
                 stop=["\n", "Next", "Step"],
             )
 
+        sampling_params.output_kind = RequestOutputKind.FINAL_ONLY
         return await worker.generate_text(prompt, request_id, sampling_params)
 
     except Exception as e:
@@ -174,6 +176,7 @@ async def generate_action_selection(
                 stop_token_ids=[worker.tokenizer.eos_token_id],
             )
 
+        sampling_params.output_kind = RequestOutputKind.FINAL_ONLY
         action_text = await worker.generate_text(prompt, step_id, sampling_params)
         if uses_json_operations(worker):
             allowed = available_json_actions(action_history, use_global_constraints=worker.use_global_constraints)
@@ -251,6 +254,7 @@ async def generate_action_arguments(
                 **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
             )
 
+        sampling_params.output_kind = RequestOutputKind.FINAL_ONLY
         args_text = await worker.generate_text(prompt, step_id, sampling_params)
         if uses_json_operations(worker):
             action = JsonActionCodec.parse_arguments(args_text, action_name, table)

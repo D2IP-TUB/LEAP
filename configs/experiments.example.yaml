@@ -10,6 +10,8 @@ models:
 # xgrammar's modern runtime. legacy_state_machine jobs run only for Qwen2.5
 # models, structured legacy formats are omitted, and direct_query is emitted
 # once per temperature mode because action constraints do not apply.
+# Iterative is always single-shot. Base sampling settings enable eight CoT
+# argument candidates only for select_row/select_column; other actions use one.
 matrix:
   strategies:
     - iterative

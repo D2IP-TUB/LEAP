@@ -376,8 +376,7 @@ def test_parallel_results_jsonl_created_with_expected_entries(tmp_path, capsys):
     m0 = sm[0]
     assert m0["candidate_actions"] == sampling_result.candidate_actions
     assert m0["valid_actions"] == sampling_result.valid_actions
-    assert m0["add_column_diagnostics"][0]["raw_output"] == '{"column":"Rank","values":["1"'
-    assert m0["add_column_diagnostics"][0]["failure_code"] == "invalid_json"
+    assert "add_column_diagnostics" not in m0
     assert m0["n_requested"] == sampling_result.n_requested
     assert m0["n_generated"] == sampling_result.n_generated
     assert m0["n_valid"] == sampling_result.n_valid

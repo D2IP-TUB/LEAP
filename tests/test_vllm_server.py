@@ -9,6 +9,7 @@ import pytest
 
 from leap.config.loader import GenerationConfig, LoggingConfig, TokenizerConfig
 from leap.core import ExecutionMetrics, InferenceRequest, InferenceResult, Table
+from leap.generation.sampling import SamplingConfig, SamplingLayer
 from leap.inference.vllm_server import ProcessParallelVLLM, VLLMWorkerProcess
 
 
@@ -319,7 +320,7 @@ class TestVLLMWorkerProcess:
 
         assert events == ["loop"]
 
-    def test_apply_run_config_updates_generation_without_reloading_engine(self):
+    def test_apply_run_config_refreshes_sampling_policy_without_reloading_engine(self):
         worker = self._worker()
         engine_marker = object()
         worker.engine = engine_marker
@@ -329,12 +330,25 @@ class TestVLLMWorkerProcess:
             strategy="cot",
             constraint_backend="xgrammar",
             output_format="json",
+            sampling=SamplingConfig(enabled=True, n_samples=8),
         )
         logging = create_test_logging_config(enable_logging=False)
 
+        class HandlerOwner:
+            def __init__(self):
+                self.sampling_layer = SamplingLayer(SamplingConfig(enabled=True, n_samples=8))
+
+            def generate(self):
+                pass
+
+        owner = HandlerOwner()
+        worker.generation_functions = {"handler": owner.generate}
         worker._apply_run_config(generation, logging)
 
         assert worker.engine is engine_marker
+        assert owner.sampling_layer.config.get_n_samples("select_row") == 8
+        assert owner.sampling_layer.config.get_n_samples("add_column") == 1
+        assert isinstance(owner.sampling_layer, SamplingLayer)
         assert worker.generation_config is generation
         assert worker.use_constraints is False
         assert worker.use_cot is True

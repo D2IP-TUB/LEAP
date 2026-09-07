@@ -45,6 +45,10 @@ class BaseGenerationStrategy:
         self.sampling_layer = sampling_layer
         self.extractors = tuple(extractors)
 
+    @property
+    def debug(self) -> bool:
+        return getattr(getattr(self.sampling_layer, "config", None), "debug", False) is True
+
     async def _run_answer_extractors(
         self,
         *,
@@ -71,7 +75,10 @@ class BaseGenerationStrategy:
                 accuracy = float(check_denotation(targets, to_value_list(result.answers)))
             scored = replace(result, accuracy=accuracy)
             scored_results.append(scored)
-            print(f"[EXTRACTOR {scored.method}] accuracy={scored.accuracy:.1f} answers={scored.answers} error={scored.error}")
+            if self.debug:
+                print(f"[EXTRACTOR {scored.method}] accuracy={scored.accuracy:.1f} answers={scored.answers} error={scored.error}")
+            elif scored.error:
+                print(f"[EXTRACTOR {scored.method}] request={request_id} error={str(scored.error)[:300]}")
         return scored_results
 
     async def generate_action_step(
@@ -185,7 +192,7 @@ class BaseGenerationStrategy:
 
                 if not new_table:
                     validity_failures += 1
-                    print(f"Step {step}: Failed to apply action: {action.to_string()}")
+                    print(f"Step {step}: Failed to apply action: {action.to_string() if self.debug else action.name}")
                     if logging_callback:
                         logging_callback(
                             request_id,
@@ -222,10 +229,11 @@ class BaseGenerationStrategy:
                 validity_failures = 0
                 step += 1
                 profiler.end_step(step_start, step - 1, action.name)
-                print(f"Step {step}: Applied {action.to_string()}")
-                print(f"  [DEBUG] Table columns ({len(current_table.columns)}), rows ({len(current_table.rows)}):")
-                for col in current_table.columns:
-                    print(f"    - {col}")
+                if self.debug:
+                    print(f"Step {step}: Applied {action.to_string()}")
+                    print(f"  [DEBUG] Table columns ({len(current_table.columns)}), rows ({len(current_table.rows)}):")
+                    for col in current_table.columns:
+                        print(f"    - {col}")
 
                 if logging_callback:
                     logging_callback(
@@ -277,17 +285,15 @@ class BaseGenerationStrategy:
                 action_history, current_table, ground_truth_answers, original_table, generated_answers
             )
 
-        # Print evaluation results
-        print(
-            f"[EVALUATION RESULT] Execution Accuracy: {accuracy_metrics.execution_accuracy:.2f} | "
-            f"Answer Found: {accuracy_metrics.answer_found_in_final} | "
-            f"Terminated Properly: {accuracy_metrics.terminated_properly} | "
-            f"Matched: {accuracy_metrics.matched_answers_final}"
-        )
-
-        # Print per-request timing summary
         total_time = profiler.get_total_time()
-        print(f"Request {request_id} completed in {total_time:.2f}s - Operations: {profiler.timings}")
+        if self.debug:
+            print(
+                f"[EVALUATION RESULT] Execution Accuracy: {accuracy_metrics.execution_accuracy:.2f} | "
+                f"Answer Found: {accuracy_metrics.answer_found_in_final} | "
+                f"Terminated Properly: {accuracy_metrics.terminated_properly} | "
+                f"Matched: {accuracy_metrics.matched_answers_final}"
+            )
+            print(f"Request {request_id} completed in {total_time:.2f}s - Operations: {profiler.timings}")
 
         # Package profiling data to send back to main process
         profiling_data = {
@@ -330,7 +336,7 @@ class IterativeGenerationStrategy(BaseGenerationStrategy):
         """Generate a single action using iterative strategy (single-call)."""
         step_id = f"{request_id}_step{step}"
 
-        # Always use sampling layer (with n=1 when sampling is disabled)
+        # The shared layer validates a single complete operation; iterative never votes or shuffles.
         sampling_result = await self.sampling_layer.sample_action(
             worker=worker,
             table=current_table,
@@ -443,7 +449,8 @@ class DirectQueryGenerationStrategy(BaseGenerationStrategy):
         action_history = ["end()", "direct_query()"]
         generation_mode = self.get_generation_mode_string(worker)
 
-        print("Direct query mode: Skipping action generation, going straight to answer generation")
+        if self.debug:
+            print("Direct query mode: Skipping action generation, going straight to answer generation")
 
         if logging_callback:
             logging_callback(request_id, 0, "initial", original_table, generation_mode=generation_mode)
@@ -467,17 +474,15 @@ class DirectQueryGenerationStrategy(BaseGenerationStrategy):
                 action_history, original_table, ground_truth_answers, original_table, generated_answers
             )
 
-        # Print evaluation results
-        print(
-            f"[EVALUATION RESULT] Execution Accuracy: {accuracy_metrics.execution_accuracy:.2f} | "
-            f"Answer Found: {accuracy_metrics.answer_found_in_final} | "
-            f"Terminated Properly: {accuracy_metrics.terminated_properly} | "
-            f"Matched: {accuracy_metrics.matched_answers_final}"
-        )
-
-        # Print timing summary
         total_time = profiler.get_total_time()
-        print(f"Request {request_id} completed in {total_time:.2f}s - Operations: {profiler.timings}")
+        if self.debug:
+            print(
+                f"[EVALUATION RESULT] Execution Accuracy: {accuracy_metrics.execution_accuracy:.2f} | "
+                f"Answer Found: {accuracy_metrics.answer_found_in_final} | "
+                f"Terminated Properly: {accuracy_metrics.terminated_properly} | "
+                f"Matched: {accuracy_metrics.matched_answers_final}"
+            )
+            print(f"Request {request_id} completed in {total_time:.2f}s - Operations: {profiler.timings}")
 
         # Package profiling data
         profiling_data = {

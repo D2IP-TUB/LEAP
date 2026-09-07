@@ -57,8 +57,8 @@ Besides the choice wether to constrain the generation and how to do so, LEAP als
 
 | Choice | Model requests | Table transformation | Use in comparisons |
 |---|---|---|---|
-| `iterative` | One complete operation request at each step. Sampling can create multiple candidates for that request. | Applies the winning operation, then prompts again with the replacement table. | Main single-stage transformation method. |
-| `cot` | Two requests at each step: select an action, then generate arguments for that selected action. | Applies the complete second-stage operation. Default selection temperature is 0 and argument temperature is 0.7. | Chain-of-Table implementation. |
+| `iterative` | One complete operation request per attempt. No voting or shuffle sampling. | Validates and applies that operation, then prompts again with the replacement table. | Main single-stage transformation method. |
+| `cot` | Select an action once, then generate arguments. With sampling enabled, row/column selection gets eight argument candidates; other actions get one. `end` needs no arguments. | Votes over selection candidates and applies the operation. Default selection temperature is 0 and argument temperature is 0.7. | Chain-of-Table implementation. |
 | `direct_query` | No action-generation request. It runs answer extraction on the original table. | None. LEAP records `end()` and `direct_query()` immediately. | Baseline for the value of table transformations. |
 
 
@@ -83,6 +83,16 @@ flowchart TB
 ```
 
 Function and JSON execution keep table state in the LEAP worker process.
+
+The sampling policy applies to both output formats and constrained/unconstrained
+runs. Disabling sampling makes CoT argument generation single-shot too. Legacy
+sample-count settings cannot override the policy. Shuffle sampling is limited to
+CoT row selection. Earlier iterative results may use multiple candidates and
+should not be treated as the same sampling configuration as new single-shot runs.
+
+Action requests use final-only vLLM output; token-level constraints still apply
+throughout decoding. CoT calculates the full-column token budget only for
+`add_column`. No grammar validation or cardinality checks are removed.
 
 ### Operation examples
 
@@ -134,6 +144,14 @@ flowchart LR
 The runtime bootstrap happens before imports that load vLLM. It reads the constraint state, backend, and output format, then re-executes `main.py` in the matching generated environment. The resolved configuration controls the tokenizer, model hardware, enabled actions, generation method, extractors, dataset, and logging.
 
 The strategy owns the current table and action history for one example. It passes both into the prompt builder. The sampling layer obtains one or more model candidates and accepts a valid operation. LEAP applies that operation locally. This loop ends at `end()`, after three generation failures, after three validity failures, or after ten action steps.
+
+Persistent workers refresh their sampling layers when run settings change, so
+switching strategies does not require reloading a compatible model.
+
+Full prompts, responses, applied-action payloads, and per-question summaries print
+only when `generation.sampling.debug` is true. With debugging disabled, stdout
+retains progress, warnings/errors, and aggregate summaries. This does not disable
+structured results, table logs, or compact failed-candidate summary counts. Raw candidate diagnostics are not persisted.
 
 The final table, action history, reference answers, and extractor output go to evaluation. `main.py` writes `results.jsonl` with one record per example, `end_to_end_accuracy.json` with the run-level execution score, `extractor_accuracy.json` with per-extractor scores, and `run_config.json` with the resolved configuration and runtime metadata. When logging is enabled, workers also produce table-step logs under the run's `table_logs/` directory.
 
@@ -231,5 +249,13 @@ Run the example experiment matrix:
 uv run scripts/run_experiments.py configs/experiments.example.yaml
 ```
 
+If the runner is interrupted, resume the existing experiment directory instead of
+starting a new matrix. This keeps completed jobs and generated configs, and reruns
+only jobs without a terminal session event:
 
+```bash
+uv run scripts/run_experiments.py --resume results/experiments/<experiment-id>
+```
 
+The resumed run uses the current working-tree implementation but the frozen
+experiment specification and per-job configs saved in that directory.

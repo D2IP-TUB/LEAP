@@ -301,7 +301,11 @@ def _build_generation_config(
         constraint_backend=constraint_backend,
         output_format=output_format,
         force_zero_temperature=force_zero_temperature,
-        sampling=sampling_config,
+        sampling=(
+            sampling_config.for_strategy(generation_section.get("strategy", "cot"))
+            if hasattr(sampling_config, "for_strategy")
+            else sampling_config
+        ),
         enabled_actions=enabled_actions_tuple,
     )
 

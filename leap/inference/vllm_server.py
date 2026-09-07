@@ -114,6 +114,18 @@ class VLLMWorkerProcess(mp.Process):
         self.model_loaded = mp.Event()
 
     def _apply_run_config(self, generation_config: GenerationConfig, logging_config: LoggingConfig) -> None:
+        if generation_config != self.generation_config:
+            from leap.generation.sampling import SamplingConfig, SamplingLayer
+            from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
+
+            config = (generation_config.sampling or SamplingConfig()).for_strategy(generation_config.strategy)
+            layer_type = (
+                ShuffleInvariantSamplingLayer if config.shuffle_invariant and generation_config.strategy == "cot" else SamplingLayer
+            )
+            for generation_func in self.generation_functions.values():
+                strategy = getattr(generation_func, "__self__", None)
+                if strategy is not None and hasattr(strategy, "sampling_layer"):
+                    strategy.sampling_layer = layer_type(config)
         self.generation_config = generation_config
         self.logging_config = logging_config
         self.use_constraints = generation_config.use_constraints

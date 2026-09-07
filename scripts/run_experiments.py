@@ -238,7 +238,7 @@ def validate_python_executable(python_executable: Path) -> None:
     )
 
 
-def create_jobs(spec: ExperimentSpec, experiment_dir: Path) -> list[ExperimentJob]:
+def create_jobs(spec: ExperimentSpec, experiment_dir: Path, *, write_configs: bool = True) -> list[ExperimentJob]:
     base_config = _load_yaml(spec.base_config)
     config_dir = experiment_dir / "configs"
     run_root = experiment_dir / "runs"
@@ -268,7 +268,10 @@ def create_jobs(spec: ExperimentSpec, experiment_dir: Path) -> list[ExperimentJo
                 )
                 stem = _job_stem(model_slug, repeat=repeat, **setting)
                 config_path = config_dir / f"{stem}.yaml"
-                _write_yaml(config_path, job_config)
+                if write_configs:
+                    _write_yaml(config_path, job_config)
+                elif not config_path.exists():
+                    raise FileNotFoundError(f"Frozen experiment config is missing: {config_path}")
                 jobs.append(
                     ExperimentJob(
                         model=model,
@@ -602,7 +605,7 @@ def run_session_group(
     on_result,
 ) -> None:
     pending = list(session.jobs)
-    attempt = 0
+    attempt = _latest_session_attempt(experiment_dir, session.session_id)
     while pending:
         attempt += 1
         attempt_id = f"{session.session_id}-attempt-{attempt}"
@@ -761,6 +764,17 @@ def _run_session_process(
         LOGGER.exception("Persistent experiment session failed")
         _consume_session_events(status_path, status_offset, on_event)
         return int(process.returncode) if process and process.returncode is not None else -1, process_error
+
+
+def _latest_session_attempt(experiment_dir: Path, session_id: str) -> int:
+    sessions_dir = experiment_dir / "sessions"
+    attempts = []
+    for path in sessions_dir.glob(f"{session_id}-attempt-*"):
+        try:
+            attempts.append(int(path.name.rsplit("-", 1)[1]))
+        except ValueError:
+            continue
+    return max(attempts, default=0)
 
 
 def _consume_session_events(status_path: Path, offset: int, on_event) -> int:
@@ -922,7 +936,14 @@ def _collect_error_summary(run_dir: Path, rows: list[dict[str, Any]]) -> dict[st
     }
 
 
-def build_report(spec: ExperimentSpec, experiment_id: str, experiment_dir: Path, job_results: list[JobResult]) -> dict[str, Any]:
+def build_report(
+    spec: ExperimentSpec,
+    experiment_id: str,
+    experiment_dir: Path,
+    job_results: list[JobResult],
+    *,
+    resumed: bool = False,
+) -> dict[str, Any]:
     serial_jobs = [asdict(result) for result in job_results]
     configuration_keys = ("strategy", "use_constraints", "use_global_constraints", "constraint_backend", "output_format", "add_column")
     comparison_inputs = [
@@ -940,6 +961,7 @@ def build_report(spec: ExperimentSpec, experiment_id: str, experiment_dir: Path,
     return {
         "experiment_id": experiment_id,
         "experiment_dir": str(experiment_dir),
+        "resumed": resumed,
         "base_config": str(spec.base_config),
         "models": spec.models,
         "matrix": asdict(spec.matrix),
@@ -977,6 +999,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
         "# Experiment Report",
         "",
         f"Experiment ID: {report['experiment_id']}",
+        f"Resumed: {report.get('resumed', False)}",
         f"Base config: {report['base_config']}",
         f"Max examples: {report['max_examples']}",
         f"Repeats: {report['repeats']}",
@@ -1373,6 +1396,48 @@ def render_comparison_report(report: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _load_resume_spec(spec_path: Path) -> ExperimentSpec:
+    raw = _read_yaml_raw(spec_path)
+    if not isinstance(raw, dict):
+        raise ValueError(f"Frozen experiment specification {spec_path} must contain a mapping.")
+    raw = copy.deepcopy(raw)
+    for key in ("base_config", "output_root", "python_executable"):
+        value = raw.get(key)
+        if value is not None and not Path(value).is_absolute():
+            candidate = PROJECT_ROOT / value
+            if key == "base_config" and not candidate.exists():
+                raise FileNotFoundError(f"Frozen base config is missing: {candidate}")
+            raw[key] = str(candidate)
+    temporary_spec = spec_path.with_name(f".{spec_path.name}.resume.yaml")
+    try:
+        _write_yaml(temporary_spec, raw)
+        return load_experiment_spec(temporary_spec)
+    finally:
+        temporary_spec.unlink(missing_ok=True)
+
+
+def _load_resume_results(experiment_dir: Path, jobs: list[ExperimentJob]) -> tuple[list[JobResult], set[str]]:
+    job_by_id = {_job_identifier(job): job for job in jobs}
+    results: list[JobResult] = []
+    terminal_ids: set[str] = set()
+    for status_path in sorted((experiment_dir / "sessions").glob("*/status.jsonl")):
+        session_id = status_path.parent.name
+        stdout_log = experiment_dir / "job_logs" / f"{session_id}.stdout.log"
+        stderr_log = experiment_dir / "job_logs" / f"{session_id}.stderr.log"
+        for line in status_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            job_id = event.get("job_id")
+            if job_id not in job_by_id or event.get("event") not in {"completed", "failed"}:
+                continue
+            if job_id in terminal_ids:
+                continue
+            terminal_ids.add(job_id)
+            results.append(_result_from_session_event(job_by_id[job_id], event, stdout_log, stderr_log, session_id))
+    return results, terminal_ids
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run configured LEAP experiments.")
     parser.add_argument(
@@ -1382,37 +1447,59 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_SPEC_PATH,
         help=f"Path to an experiments YAML file. Defaults to {DEFAULT_SPEC_PATH}.",
     )
+    parser.add_argument(
+        "--resume",
+        type=Path,
+        metavar="EXPERIMENT_DIR",
+        help="Resume an existing experiment directory without regenerating its job configs.",
+    )
     parser.add_argument("--log-level", default="INFO", help="Python logging level. Defaults to INFO.")
     args = parser.parse_args(argv)
     _configure_logging(args.log_level)
 
-    spec = load_experiment_spec(args.spec)
+    resumed = args.resume is not None
+    if resumed:
+        experiment_dir = args.resume.resolve()
+        spec_path = experiment_dir / "experiment_spec.yaml"
+        if not spec_path.exists():
+            raise FileNotFoundError(f"Frozen experiment specification not found: {spec_path}")
+        spec = _load_resume_spec(spec_path)
+        experiment_id = experiment_dir.name
+    else:
+        spec = load_experiment_spec(args.spec)
+        experiment_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        experiment_dir = spec.output_root / experiment_id
+        experiment_dir.mkdir(parents=True, exist_ok=True)
+        _write_yaml(experiment_dir / "experiment_spec.yaml", _read_yaml_raw(args.spec))
+
     validate_models(spec)
     validate_python_executable(spec.python_executable)
+    jobs = create_jobs(spec, experiment_dir, write_configs=False) if resumed else create_jobs(spec, experiment_dir)
+    restored_results, terminal_ids = _load_resume_results(experiment_dir, jobs) if resumed else ([], set())
+    pending_jobs = [job for job in jobs if _job_identifier(job) not in terminal_ids]
 
-    experiment_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    experiment_dir = spec.output_root / experiment_id
-    experiment_dir.mkdir(parents=True, exist_ok=True)
-    _write_yaml(experiment_dir / "experiment_spec.yaml", _read_yaml_raw(args.spec))
-
-    jobs = create_jobs(spec, experiment_dir)
-    LOGGER.info("Experiment %s", experiment_id)
+    LOGGER.info("Experiment %s%s", experiment_id, " (resumed)" if resumed else "")
     LOGGER.info("Output directory: %s", experiment_dir)
     LOGGER.info("Python executable: %s", spec.python_executable)
-    LOGGER.info("Prepared %s jobs", len(jobs))
+    LOGGER.info("Prepared %s jobs; %s already terminal, %s pending", len(jobs), len(restored_results), len(pending_jobs))
     for note in describe_matrix_adjustments(spec.matrix):
         LOGGER.info("Matrix adjustment: %s", note)
 
-    job_results: list[JobResult] = []
+    job_results: list[JobResult] = list(restored_results)
     project_root = PROJECT_ROOT
-    progress = tqdm(total=len(jobs), desc="Experiments", unit="job")
+    progress = tqdm(total=len(jobs), desc="Experiments", unit="job", initial=len(restored_results))
 
     def record_result(result: JobResult) -> None:
         job_results.append(result)
         progress.update(1)
         progress.set_postfix_str(f"{result.strategy} r{result.repeat}", refresh=False)
         try:
-            write_reports(build_report(spec, experiment_id, experiment_dir, job_results), experiment_dir)
+            report = (
+                build_report(spec, experiment_id, experiment_dir, job_results, resumed=True)
+                if resumed
+                else build_report(spec, experiment_id, experiment_dir, job_results)
+            )
+            write_reports(report, experiment_dir)
         except Exception:
             LOGGER.exception("Could not update experiment reports; continuing with the next job")
         if result.status == "ok":
@@ -1438,7 +1525,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if spec.reuse_models:
-            sessions = group_jobs(jobs)
+            sessions = group_jobs(pending_jobs)
             LOGGER.info("Prepared %s persistent model/runtime sessions", len(sessions))
             for session in sessions:
                 LOGGER.info(
@@ -1455,7 +1542,7 @@ def main(argv: list[str] | None = None) -> int:
                     on_result=record_result,
                 )
         else:
-            for job in jobs:
+            for job in pending_jobs:
                 try:
                     result = run_job(
                         job,
@@ -1482,7 +1569,12 @@ def main(argv: list[str] | None = None) -> int:
         progress.close()
 
     try:
-        write_reports(build_report(spec, experiment_id, experiment_dir, job_results), experiment_dir)
+        report = (
+            build_report(spec, experiment_id, experiment_dir, job_results, resumed=True)
+            if resumed
+            else build_report(spec, experiment_id, experiment_dir, job_results)
+        )
+        write_reports(report, experiment_dir)
     except Exception:
         LOGGER.exception("Could not write final experiment reports")
         return 1
