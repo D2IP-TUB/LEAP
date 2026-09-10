@@ -19,6 +19,39 @@ from .table import Table
 
 
 @dataclass(frozen=True)
+class ExtractorResult:
+    """Answer and evaluation details produced by one extraction method."""
+
+    method: str
+    answers: List[str]
+    accuracy: float
+    error: Optional[str] = None
+    attempts: int = 1
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ExtractorResult":
+        return cls(
+            method=data["method"],
+            answers=list(data.get("answers", [])),
+            accuracy=float(data.get("accuracy", 0.0)),
+            error=data.get("error"),
+            attempts=int(data.get("attempts", 1)),
+            metadata=dict(data.get("metadata", {})),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "method": self.method,
+            "answers": self.answers,
+            "accuracy": self.accuracy,
+            "error": self.error,
+            "attempts": self.attempts,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass(frozen=True)
 class ExecutionMetrics:
     """Metrics from executing a sequence of actions on a table
 
@@ -92,7 +125,6 @@ class InferenceRequest:
     table: Table
     ground_truth_answers: List[str]
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    table_caption: Optional[str] = None
 
     @classmethod
     def from_example(cls, example: Dict[str, Any], index: Optional[int] = None) -> "InferenceRequest":
@@ -106,13 +138,12 @@ class InferenceRequest:
             InferenceRequest instance
         """
         table = Table(columns=example["table"]["header"], rows=example["table"]["rows"])
-        request_id = f"req_{index}" if index is not None else str(uuid.uuid4())
+        request_id = f"example_{index}" if index is not None else str(uuid.uuid4())
         return cls(
             question=example["question"],
             table=table,
             ground_truth_answers=example["answers"],
             request_id=request_id,
-            table_caption=example["table"].get("name"),
         )
 
     @classmethod
@@ -133,7 +164,6 @@ class InferenceRequest:
             table=table,
             ground_truth_answers=data["ground_truth_answers"],
             request_id=data.get("request_id", str(uuid.uuid4())),
-            table_caption=data.get("table_caption"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -147,7 +177,6 @@ class InferenceRequest:
             "table": self.table,  # Keep as Table object (it's a dataclass)
             "ground_truth_answers": self.ground_truth_answers,
             "request_id": self.request_id,
-            "table_caption": self.table_caption,
         }
 
 
@@ -168,6 +197,7 @@ class InferenceResult:
     profiling_data: Optional[Dict[str, Any]] = None  # Profiling timings from worker
     sampling_metadata: Optional[List[Any]] = None  # List of SamplingResult objects
     generated_answers: Optional[List[str]] = None  # Generated answers from Query(T,Q)
+    extractor_results: Optional[List[ExtractorResult]] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "InferenceResult":
@@ -198,6 +228,7 @@ class InferenceResult:
                 request_id=data.get("request_id"),
                 question=data.get("question"),
                 ground_truth_answers=data.get("ground_truth_answers"),
+                extractor_results=[],
             )
 
         # Convert metrics if it's a dict
@@ -220,6 +251,7 @@ class InferenceResult:
             profiling_data=data.get("profiling_data"),
             sampling_metadata=data.get("sampling_metadata"),
             generated_answers=data.get("generated_answers"),
+            extractor_results=[ExtractorResult.from_dict(item) for item in data.get("extractor_results", [])],
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -238,6 +270,7 @@ class InferenceResult:
             "profiling_data": self.profiling_data,
             "sampling_metadata": self.sampling_metadata,
             "generated_answers": self.generated_answers,
+            "extractor_results": [result.to_dict() for result in (self.extractor_results or [])],
         }
 
     def get_actions(self) -> List[Action]:

@@ -12,6 +12,7 @@ class RequestProfiler:
     def __init__(self, request_id: str):
         self.request_id = request_id
         self.timings: Dict[str, float] = {}
+        self.diagnostic_timings: Dict[str, float] = {}
         self.start_time = time.perf_counter()
 
     @contextmanager
@@ -23,6 +24,11 @@ class RequestProfiler:
         finally:
             duration = time.perf_counter() - start
             self.timings[operation] = self.timings.get(operation, 0.0) + duration
+
+    def record_timing(self, operation: str, duration: float, *, diagnostic: bool = False) -> None:
+        """Record a measured duration without requiring a context manager."""
+        timings = self.diagnostic_timings if diagnostic else self.timings
+        timings[operation] = timings.get(operation, 0.0) + duration
 
     def start_step(self) -> float:
         """Start timing a new step"""
@@ -42,15 +48,31 @@ class AggregateProfiler:
 
     def __init__(self):
         self.operation_times: Dict[str, List[float]] = defaultdict(list)
+        self.diagnostic_times: Dict[str, List[float]] = defaultdict(list)
         self.request_times: List[float] = []
         self.step_counts: List[int] = []
 
-    def add_request_profile(self, total_time: float, operation_timings: Dict[str, float], num_steps: int):
-        """Add profiling data from a completed request"""
+    def add_request_profile(
+        self,
+        total_time: float,
+        operation_timings: Dict[str, float],
+        num_steps: int,
+        diagnostic_timings: Dict[str, float] | None = None,
+    ):
+        """Add profiling data from a completed request."""
         self.request_times.append(total_time)
         self.step_counts.append(num_steps)
         for operation, time_spent in operation_timings.items():
             self.operation_times[operation].append(time_spent)
+        for diagnostic, time_spent in (diagnostic_timings or {}).items():
+            self.diagnostic_times[diagnostic].append(time_spent)
+
+    def reset(self) -> None:
+        """Clear all accumulated per-run profiling data."""
+        self.operation_times.clear()
+        self.diagnostic_times.clear()
+        self.request_times.clear()
+        self.step_counts.clear()
 
     def print_summary(self):
         """Print comprehensive summary of all profiling data"""
@@ -79,6 +101,13 @@ class AggregateProfiler:
             min_time = min(times)
             max_time = max(times)
             print(f"  {operation:30s}: {avg_time_spent:6.3f}s ({percentage:5.1f}%) [min: {min_time:.3f}s, max: {max_time:.3f}s]")
+
+        if self.diagnostic_times:
+            print("\nMCP DIAGNOSTICS (per request average):")
+            print("-" * 80)
+            for diagnostic, times in sorted(self.diagnostic_times.items()):
+                average = sum(times) / num_requests
+                print(f"  {diagnostic:30s}: {average:6.3f}s [min: {min(times):.3f}s, max: {max(times):.3f}s]")
 
         print("\n" + "=" * 80)
 

@@ -1,6 +1,10 @@
 model:
   # id: "meta-llama/Llama-4-Scout-17B-16E-Instruct"
-  id: Qwen/Qwen2.5-7B-Instruct
+  # id: "mistralai/Mistral-7B-Instruct-v0.2"
+  # id: Qwen/Qwen3-235B-A22B  # Set constraint_backend to xgrammar.
+  # id: Qwen/Qwen3.8-27B       # Set constraint_backend to xgrammar.
+  id: Qwen/Qwen2.5-32B-Instruct
+  # id: "gpt2"
   presets_path: "configs/models.yaml"
   # possible alternatives:
   # "meta-llama/Llama-2-70b-hf"
@@ -15,48 +19,74 @@ model:
 
 dataset:
   loader: "huggingface"  # options: huggingface, json, disk
-  name: "wikitablequestions"
+  name: "stanfordnlp/wikitablequestions"
   split: "train"
   trust_remote_code: true
   data_files: null
   path: null
 
 run:
-  max_examples: 300
+  max_examples: 30
+
+# Answer extraction methods run independently on every strategy's final table.
+extractors:
+  - direct_query
+  # - nl2sql
+  # - nl2code
+  # - end2ender
+  # - cot_end2ender
 
 generation:
-  use_constraints: false
-  use_global_constraints: false
+  use_constraints: true
+  use_global_constraints: true
+
+  # Operation protocol: "function" preserves f_action(...), while "json" uses
+  # named JSON objects.
+  # legacy_state_machine always forces this setting to "function".
+  output_format: "function"
+
+  # Unconstrained generation always uses vLLM >=0.28,<0.29 with the V1 engine.
+  # When constraints are enabled, "xgrammar" also uses V1, while
+  # "legacy_state_machine" uses vLLM 0.10.0/V0 for historical reproduction.
+  # If this setting is omitted, constrained runs use xgrammar. Select
+  # legacy_state_machine only with a Qwen2.5 model. It forces the function
+  # operation format and the legacy runtime when constraints are on.
+  # xgrammar supports add_column in function and JSON formats.
+  # constraint_backend: "xgrammar"
+  constraint_backend: "legacy_state_machine"
 
   # Generation strategy: "iterative", "cot", or "direct_query"
   # - "iterative": single-phase iterative generation
   # - "cot": two-phase Chain-of-Table generation
   # - "direct_query": skip all table transformations, answer directly (baseline)
   strategy: "cot"
+  force_zero_temperature: false
 
   # Enabled actions - configure which actions are available for this experiment
   enabled_actions:
     - select_row
-    - add_column
     - select_column
     - group_by
     - sort_by
+    - add_column
     - end
     # Note: direct_query is automatically applied after end(), not a separate action
 
+  # Iterative is always single-shot. These settings enable CoT selection voting.
+  # Counts are fixed by strategy; legacy count fields cannot override the policy.
   sampling:
     enabled: true
-    n_samples: 8
+    n_samples: 1  # Fallback for actions other than row/column selection
     per_action_samples:
-      add_column: 1  # Generative action - fewer samples needed
       select_row: 8
       select_column: 8
+      add_column: 1
       group_by: 1  # Deterministic action - fewer samples needed
       sort_by: 1   # Deterministic action - fewer samples needed
       end: 1
       # Note: direct_query doesn't need sampling config (applied automatically)
-    debug: true
-    shuffle_invariant: false  # Enable shuffle-invariant sampling for robustness 
+    debug: false  # Full prompts, responses, and per-question summaries only when true
+    shuffle_invariant: false  # Shuffle rows for CoT select_row candidates only
 
 logging:
   enable_logging: true
@@ -65,4 +95,3 @@ logging:
   compress_logs: false
   log_format: "readable"
   max_table_chars: 10000
-

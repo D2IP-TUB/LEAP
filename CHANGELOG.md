@@ -5,7 +5,20 @@ All notable changes to the LEAP project are documented in this file.
 ## [Unreleased] - 19.12.2025
 
 ### Added
-
+ - Added xGrammar constrained decoding and retained legacy state-machine support.
+ - Added automatic selection of isolated modern and legacy vLLM runtimes.
+ - Introduced JSON operation output, strict parsing, and JSON Schema constraints.
+ - Added Direct Query, NL2SQL, NL2Code, End2End, and CoT End2End answer extractors.
+ - Added iterative, Chain-of-Table, and direct-query prompt configurations.
+ - Expanded experiment matrices across strategies, constraints, backends, formats, models, and
+   repeats.
+ - Optimized experiment execution through model reuse, grouped sessions, health checks, and worker
+   restarts.
+ - Improved reports with per-extractor accuracy, aggregate metrics, failures, runtimes, and
+   model-load details.
+ - Fixed action parsing, prompt generation, global constraints, sorting/grouping, and add_column
+   compatibility issues.
+ - Updated GPU allocations and added an accuracy-analysis notebook.
 #### Features
 - **Action Registry System**: Implemented centralized action management system
   - New registry-based architecture for registering and managing actions

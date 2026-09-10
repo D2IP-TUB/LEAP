@@ -11,6 +11,17 @@ from typing import Any, Dict, List, Optional, Set
 
 from ..table import Table
 
+# Canonical LEAP operation ordering. Global action constraints use the most
+# recent operation to select the next row from this transition matrix.
+GLOBAL_ACTION_TRANSITIONS: Dict[Optional[str], tuple[str, ...]] = {
+    None: ("add_column", "select_row", "select_column", "group_by", "sort_by"),
+    "add_column": ("select_row", "select_column", "group_by", "sort_by", "end"),
+    "select_row": ("select_column", "group_by", "sort_by", "end"),
+    "select_column": ("group_by", "sort_by", "end"),
+    "group_by": ("sort_by", "end"),
+    "sort_by": ("end",),
+}
+
 
 class ActionDefinition(ABC):
     """
@@ -182,7 +193,12 @@ class ActionRegistry:
             params[name] = action.generate_params(table)
         return params
 
-    def get_prompt_text_iterative(self, action_history: Optional[List[str]] = None) -> str:
+    def get_prompt_text_iterative(
+        self,
+        action_history: Optional[List[str]] = None,
+        excluded_actions: Optional[Set[str]] = None,
+        use_global_constraints: bool = False,
+    ) -> str:
         """
         Generate prompt text for iterative strategy.
 
@@ -192,10 +208,11 @@ class ActionRegistry:
             action_history: List of actions already taken. If provided, these actions
                           will be filtered out from the available options (except 'end').
         """
-        enabled = self.get_enabled_names()
+        enabled = self.get_global_available_actions(action_history) if use_global_constraints else self.get_enabled_names()
+        enabled = [name for name in enabled if name not in (excluded_actions or set())]
 
         # Filter out already-used actions (but always keep 'end' as an option)
-        if action_history:
+        if action_history and not use_global_constraints:
             used_actions = self._extract_action_names_from_history(action_history)
             enabled = [name for name in enabled if name not in used_actions or name == "end"]
 
@@ -212,7 +229,13 @@ class ActionRegistry:
             # Multiple actions: "op1, op2, or op3"
             return ", ".join(action_texts[:-1]) + f", or {action_texts[-1]}"
 
-    def get_prompt_text_cot(self, action_history: Optional[List[str]] = None, exclude_terminating_on_first: bool = True) -> str:
+    def get_prompt_text_cot(
+        self,
+        action_history: Optional[List[str]] = None,
+        exclude_terminating_on_first: bool = True,
+        excluded_actions: Optional[Set[str]] = None,
+        use_global_constraints: bool = False,
+    ) -> str:
         """
         Generate prompt text for CoT strategy.
 
@@ -224,20 +247,27 @@ class ActionRegistry:
             exclude_terminating_on_first: If True, exclude terminating actions when action_history is empty.
                                          This follows the Chain-of-Table paper convention.
         """
-        enabled = self.get_enabled_names()
+        enabled = self.get_global_available_actions(action_history) if use_global_constraints else self.get_enabled_names()
+        enabled = [name for name in enabled if name not in (excluded_actions or set())]
 
         # On first step (empty history), exclude terminating actions
-        if exclude_terminating_on_first and (not action_history or len(action_history) == 0):
+        if not use_global_constraints and exclude_terminating_on_first and not action_history:
             enabled = [name for name in enabled if not self._actions[name].is_terminating]
         # Filter out already-used actions (but always keep 'end' as an option)
-        elif action_history:
+        elif not use_global_constraints and action_history:
             used_actions = self._extract_action_names_from_history(action_history)
             enabled = [name for name in enabled if name not in used_actions or name == "end"]
 
         action_texts = [self._actions[name].get_prompt_text_cot() for name in enabled]
         return ", ".join(action_texts)
 
-    def get_action_descriptions(self, action_history: Optional[List[str]] = None, exclude_terminating_on_first: bool = True) -> str:
+    def get_action_descriptions(
+        self,
+        action_history: Optional[List[str]] = None,
+        exclude_terminating_on_first: bool = True,
+        excluded_actions: Optional[Set[str]] = None,
+        use_global_constraints: bool = False,
+    ) -> str:
         """
         Generate formatted action descriptions for prompts.
 
@@ -257,13 +287,14 @@ class ActionRegistry:
             exclude_terminating_on_first: If True, exclude terminating actions when action_history is empty.
                                          This follows the Chain-of-Table paper convention.
         """
-        enabled = self.get_enabled_names()
+        enabled = self.get_global_available_actions(action_history) if use_global_constraints else self.get_enabled_names()
+        enabled = [name for name in enabled if name not in (excluded_actions or set())]
 
         # On first step (empty history), exclude terminating actions
-        if exclude_terminating_on_first and (not action_history or len(action_history) == 0):
+        if not use_global_constraints and exclude_terminating_on_first and not action_history:
             enabled = [name for name in enabled if not self._actions[name].is_terminating]
         # Filter out already-used actions (but always keep 'end' as an option)
-        elif action_history:
+        elif not use_global_constraints and action_history:
             used_actions = self._extract_action_names_from_history(action_history)
             enabled = [name for name in enabled if name not in used_actions or name == "end"]
 
@@ -321,6 +352,9 @@ class ActionRegistry:
             paren_idx = action_str.find("(")
             if paren_idx > 0:
                 action_name = action_str[:paren_idx].strip()
+                # Strip f_ prefix if present (action strings may be formatted as "f_select_row(...)")
+                if action_name.startswith("f_"):
+                    action_name = action_name[2:]
                 action_names.add(action_name)
             else:
                 # Handle cases where action might not have parentheses
@@ -331,6 +365,19 @@ class ActionRegistry:
                         action_names.add(name)
                         break
         return action_names
+
+    def get_global_available_actions(self, action_history: Optional[List[str]] = None) -> List[str]:
+        """Return enabled successors for the latest operation in the global transition matrix."""
+        previous_action = self._extract_action_name(action_history[-1]) if action_history else None
+        enabled = set(self.get_enabled_names())
+        return [name for name in GLOBAL_ACTION_TRANSITIONS.get(previous_action, ()) if name in enabled]
+
+    def _extract_action_name(self, action_str: str) -> Optional[str]:
+        """Extract one canonical LEAP operation name from a history entry."""
+        action_name = action_str.split("(", 1)[0].strip()
+        if action_name.startswith("f_"):
+            action_name = action_name[2:]
+        return action_name if action_name in self._actions else None
 
 
 # Global registry instance

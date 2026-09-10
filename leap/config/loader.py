@@ -14,6 +14,7 @@ class HardwareConfig:
     gpu_allocation: List[int]
     max_concurrent_requests: int = 16  # For continuous batching optimization
     max_model_len: int = 2048  # Maximum sequence length for the model
+    gpu_memory_utilization: float = 0.9  # Fraction of GPU memory available to vLLM
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,9 @@ class GenerationConfig:
     use_constraints: bool
     use_global_constraints: bool
     strategy: str = "cot"  # Strategy to use: "iterative", "cot", or "direct_query"
+    constraint_backend: str = "xgrammar"  # "xgrammar" or "legacy_state_machine"
+    output_format: str = "function"  # "function" or "json"
+    force_zero_temperature: bool = False
     sampling: Any = None  # Use Any to avoid circular import with SamplingConfig
     enabled_actions: tuple = None  # Tuple of enabled action names (immutable for frozen dataclass)
 
@@ -80,6 +84,7 @@ class AppConfig:
     run: RunConfig
     generation: GenerationConfig
     logging: LoggingConfig
+    extractors: tuple[str, ...] = ("direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender")
 
 
 def get_model_id(config_path: Path) -> str:
@@ -150,13 +155,8 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
         shuffle_invariant=sampling_section.get("shuffle_invariant", False),
     )
 
-    generation_config = GenerationConfig(
-        use_constraints=generation_section.get("use_constraints", False),
-        use_global_constraints=generation_section.get("use_global_constraints", False),
-        strategy=generation_section.get("strategy", "cot"),
-        sampling=sampling_config,
-        enabled_actions=tuple(enabled_actions) if enabled_actions else None,
-    )
+    generation_config = _build_generation_config(generation_section, enabled_actions, sampling_config, model_id=model_config.id)
+    extractors = _build_extractor_config(raw_config.get("extractors", ["direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"]))
 
     return AppConfig(
         model=model_config,
@@ -164,7 +164,96 @@ def load_runtime_config(config_path: Path, tokenizer) -> AppConfig:
         run=run_config,
         generation=generation_config,
         logging=logging_config,
+        extractors=extractors,
     )
+
+
+def load_runtime_config_tool(config_path: Path, tokenizer) -> AppConfig:
+    """Load runtime configuration from YAML files.
+
+    Args:
+        config_path: Path to the main config file
+        tokenizer: Transformers tokenizer instance for the model
+
+    Returns:
+        AppConfig with all configuration loaded and validated
+    """
+    raw_config = _load_app_config(config_path)
+    # Configure enabled actions early, before building model config
+    from leap.core.actions import REGISTRY
+
+    generation_section = raw_config.get("generation", {})
+    enabled_actions = generation_section.get("enabled_actions")
+    if enabled_actions:
+        REGISTRY.set_enabled_actions(enabled_actions)
+
+    model_section = raw_config.get("model")
+    if not model_section or "id" not in model_section:
+        raise ValueError("Configuration must define 'model.id'")
+
+    presets_path = Path(model_section.get("presets_path", "configs/models.yaml"))
+    model_presets = _load_model_presets(presets_path)
+    model_config = _build_model_config(model_section, model_presets, tokenizer)
+
+    logging_section = raw_config.get("logging", {})
+    logging_config = _build_logging_config(logging_section, model_config.log_dir, model_config.id)
+    # dataset_section = raw_config.get("dataset")
+    # if not dataset_section:
+    #     raise ValueError("Configuration must include a 'dataset' section")
+    dataset_config = _build_dataset_config_tool()
+
+    run_config = RunConfig(max_examples=raw_config.get("run", {}).get("max_examples"))
+
+    generation_section = raw_config.get("generation", {})
+
+    # Load sampling config (import locally to avoid circular dependency)
+    from leap.generation.sampling import SamplingConfig
+
+    sampling_section = generation_section.get("sampling", {})
+    sampling_config = SamplingConfig(
+        enabled=sampling_section.get("enabled", False),
+        n_samples=sampling_section.get("n_samples", 1),
+        per_action_samples=dict(sampling_section.get("per_action_samples", {})),
+        debug=sampling_section.get("debug", False),
+        shuffle_invariant=sampling_section.get("shuffle_invariant", False),
+    )
+
+    generation_config = _build_generation_config(generation_section, enabled_actions, sampling_config, model_id=model_config.id)
+    extractors = _build_extractor_config(raw_config.get("extractors", ["direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"]))
+
+    return AppConfig(
+        model=model_config,
+        dataset=dataset_config,
+        run=run_config,
+        generation=generation_config,
+        logging=logging_config,
+        extractors=extractors,
+    )
+
+
+def update_runtime_config_dataset_tool(app_config: AppConfig, dataset_path: Path):
+    dataset_config = _build_dataset_config_tool(dataset_path)
+    return AppConfig(
+        model=app_config.model,
+        dataset=dataset_config,
+        run=app_config.run,
+        generation=app_config.generation,
+        logging=app_config.logging,
+        extractors=app_config.extractors,
+    )
+
+
+def _build_extractor_config(raw_extractors: Any) -> tuple[str, ...]:
+    available = {"direct_query", "nl2sql", "nl2code", "end2ender", "cot_end2ender"}
+    if not isinstance(raw_extractors, list) or not raw_extractors or not all(isinstance(name, str) for name in raw_extractors):
+        raise ValueError("'extractors' must be a non-empty list of extractor names")
+    duplicates = sorted({name for name in raw_extractors if raw_extractors.count(name) > 1})
+    if duplicates:
+        raise ValueError(f"Duplicate extractors are not allowed: {duplicates}")
+    unknown = sorted(set(raw_extractors) - available)
+    if unknown:
+        raise ValueError(f"Unknown extractors {unknown}. Available extractors: {sorted(available)}")
+    return tuple(raw_extractors)
 
 
 def _load_app_config(config_path: Path) -> Dict[str, Any]:
@@ -173,6 +262,52 @@ def _load_app_config(config_path: Path) -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"Configuration file {config_path} must contain a mapping.")
     return data
+
+
+def _build_generation_config(
+    generation_section: Dict[str, Any], enabled_actions, sampling_config, *, model_id: str | None = None
+) -> GenerationConfig:
+    if "batch_truncated_add_column" in generation_section:
+        raise ValueError("generation.batch_truncated_add_column is no longer supported.")
+
+    use_constraints = generation_section.get("use_constraints", False)
+    constraint_backend = generation_section.get("constraint_backend", "xgrammar")
+    output_format = generation_section.get("output_format", "function")
+    force_zero_temperature = generation_section.get("force_zero_temperature", False)
+
+    if constraint_backend not in {"xgrammar", "legacy_state_machine"}:
+        raise ValueError("generation.constraint_backend must be either 'xgrammar' or 'legacy_state_machine'.")
+    if output_format not in {"function", "json"}:
+        raise ValueError("generation.output_format must be 'function' or 'json'.")
+    if type(force_zero_temperature) is not bool:
+        raise ValueError("generation.force_zero_temperature must be a boolean.")
+    if constraint_backend == "legacy_state_machine":
+        output_format = "function"
+    if model_id is not None:
+        from leap.vllm_runtime import validate_constraint_backend
+
+        validate_constraint_backend(
+            model_id=model_id,
+            use_constraints=use_constraints,
+            constraint_backend=constraint_backend,
+        )
+
+    enabled_actions_tuple = tuple(enabled_actions) if enabled_actions else None
+
+    return GenerationConfig(
+        use_constraints=use_constraints,
+        use_global_constraints=generation_section.get("use_global_constraints", False),
+        strategy=generation_section.get("strategy", "cot"),
+        constraint_backend=constraint_backend,
+        output_format=output_format,
+        force_zero_temperature=force_zero_temperature,
+        sampling=(
+            sampling_config.for_strategy(generation_section.get("strategy", "cot"))
+            if hasattr(sampling_config, "for_strategy")
+            else sampling_config
+        ),
+        enabled_actions=enabled_actions_tuple,
+    )
 
 
 def _load_model_presets(presets_path: Path) -> Dict[str, Any]:
@@ -257,7 +392,8 @@ def _build_model_config(model_section: Dict[str, Any], presets: Dict[str, Any], 
         tensor_parallel_size=hardware_defaults["tensor_parallel_size"],
         gpu_allocation=list(hardware_defaults["gpu_allocation"]),
         max_concurrent_requests=hardware_defaults.get("max_concurrent_requests", 16),
-        max_model_len=hardware_defaults.get("max_model_len", 2048),
+        max_model_len=hardware_defaults.get("max_model_len", HardwareConfig.max_model_len),
+        gpu_memory_utilization=hardware_defaults.get("gpu_memory_utilization", HardwareConfig.gpu_memory_utilization),
     )
 
     # Build tokenizer config
@@ -309,4 +445,16 @@ def _build_dataset_config(raw_dataset_config: Dict[str, Any]) -> DatasetConfig:
         trust_remote_code=raw_dataset_config.get("trust_remote_code"),
         data_files=raw_dataset_config.get("data_files"),
         path=raw_dataset_config.get("path"),
+    )
+
+
+def _build_dataset_config_tool(path: Path = None) -> DatasetConfig:
+    loader = "disk"
+    return DatasetConfig(
+        loader=loader,
+        name="temp",
+        split=None,
+        trust_remote_code=None,
+        data_files=None,
+        path=path,
     )

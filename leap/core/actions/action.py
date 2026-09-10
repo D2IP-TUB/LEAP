@@ -53,7 +53,10 @@ class Action:
             # Strip f_ prefix if present (LLM generates f_action_name)
             if action_name.startswith("f_"):
                 action_name = action_name[2:]
-            args_str = args_str.rstrip(")").strip()
+            # Remove exactly the action call's closing parenthesis. Using
+            # rstrip(")") also removed trailing parentheses that belonged to
+            # the final argument, such as "Population (2005)".
+            args_str = args_str[:-1].strip() if args_str.endswith(")") else args_str.strip()
 
             # Delegate to ActionDefinition
             from .registry import REGISTRY
@@ -99,6 +102,12 @@ class Action:
         if self.name == "end" or not self.arguments:
             return f"{self.name}()"
 
+        if self.name == "select_row":
+            if list(self.arguments) == ["*"]:
+                return "select_row([*])"
+            rows = ", ".join(f"row {idx}" for idx in self.arguments)
+            return f"select_row([{rows}])"
+
         args_str = ", ".join(repr(arg) for arg in self.arguments)
         return f"{self.name}({args_str})"
 
@@ -135,7 +144,10 @@ class Action:
         if not hasattr(action_def, "validate"):
             return True
 
-        return action_def.validate(table, self.arguments)
+        try:
+            return action_def.validate(table, self.arguments)
+        except Exception:
+            return False
 
     def __repr__(self) -> str:
         return f"Action({self.name}, args={list(self.arguments)})"

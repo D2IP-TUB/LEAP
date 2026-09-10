@@ -2,7 +2,7 @@
 Select Row Action - Select specific rows by index.
 """
 
-import ast
+import re
 from typing import Any, List, Optional
 
 from ..table import Table
@@ -29,53 +29,28 @@ class SelectRowAction(ActionDefinition):
         """
         Parse row indices from argument string.
 
-        Handles formats like:
-        - "[0, 1, 2]"
-        - "0, 1, 2"
-        - "row 0, row 1" (from constraints)
-        - '["0", "1"]' (string digits from constraint system)
+        Only two formats are accepted:
+        - "[row 0, row 1, row 2]"  — normal selection
+        - "[*]"                    — select all rows
         """
         args_str = args_str.strip()
 
-        if not args_str or args_str == "[]":
-            return []
-
-        # Remove "row " prefix if present (constraint output format)
-        args_str_clean = args_str.replace("row ", "")
-
-        # Handle wildcard [*] — select all rows (expanded later in validate/apply via table)
-        if args_str_clean.strip() in ("[*]", "*"):
-            return ["*"]
-
-        try:
-            # Extract bracketed list if present (ignore extra text after closing bracket)
-            bracket_start = args_str_clean.find("[")
-            bracket_end = args_str_clean.rfind("]")
-            if bracket_start >= 0 and bracket_end > bracket_start:
-                args_str_clean = args_str_clean[bracket_start : bracket_end + 1]
-                args_str_clean = args_str_clean.replace("\\", "\\\\")
-                indices = ast.literal_eval(args_str_clean)
-            else:
-                indices = [x.strip() for x in args_str_clean.split(",")]
-
-            return self._normalize_row_indices(indices)
-        except Exception:
+        if not args_str:
             return None
 
-    @staticmethod
-    def _normalize_row_indices(args_list: List) -> List:
-        """Convert string digits to ints (constraint system outputs indices as strings)."""
-        normalized = []
-        for arg in args_list:
-            if isinstance(arg, str):
-                arg = arg.replace("row ", "").strip()
-                if arg.isdigit():
-                    normalized.append(int(arg))
-                else:
-                    normalized.append(arg)  # Keep as-is; will fail validation
-            else:
-                normalized.append(arg)
-        return normalized
+        # Handle wildcard [*]
+        if args_str.strip() == "[*]":
+            return ["*"]
+
+        pattern = r'\[\s*(?:"row\s+\d+"(?:\s*,\s*"row\s+\d+")*|row\s+\d+(?:\s*,\s*row\s+\d+)*)\s*\]'
+        if not re.fullmatch(pattern, args_str):
+            return None
+
+        try:
+            indices = [int(x) for x in re.findall(r"row\s+(\d+)", args_str)]
+            return indices
+        except Exception:
+            return None
 
     def apply(self, table: Table, arguments: List[Any]) -> Optional[Table]:
         """Apply row selection to table."""
@@ -92,14 +67,7 @@ class SelectRowAction(ActionDefinition):
             return len(table.rows) > 0
 
         for idx in arguments:
-            if isinstance(idx, int):
-                if idx < 0 or idx >= len(table.rows):
-                    return False
-            elif isinstance(idx, str) and idx.isdigit():
-                idx_int = int(idx)
-                if idx_int < 0 or idx_int >= len(table.rows):
-                    return False
-            else:
+            if not isinstance(idx, int) or idx < 0 or idx >= len(table.rows):
                 return False
 
         return True

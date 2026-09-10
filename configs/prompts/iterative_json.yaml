@@ -1,0 +1,9 @@
+instruction: |
+  Return only one JSON operation object for the next step. Do not return a chain, explanation, Markdown, or function-call syntax.
+operation_shapes:
+  select_row: '{"action":"select_row","rows":["row 0","row 2"]}'
+  select_column: '{"action":"select_column","columns":["Name","Points"]}'
+  add_column: '{"action":"add_column","column":"Country","values":["ESP","ITA"]}'
+  group_by: '{"action":"group_by","column":"Country"}'
+  sort_by: '{"action":"sort_by","column":"Year","order":"desc"}'
+  end: '{"action":"end"}'

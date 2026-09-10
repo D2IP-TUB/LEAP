@@ -6,13 +6,16 @@ vLLM inference across multiple GPUs with comprehensive table logging support.
 """
 
 import asyncio
+import gc
+import inspect
 import multiprocessing as mp
 import os
 import queue
 import time
-import uuid
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
+from tqdm.auto import tqdm
 from vllm import AsyncLLMEngine, SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
 
@@ -24,6 +27,23 @@ from leap.utils.table_logger import TableLogger
 
 # Default max concurrent requests per worker for continuous batching
 DEFAULT_MAX_CONCURRENT_REQUESTS = 16
+
+
+@dataclass(frozen=True)
+class ConfiguredInferenceRequest:
+    request: InferenceRequest
+    generation_config: GenerationConfig
+    logging_config: LoggingConfig
+
+
+def _open_progress_output():
+    """Use the controlling terminal for nested suite progress while preserving stderr logs."""
+    if os.environ.get("LEAP_TQDM_TO_TTY") != "1":
+        return None, False
+    try:
+        return open("/dev/tty", "w", encoding="utf-8", buffering=1), True
+    except OSError:
+        return None, False
 
 
 class VLLMWorkerProcess(mp.Process):
@@ -43,6 +63,7 @@ class VLLMWorkerProcess(mp.Process):
         tensor_parallel_size: int = 1,
         max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
         max_model_len: int = 2048,
+        gpu_memory_utilization: float = 0.9,
     ):
         """
         Initialize vLLM worker process
@@ -76,17 +97,43 @@ class VLLMWorkerProcess(mp.Process):
         self.tensor_parallel_size = tensor_parallel_size
         self.max_concurrent_requests = max_concurrent_requests
         self.configured_max_model_len = max_model_len  # Store configured value
+        self.gpu_memory_utilization = gpu_memory_utilization
 
         # Extract commonly used fields for convenience
         self.use_constraints = generation_config.use_constraints
         self.use_cot = generation_config.strategy == "cot"
         self.use_global_constraints = generation_config.use_global_constraints
+        self.constraint_backend = generation_config.constraint_backend
+        self.output_format = generation_config.output_format
+        self.force_zero_temperature = generation_config.force_zero_temperature
 
         # vLLM components (will be set after engine initialization)
         self.engine = None
         self.tokenizer = None
         self.max_model_len = None  # Will be set from engine after initialization
         self.model_loaded = mp.Event()
+
+    def _apply_run_config(self, generation_config: GenerationConfig, logging_config: LoggingConfig) -> None:
+        if generation_config != self.generation_config:
+            from leap.generation.sampling import SamplingConfig, SamplingLayer
+            from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
+
+            config = (generation_config.sampling or SamplingConfig()).for_strategy(generation_config.strategy)
+            layer_type = (
+                ShuffleInvariantSamplingLayer if config.shuffle_invariant and generation_config.strategy == "cot" else SamplingLayer
+            )
+            for generation_func in self.generation_functions.values():
+                strategy = getattr(generation_func, "__self__", None)
+                if strategy is not None and hasattr(strategy, "sampling_layer"):
+                    strategy.sampling_layer = layer_type(config)
+        self.generation_config = generation_config
+        self.logging_config = logging_config
+        self.use_constraints = generation_config.use_constraints
+        self.use_cot = generation_config.strategy == "cot"
+        self.use_global_constraints = generation_config.use_global_constraints
+        self.constraint_backend = generation_config.constraint_backend
+        self.output_format = generation_config.output_format
+        self.force_zero_temperature = generation_config.force_zero_temperature
 
     def run(self):
         """Main worker process loop"""
@@ -124,16 +171,22 @@ class VLLMWorkerProcess(mp.Process):
         except Exception as e:
             print(f"Worker {self.worker_id} failed: {e}")
             self.output_queue.put(("error", self.worker_id, str(e)))
+        finally:
+            self._cleanup_engine()
 
     def _get_generation_mode_string(self) -> str:
         """Get descriptive string for generation mode"""
+        format_prefix = f"{self.output_format}_" if self.output_format != "function" else ""
         if self.use_cot:
             constraint_desc = "with_constraints" if self.use_constraints else "without_constraints"
-            return f"chain_of_table_{constraint_desc}"
+            return f"{format_prefix}chain_of_table_{constraint_desc}"
         elif self.use_constraints:
-            return "constrained"
+            return f"{format_prefix}constrained"
         else:
-            return "unconstrained_with_postprocessing"
+            return f"{format_prefix}unconstrained_with_postprocessing"
+
+    def effective_temperature(self, temperature: float) -> float:
+        return 0.0 if self.force_zero_temperature else temperature
 
     def _init_engine(self):
         """Initialize the vLLM engine"""
@@ -148,23 +201,96 @@ class VLLMWorkerProcess(mp.Process):
             model=self.model_id,
             trust_remote_code=True,
             max_model_len=self.configured_max_model_len,
-            gpu_memory_utilization=0.8,
+            gpu_memory_utilization=self.gpu_memory_utilization,
             tensor_parallel_size=self.tensor_parallel_size,
             max_num_batched_tokens=max_num_batched_tokens,
             max_num_seqs=32,
         )
 
         self.engine = AsyncLLMEngine.from_engine_args(engine_args)
-        tokenizer_group = self.engine.engine.tokenizer
-        self.tokenizer = tokenizer_group.tokenizer
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.max_model_len = self.engine.engine.model_config.max_model_len
+        self.tokenizer = self._resolve_engine_tokenizer()
+        if getattr(self.tokenizer, "pad_token", None) is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.max_model_len = self._resolve_engine_max_model_len()
 
         load_time = time.time() - start_time
         print(f"Worker {self.worker_id}: Model loaded in {load_time:.2f} seconds, max_model_len={self.max_model_len}")
 
+    def _resolve_engine_tokenizer(self):
+        """Return the tokenizer across vLLM engine API versions."""
+        if hasattr(self.engine, "get_tokenizer"):
+            tokenizer = self.engine.get_tokenizer()
+            if inspect.isawaitable(tokenizer):
+                tokenizer = asyncio.run(tokenizer)
+            return tokenizer
+
+        tokenizer_owner = getattr(self.engine, "engine", None)
+        if tokenizer_owner is not None and hasattr(tokenizer_owner, "tokenizer"):
+            tokenizer_group = tokenizer_owner.tokenizer
+            return getattr(tokenizer_group, "tokenizer", tokenizer_group)
+
+        tokenizer = getattr(self.engine, "tokenizer", None)
+        if tokenizer is not None:
+            return tokenizer
+
+        raise AttributeError("Unable to resolve tokenizer from vLLM engine.")
+
+    def _resolve_engine_max_model_len(self) -> int:
+        """Return max model length across vLLM engine API versions."""
+        engine_core = getattr(self.engine, "engine", None)
+        model_config = getattr(engine_core, "model_config", None)
+        max_model_len = getattr(model_config, "max_model_len", None)
+        if max_model_len is not None:
+            return max_model_len
+
+        vllm_config = getattr(self.engine, "vllm_config", None)
+        model_config = getattr(vllm_config, "model_config", None)
+        max_model_len = getattr(model_config, "max_model_len", None)
+        if max_model_len is not None:
+            return max_model_len
+
+        return self.configured_max_model_len
+
+    def _cleanup_engine(self):
+        """Release vLLM and CUDA resources before the worker process exits."""
+        engine = self.engine
+        self.engine = None
+        self.tokenizer = None
+
+        if engine is not None:
+            shutdown = getattr(engine, "shutdown", None)
+            if shutdown is not None:
+                try:
+                    result = shutdown()
+                    if inspect.isawaitable(result):
+                        asyncio.run(result)
+                except Exception as e:
+                    print(f"Worker {self.worker_id}: vLLM engine shutdown failed: {e}")
+
+        try:
+            from vllm.distributed.parallel_state import cleanup_dist_env_and_memory
+
+            cleanup_dist_env_and_memory()
+        except Exception as e:
+            print(f"Worker {self.worker_id}: vLLM distributed cleanup failed: {e}")
+
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception as e:
+            print(f"Worker {self.worker_id}: CUDA cache cleanup failed: {e}")
+
+        gc.collect()
+
     async def _process_requests(self):
-        """Process incoming requests with concurrent batching support"""
+        """Process requests until the worker receives a shutdown signal."""
+        await self._process_request_loop()
+
+    async def _process_request_loop(self):
+        """Process incoming requests with concurrent batching support."""
         state_machines = {}
         active_tasks = {}  # request_id -> (task, request_id)
         max_concurrent = self.max_concurrent_requests
@@ -182,11 +308,17 @@ class VLLMWorkerProcess(mp.Process):
                     filled = 0
                     for _ in range(slots_available):
                         try:
-                            request = self.input_queue.get_nowait()
+                            queued_request = self.input_queue.get_nowait()
 
-                            if request is None:  # Shutdown signal
+                            if queued_request is None:  # Shutdown signal
                                 shutdown_requested = True
                                 break
+
+                            if isinstance(queued_request, ConfiguredInferenceRequest):
+                                self._apply_run_config(queued_request.generation_config, queued_request.logging_config)
+                                request = queued_request.request
+                            else:
+                                request = queued_request
 
                             # Create async task for this request (non-blocking)
                             task = asyncio.create_task(self._process_single_request(request, state_machines))
@@ -278,8 +410,8 @@ class VLLMWorkerProcess(mp.Process):
         try:
             # Get the appropriate generation function based on strategy config
             strategy = self.generation_config.strategy
-            function_name = strategy + "_generation"
-            generation_func = self.generation_functions.get(function_name)
+            function_name = f"{self.output_format}_{strategy}_generation"
+            generation_func = self.generation_functions.get(function_name) or self.generation_functions.get(strategy + "_generation")
 
             if not generation_func:
                 raise ValueError(f"No generation function configured for strategy: {strategy}")
@@ -424,6 +556,7 @@ class ProcessParallelVLLM:
         tensor_parallel_size: int = 1,
         max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
         max_model_len: int = 2048,
+        gpu_memory_utilization: float = 0.9,
     ):
         """
         Initialize parallel vLLM engine
@@ -444,7 +577,7 @@ class ProcessParallelVLLM:
         self.num_workers = num_workers
         self.max_concurrent_requests = max_concurrent_requests
         self.max_model_len = max_model_len
-
+        self.gpu_memory_utilization = gpu_memory_utilization
         # Auto-detect GPUs if not specified
         if gpu_allocation is None:
             import subprocess
@@ -526,6 +659,7 @@ class ProcessParallelVLLM:
                 tensor_parallel_size=self.tensor_parallel_size,
                 max_concurrent_requests=self.max_concurrent_requests,
                 max_model_len=self.max_model_len,
+                gpu_memory_utilization=self.gpu_memory_utilization,
             )
             self.workers.append(worker)
 
@@ -587,6 +721,24 @@ class ProcessParallelVLLM:
         else:
             return "Unconstrained generation with post-processing"
 
+    def reconfigure(self, generation_config: GenerationConfig, logging_config: LoggingConfig) -> None:
+        """Select settings and a fresh logger for the next batch without recreating workers."""
+        if not self.workers_healthy():
+            raise RuntimeError("Cannot reconfigure an unhealthy vLLM worker pool.")
+        self.generation_config = generation_config
+        self.logging_config = logging_config
+        self.main_logger = None
+        self._init_main_logger()
+
+    def finish_run(self) -> None:
+        """Finalize the active run's logs without shutting down the model workers."""
+        if self.main_logger:
+            self.write_summary_report(self._get_generation_mode_description())
+
+    def workers_healthy(self) -> bool:
+        started_workers = [worker for worker in self.workers if worker.pid is not None]
+        return self._workers_ready and len(started_workers) == self.num_workers and all(worker.is_alive() for worker in started_workers)
+
     def generate_batch(self, requests: List[InferenceRequest], timeout_per_request: int = 180) -> List[InferenceResult]:
         """
         Generate responses for batch of requests
@@ -601,90 +753,113 @@ class ProcessParallelVLLM:
         if not self._workers_ready:
             raise RuntimeError("Workers not ready. Call start_workers() first.")
 
-        # Send all requests to queue with unique IDs
+        # Send all requests to queue using their existing stable IDs
         request_ids = []
-        for i, request in enumerate(requests):
-            request_id = f"req_{i}_{uuid.uuid4().hex[:8]}"
+        for request in requests:
+            request_id = request.request_id
             request_ids.append(request_id)
 
-            # Add request_id to the request using dataclass replace
-            from dataclasses import replace
-
-            request_with_id = replace(request, request_id=request_id)
-
             # Put the typed object directly in the queue
-            self.input_queue.put(request_with_id)
+            self.input_queue.put(
+                ConfiguredInferenceRequest(
+                    request=request,
+                    generation_config=self.generation_config,
+                    logging_config=self.logging_config,
+                )
+            )
 
         # Collect results
         results = {}
         completed = 0
         total_requests = len(request_ids)
+        progress_file, close_progress_file = _open_progress_output()
+        try:
+            with tqdm(
+                total=total_requests,
+                desc="Questions",
+                unit="question",
+                dynamic_ncols=True,
+                position=int(os.environ.get("LEAP_TQDM_POSITION", "0")),
+                leave=os.environ.get("LEAP_TQDM_LEAVE", "1") == "1",
+                file=progress_file,
+            ) as progress:
+                while completed < total_requests:
+                    try:
+                        msg_type, req_id, data = self.output_queue.get(timeout=timeout_per_request)
+                        if msg_type == "result":
+                            # data is already an InferenceResult object
+                            results[req_id] = data
+                            completed += 1
+                            progress.update(1)
+                        elif msg_type == "log_entry":
+                            # Handle log entries from workers
+                            if self.main_logger:
+                                log_data = data
+                                self.main_logger.log_table_state(
+                                    request_id=log_data["request_id"],
+                                    step=log_data["step"],
+                                    action=log_data["action"],
+                                    table=log_data["table"],
+                                    success=log_data["success"],
+                                    failure_type=log_data["failure_type"],
+                                    generation_mode=log_data["generation_mode"],
+                                )
+                        elif msg_type == "error":
+                            tqdm.write(f"Error for request {req_id}: {data}", file=progress_file)
+                            # Create error result object
+                            results[req_id] = InferenceResult(
+                                action_history=[],
+                                final_table=Table(columns=[], rows=[]),
+                                execution_metrics=ExecutionMetrics(
+                                    execution_accuracy=0.0,
+                                    answer_found_in_final=False,
+                                    answer_found_in_original=False,
+                                    terminated_properly=False,
+                                    matched_answers_final=[],
+                                    matched_answers_original=[],
+                                    num_actions=0,
+                                    execution_error=str(data),
+                                ),
+                                request_id=req_id,
+                                question="",
+                                ground_truth_answers=[],
+                            )
+                            completed += 1
+                            progress.update(1)
+                    except queue.Empty:
+                        tqdm.write(f"Timeout waiting for results (completed {completed}/{total_requests})", file=progress_file)
+                        break
+        finally:
+            if close_progress_file:
+                progress_file.close()
 
-        while completed < total_requests:
-            try:
-                msg_type, req_id, data = self.output_queue.get(timeout=timeout_per_request)
-                if msg_type == "result":
-                    # data is already an InferenceResult object
-                    results[req_id] = data
-                    completed += 1
-                    print(f"Completed {completed}/{total_requests} requests")
-                elif msg_type == "log_entry":
-                    # Handle log entries from workers
-                    if self.main_logger:
-                        log_data = data
-                        self.main_logger.log_table_state(
-                            request_id=log_data["request_id"],
-                            step=log_data["step"],
-                            action=log_data["action"],
-                            table=log_data["table"],
-                            success=log_data["success"],
-                            failure_type=log_data["failure_type"],
-                            generation_mode=log_data["generation_mode"],
-                        )
-                elif msg_type == "error":
-                    print(f"Error for request {req_id}: {data}")
-                    # Create error result object
-                    results[req_id] = InferenceResult(
-                        action_history=[],
-                        final_table=Table(columns=[], rows=[]),
-                        execution_metrics=ExecutionMetrics(
-                            execution_accuracy=0.0,
-                            answer_found_in_final=False,
-                            answer_found_in_original=False,
-                            terminated_properly=False,
-                            matched_answers_final=[],
-                            matched_answers_original=[],
-                            num_actions=0,
-                            execution_error=str(data),
-                        ),
-                        request_id=req_id,
-                        question="",
-                        ground_truth_answers=[],
-                    )
-                    completed += 1
-            except queue.Empty:
-                print(f"Timeout waiting for results (completed {completed}/{total_requests})")
-                break
+        # Return results in original order, with per-request error results for missing ones.
+        ordered_results = []
+        for req_id in request_ids:
+            result = results.get(req_id)
+            if result is None:
+                result = InferenceResult(
+                    action_history=[],
+                    final_table=Table(columns=[], rows=[]),
+                    execution_metrics=ExecutionMetrics(
+                        execution_accuracy=0.0,
+                        answer_found_in_final=False,
+                        answer_found_in_original=False,
+                        terminated_properly=False,
+                        matched_answers_final=[],
+                        matched_answers_original=[],
+                        num_actions=0,
+                        execution_error="Request not completed",
+                    ),
+                    request_id=req_id,
+                    question="",
+                    ground_truth_answers=[],
+                )
+            if self.main_logger:
+                self.main_logger.record_inference_result(result)
+            ordered_results.append(result)
 
-        # Return results in original order, with default error results for missing ones
-        default_error = InferenceResult(
-            action_history=[],
-            final_table=Table(columns=[], rows=[]),
-            execution_metrics=ExecutionMetrics(
-                execution_accuracy=0.0,
-                answer_found_in_final=False,
-                answer_found_in_original=False,
-                terminated_properly=False,
-                matched_answers_final=[],
-                matched_answers_original=[],
-                num_actions=0,
-                execution_error="Request not completed",
-            ),
-            request_id="",
-            question="",
-            ground_truth_answers=[],
-        )
-        return [results.get(req_id, default_error) for req_id in request_ids]
+        return ordered_results
 
     def create_summary_report(self, generation_mode: str = None) -> Dict[str, Any]:
         """Create summary report using main logger"""
@@ -707,16 +882,17 @@ class ProcessParallelVLLM:
         else:
             print("Warning: Logging not enabled, cannot analyze logs")
 
-    def shutdown(self):
+    def shutdown(self, *, write_summary: bool = True):
         """Shutdown all worker processes"""
         print("Shutting down workers...")
 
         # Send shutdown signals
-        for _ in self.workers:
+        started_workers = [worker for worker in self.workers if worker.pid is not None]
+        for _ in started_workers:
             self.input_queue.put(None)
 
         # Wait for workers to finish
-        for worker in self.workers:
+        for worker in started_workers:
             worker.join(timeout=30)
             if worker.is_alive():
                 print(f"Force terminating worker {worker.worker_id}")
@@ -726,10 +902,21 @@ class ProcessParallelVLLM:
         self._workers_ready = False
 
         # Final summary report if logging enabled
-        if self.main_logger:
+        if write_summary and self.main_logger:
             print("\nGenerating final summary report...")
             generation_mode = self._get_generation_mode_description()
             self.write_summary_report(generation_mode)
+
+        self._close_queues()
+
+    def _close_queues(self):
+        """Close multiprocessing queues after workers have stopped."""
+        for process_queue in (self.input_queue, self.output_queue):
+            try:
+                process_queue.close()
+                process_queue.join_thread()
+            except Exception:
+                pass
 
     def is_ready(self) -> bool:
         """Check if all workers are ready"""
@@ -812,6 +999,7 @@ def setup_standard_vllm_server(
         generation_functions=generation_functions or {},
         tensor_parallel_size=app_config.model.hardware.tensor_parallel_size,
         max_model_len=app_config.model.hardware.max_model_len,
+        gpu_memory_utilization=app_config.model.hardware.gpu_memory_utilization,
     )
 
 

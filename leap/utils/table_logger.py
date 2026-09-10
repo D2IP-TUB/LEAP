@@ -70,6 +70,7 @@ class TableLogger:
         # Performance tracking
         self.log_entries: Dict[str, List[LogEntry]] = {}
         self.request_metadata: Dict[str, Dict[str, Any]] = {}
+        self.result_error_summaries: Dict[str, Dict[str, Any]] = {}
 
         if self.enable_logging:
             self.setup_logging_directory()
@@ -169,8 +170,8 @@ class TableLogger:
 
             with open(table_path, "w", encoding="utf-8", newline="") as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow(table["columns"])
-                for row in table["rows"]:
+                writer.writerow(table.columns)
+                for row in table.rows:
                     writer.writerow(row)
         except Exception as e:
             print(f"Warning: Failed to save table CSV: {e}")
@@ -195,6 +196,96 @@ class TableLogger:
     def set_request_metadata(self, request_id: str, metadata: Dict[str, Any]) -> None:
         """Set metadata for a request"""
         self.request_metadata[request_id] = metadata
+
+    def record_inference_result(self, result: Any) -> None:
+        """Record compact error statistics from an inference result."""
+        if not self.enable_logging:
+            return
+
+        request_id = getattr(result, "request_id", None)
+        if not request_id:
+            return
+
+        sampling_metadata = getattr(result, "sampling_metadata", None) or []
+        execution_metrics = getattr(result, "execution_metrics", None)
+        execution_error = getattr(execution_metrics, "execution_error", None)
+
+        summary = {
+            "sampling_step_count": 0,
+            "invalid_generation_end_count": 0,
+            "invalid_candidate_count": 0,
+            "missing_generation_count": 0,
+            "execution_error_count": 1 if execution_error else 0,
+            "add_column_requested_candidate_count": 0,
+            "add_column_failed_candidate_count": 0,
+            "add_column_affected_sampling_step_count": 0,
+            "add_column_failure_code_counts": {},
+            "fallback_reason_counts": {},
+        }
+
+        for metadata in sampling_metadata:
+            step_summary = self._summarize_sampling_metadata(metadata)
+            summary["sampling_step_count"] += 1
+            summary["invalid_generation_end_count"] += step_summary["invalid_generation_end_count"]
+            summary["invalid_candidate_count"] += step_summary["invalid_candidate_count"]
+            summary["missing_generation_count"] += step_summary["missing_generation_count"]
+            summary["add_column_requested_candidate_count"] += step_summary["add_column_requested_candidate_count"]
+            summary["add_column_failed_candidate_count"] += step_summary["add_column_failed_candidate_count"]
+            summary["add_column_affected_sampling_step_count"] += step_summary["add_column_affected_sampling_step_count"]
+            for code, count in step_summary["add_column_failure_code_counts"].items():
+                counts = summary["add_column_failure_code_counts"]
+                counts[code] = counts.get(code, 0) + count
+            fallback_reason = step_summary["fallback_reason"]
+            if fallback_reason:
+                counts = summary["fallback_reason_counts"]
+                counts[fallback_reason] = counts.get(fallback_reason, 0) + 1
+
+        self.result_error_summaries[request_id] = summary
+
+    def _summarize_sampling_metadata(self, metadata: Any) -> Dict[str, Any]:
+        """Summarize one SamplingResult-like object or dictionary."""
+        n_requested = int(self._metadata_value(metadata, "n_requested", 0) or 0)
+        n_generated = int(self._metadata_value(metadata, "n_generated", 0) or 0)
+        n_valid = int(self._metadata_value(metadata, "n_valid", 0) or 0)
+        fallback_reason = self._metadata_value(metadata, "fallback_reason")
+        winner = self._metadata_value(metadata, "action") or self._metadata_value(metadata, "winner")
+        winner_name = self._action_name(winner)
+
+        invalid_generation_end_count = 0
+        if winner_name == "end" and (fallback_reason in {"no_valid_candidates", "action_type_generation_failed"} or n_valid == 0):
+            invalid_generation_end_count = 1
+
+        diagnostics = self._metadata_value(metadata, "add_column_diagnostics", []) or []
+        selected_add_column = winner_name == "add_column" or any(
+            self._metadata_value(diagnostic, "selected_action") == "add_column" for diagnostic in diagnostics
+        )
+        failure_code_counts = {}
+        for diagnostic in diagnostics:
+            code = self._metadata_value(diagnostic, "failure_code") or "unclassified"
+            failure_code_counts[code] = failure_code_counts.get(code, 0) + 1
+
+        return {
+            "invalid_generation_end_count": invalid_generation_end_count,
+            "invalid_candidate_count": max(n_generated - n_valid, 0),
+            "missing_generation_count": max(n_requested - n_generated, 0),
+            "add_column_requested_candidate_count": n_requested if selected_add_column else 0,
+            "add_column_failed_candidate_count": len(diagnostics),
+            "add_column_affected_sampling_step_count": 1 if diagnostics else 0,
+            "add_column_failure_code_counts": failure_code_counts,
+            "fallback_reason": fallback_reason,
+        }
+
+    def _metadata_value(self, metadata: Any, key: str, default: Any = None) -> Any:
+        if isinstance(metadata, dict):
+            return metadata.get(key, default)
+        return getattr(metadata, key, default)
+
+    def _action_name(self, action: Any) -> Optional[str]:
+        if action is None:
+            return None
+        if isinstance(action, dict):
+            return action.get("action") or action.get("name")
+        return getattr(action, "name", None)
 
     def get_request_logs(self, request_id: str) -> List[LogEntry]:
         """Get all log entries for a specific request"""
@@ -248,6 +339,24 @@ class TableLogger:
             "completion_rate": 0.0,
             "validity_rate": 0.0,
             "generation_mode": generation_mode or "unknown",
+            "error_summary": {
+                "invalid_generation_end_count": 0,
+                "invalid_generation_end_rate": 0.0,
+                "invalid_candidate_count": 0,
+                "missing_generation_count": 0,
+                "logged_failure_count": 0,
+                "execution_error_count": 0,
+                "total_error_count": 0,
+                "sampling_step_count": 0,
+                "sampling_step_error_rate": 0.0,
+                "add_column_requested_candidate_count": 0,
+                "add_column_failed_candidate_count": 0,
+                "add_column_affected_request_count": 0,
+                "add_column_affected_sampling_step_count": 0,
+                "add_column_failure_rate": 0.0,
+                "add_column_failure_code_counts": {},
+                "fallback_reason_counts": {},
+            },
         }
 
         try:
@@ -324,6 +433,48 @@ class TableLogger:
 
             # Calculate derived metrics
             summary_data["total_transformations"] = total_actions
+            error_summary = summary_data["error_summary"]
+            error_summary["logged_failure_count"] = total_failures
+
+            for result_summary in self.result_error_summaries.values():
+                error_summary["invalid_generation_end_count"] += result_summary.get("invalid_generation_end_count", 0)
+                error_summary["invalid_candidate_count"] += result_summary.get("invalid_candidate_count", 0)
+                error_summary["missing_generation_count"] += result_summary.get("missing_generation_count", 0)
+                error_summary["execution_error_count"] += result_summary.get("execution_error_count", 0)
+                error_summary["sampling_step_count"] += result_summary.get("sampling_step_count", 0)
+                error_summary["add_column_requested_candidate_count"] += result_summary.get("add_column_requested_candidate_count", 0)
+                error_summary["add_column_failed_candidate_count"] += result_summary.get("add_column_failed_candidate_count", 0)
+                error_summary["add_column_affected_sampling_step_count"] += result_summary.get("add_column_affected_sampling_step_count", 0)
+                if result_summary.get("add_column_failed_candidate_count", 0):
+                    error_summary["add_column_affected_request_count"] += 1
+                for code, count in result_summary.get("add_column_failure_code_counts", {}).items():
+                    counts = error_summary["add_column_failure_code_counts"]
+                    counts[code] = counts.get(code, 0) + count
+                for reason, count in result_summary.get("fallback_reason_counts", {}).items():
+                    reason_counts = error_summary["fallback_reason_counts"]
+                    reason_counts[reason] = reason_counts.get(reason, 0) + count
+
+            error_summary["total_error_count"] = (
+                error_summary["invalid_candidate_count"]
+                + error_summary["missing_generation_count"]
+                + error_summary["logged_failure_count"]
+                + error_summary["execution_error_count"]
+            )
+            error_summary["invalid_generation_end_rate"] = (
+                error_summary["invalid_generation_end_count"] / summary_data["total_requests"]
+                if summary_data["total_requests"] > 0
+                else 0.0
+            )
+            error_summary["sampling_step_error_rate"] = (
+                error_summary["invalid_generation_end_count"] / error_summary["sampling_step_count"]
+                if error_summary["sampling_step_count"] > 0
+                else 0.0
+            )
+            error_summary["add_column_failure_rate"] = (
+                error_summary["add_column_failed_candidate_count"] / error_summary["add_column_requested_candidate_count"]
+                if error_summary["add_column_requested_candidate_count"] > 0
+                else 0.0
+            )
             summary_data["average_steps_per_request"] = sum(request_step_counts) / len(request_step_counts) if request_step_counts else 0.0
             summary_data["completion_rate"] = (
                 1.0 - (len(summary_data["incomplete_requests"]) / summary_data["total_requests"])
@@ -363,6 +514,34 @@ class TableLogger:
         print(f"Completion rate: {summary_data.get('completion_rate', 0.0):.2%}")
         print(f"Average steps per request: {summary_data.get('average_steps_per_request', 0.0):.1f}")
         print(f"Incomplete requests: {len(summary_data.get('incomplete_requests', []))}")
+
+        error_summary = summary_data.get("error_summary", {})
+        if error_summary:
+            total_requests = summary_data.get("total_requests", 0)
+            print("Error summary:")
+            print(
+                "  Invalid generations ending in end(): "
+                f"{error_summary.get('invalid_generation_end_count', 0)}/{total_requests} "
+                f"({error_summary.get('invalid_generation_end_rate', 0.0):.1%})"
+            )
+            print(f"  Invalid sampled candidates: {error_summary.get('invalid_candidate_count', 0)}")
+            print(f"  Missing generations: {error_summary.get('missing_generation_count', 0)}")
+            print(f"  Logged failures: {error_summary.get('logged_failure_count', 0)}")
+            print(f"  Execution errors: {error_summary.get('execution_error_count', 0)}")
+            print(f"  Total counted errors: {error_summary.get('total_error_count', 0)}")
+            print(
+                "  add_column failed candidates: "
+                f"{error_summary.get('add_column_failed_candidate_count', 0)}/"
+                f"{error_summary.get('add_column_requested_candidate_count', 0)} "
+                f"({error_summary.get('add_column_failure_rate', 0.0):.1%})"
+            )
+            print(f"  add_column affected requests: {error_summary.get('add_column_affected_request_count', 0)}")
+            print(f"  add_column affected sampling steps: {error_summary.get('add_column_affected_sampling_step_count', 0)}")
+            failure_codes = error_summary.get("add_column_failure_code_counts", {})
+            if failure_codes:
+                print("  add_column failure breakdown:")
+                for code, count in sorted(failure_codes.items()):
+                    print(f"    {code}: {count}")
 
         # Generation mode breakdown
         mode_counts = summary_data.get("generation_mode_counts", {})

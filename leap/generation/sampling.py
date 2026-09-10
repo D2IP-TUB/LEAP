@@ -10,19 +10,40 @@ The design is intentionally simple but allows for extension through subclassing.
 """
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import List, Optional
 
 from vllm import SamplingParams
+from vllm.sampling_params import RequestOutputKind
 
 from leap.core import Action, Table
 from leap.core.actions import REGISTRY
 from leap.generation.prompt_builder import PromptBuilder
-from leap.inference.constraints import (
+from leap.inference.function_constraints import (
+    ActionGrammarBuilder,
+    StructuredActionParser,
+    StructuredSamplingParamsFactory,
+    uses_xgrammar,
+)
+from leap.inference.json_constraints import (
+    JsonActionCodec,
+    JsonActionSchemaBuilder,
+    JsonSchemaSamplingParamsFactory,
+    available_json_actions,
+    uses_json_operations,
+    uses_json_schema,
+)
+from leap.inference.legacy.constraints import (
     create_action_only_constraint_processor,
     create_arguments_only_constraint_processor,
     create_constraint_logits_processor,
 )
+
+ADD_COLUMN_MIN_TOKENS = 1024
+ADD_COLUMN_BASE_TOKENS = 320
+ADD_COLUMN_TOKENS_PER_ROW = 64
+ADD_COLUMN_MAX_TOKENS = 4096
+ADD_COLUMN_CONTEXT_SAFETY_TOKENS = 128
 
 
 @dataclass
@@ -39,11 +60,64 @@ class SamplingConfig:
         if self.per_action_samples is None:
             self.per_action_samples = {}
 
+    def for_strategy(self, strategy: str) -> "SamplingConfig":
+        """Resolve legacy sampling settings to the supported action policy."""
+        if strategy == "direct_query":
+            return self
+        enabled = strategy == "cot" and self.enabled
+        counts = {
+            action: 8 if enabled and action in {"select_row", "select_column"} else 1
+            for action in ("select_row", "select_column", "add_column", "group_by", "sort_by", "end")
+        }
+        return replace(
+            self,
+            enabled=enabled,
+            n_samples=1,
+            per_action_samples=counts,
+            shuffle_invariant=enabled and self.shuffle_invariant,
+        )
+
     def get_n_samples(self, action_name: Optional[str] = None) -> int:
         """Get number of samples for a specific action type."""
         if action_name and action_name in self.per_action_samples:
             return self.per_action_samples[action_name]
         return self.n_samples
+
+
+@dataclass
+class AddColumnDiagnostic:
+    """Forensic details for one failed ``add_column`` candidate.
+
+    Values are retained in their decoded form only after parsing succeeds; the
+    complete model response is retained in ``raw_output`` for failures.
+    """
+
+    request_id: str
+    step: int
+    sample_idx: int
+    selected_action: str
+    table_row_count: int
+    table_column_count: int
+    generation_submitted: bool = False
+    final_result_received: bool = False
+    batch_enabled: bool = False
+    output_present: bool = False
+    raw_output: str | None = None
+    raw_output_length: int = 0
+    finish_reason: str | None = None
+    output_token_count: int | None = None
+    output_token_ids: list[int] | None = None
+    engine_exception: str | None = None
+    parse_stage: str | None = None
+    parse_failure_reason: str | None = None
+    expected_value_count: int | None = None
+    decoded_value_count: int | None = None
+    normalized_values: list[str] | None = None
+    invalid_control_character_positions: list[int] = field(default_factory=list)
+    length_violation_positions: list[int] = field(default_factory=list)
+    packed_value_signals: list[str] = field(default_factory=list)
+    failure_code: str | None = None
+    failure_reason: str | None = None
 
 
 @dataclass
@@ -58,6 +132,8 @@ class SamplingResult:
     total_votes: int
     candidate_actions: list[str] | None = None
     valid_actions: list[str] | None = None
+    fallback_reason: str | None = None
+    add_column_diagnostics: list[AddColumnDiagnostic] = field(default_factory=list)
 
 
 class SamplingLayer:
@@ -73,6 +149,8 @@ class SamplingLayer:
 
     def __init__(self, config: SamplingConfig):
         self.config = config
+        self.grammar_builder = ActionGrammarBuilder()
+        self.json_schema_builder = JsonActionSchemaBuilder()
 
     def transform_context(self, table: Table, action_history: List[str], sample_idx: int) -> tuple[Table, List[str]]:
         """
@@ -97,7 +175,7 @@ class SamplingLayer:
         """
         return table, action_history
 
-    def _get_available_actions(self, action_history: List[str]) -> List[str]:
+    def _get_available_actions(self, action_history: List[str], worker=None) -> List[str]:
         """
         Get available actions based on action history.
 
@@ -110,6 +188,17 @@ class SamplingLayer:
         Returns:
             List of available action names
         """
+        if worker is not None and uses_json_operations(worker):
+            return available_json_actions(action_history, use_global_constraints=worker.use_global_constraints)
+
+        if worker is not None and uses_xgrammar(worker):
+            from leap.inference.function_constraints import available_actions as grammar_available_actions
+
+            return grammar_available_actions(action_history, use_global_constraints=worker.use_global_constraints)
+
+        if worker is not None and getattr(worker, "use_global_constraints", False) is True:
+            return REGISTRY.get_global_available_actions(action_history)
+
         available_actions = REGISTRY.get_enabled_names()
 
         if action_history:
@@ -134,8 +223,7 @@ class SamplingLayer:
         temperature_action: float,
         state_machines,
         prompt_builder,
-        table_caption: str = None,
-    ) -> str:
+    ) -> Optional[str]:
         """
         Generate the action type, optimizing for single-option scenarios.
 
@@ -157,7 +245,7 @@ class SamplingLayer:
             The action type name (e.g., "select_row", "end")
         """
         # Optimization: If only one action is available, skip LLM call (matches official implementation)
-        available_actions = self._get_available_actions(action_history)
+        available_actions = self._get_available_actions(action_history, worker)
 
         if len(available_actions) == 1:
             # Only one action available - skip LLM call and return it directly
@@ -167,13 +255,24 @@ class SamplingLayer:
         else:
             # Generate action type via LLM
             action_prompt = prompt_builder.build_cot_action_prompt(
-                question=question, table=table, action_history=action_history, worker=worker, table_caption=table_caption
+                question=question, table=table, action_history=action_history, worker=worker
             )
 
-            action_types = await self.generate_action_types(worker, action_prompt, 1, request_id, step, temperature_action, state_machines)
+            action_types = await self.generate_action_types(
+                worker,
+                action_prompt,
+                1,
+                request_id,
+                step,
+                temperature_action,
+                state_machines,
+                table,
+                action_history,
+            )
 
-            # Take the generated action type (fallback to "end" if generation failed)
-            action_type = action_types[0] if action_types else "end"
+            # Empty/invalid action type generation is handled by the caller so
+            # it can be reported as an error-driven fallback.
+            action_type = action_types[0] if action_types else None
 
         if self.config.debug:
             print(f"[SAMPLING DEBUG] Selected action type: {action_type}")
@@ -190,12 +289,11 @@ class SamplingLayer:
         prompt_builder,
         question: str,
         step: int,
-        table_caption: str = None,
     ) -> SamplingResult:
-        """Generate and vote on action candidates."""
+        """Generate and validate one complete iterative operation, without voting."""
 
         # Optimization: If only one action is available, skip LLM call (matches official implementation)
-        available_actions = self._get_available_actions(action_history)
+        available_actions = self._get_available_actions(action_history, worker)
 
         if len(available_actions) == 1:
             # Only one action available - skip LLM call and return it directly
@@ -220,14 +318,14 @@ class SamplingLayer:
                 # Fall through to normal generation
                 pass
 
-        n_samples = self.config.n_samples
+        # Iterative generation is single-shot regardless of sampling configuration.
+        n_samples = 1
 
         if self.config.debug:
-            print(f"\n[SAMPLING DEBUG] Generating {n_samples} candidates for {request_id}")
+            print(f"\n[SAMPLING DEBUG] Generating one operation for {request_id}")
 
-        # Generate N candidates with context transformation
         candidates = await self.generate_candidates(
-            worker, n_samples, table, action_history, request_id, state_machines, prompt_builder, question, step, table_caption
+            worker, n_samples, table, action_history, request_id, state_machines, prompt_builder, question, step
         )
 
         if self.config.debug:
@@ -248,12 +346,12 @@ class SamplingLayer:
                 for col in table.columns:
                     print(f"    - {col}")
 
-        # Vote on best action
-        action, winner_votes = self.aggregate_candidates(valid_candidates)
+        action = valid_candidates[0] if valid_candidates else None
+        winner_votes = int(action is not None)  # Preserve the result metadata schema; no vote is performed.
 
         if self.config.debug:
             if action:
-                print(f"[SAMPLING DEBUG] Winner: {action.to_string()} ({winner_votes}/{len(valid_candidates)} votes)")
+                print(f"[SAMPLING DEBUG] Operation: {action.to_string()}")
             else:
                 print("[SAMPLING DEBUG] No valid action, using fallback")
 
@@ -261,6 +359,9 @@ class SamplingLayer:
         if action is None:
             action = Action("end", [])
             winner_votes = 0
+            fallback_reason = "no_valid_candidates"
+        else:
+            fallback_reason = None
 
         return SamplingResult(
             action=action,
@@ -269,8 +370,9 @@ class SamplingLayer:
             n_valid=len(valid_candidates),
             winner_votes=winner_votes,
             total_votes=len(valid_candidates),
-            candidate_actions=[c.to_string() for c in candidates],
-            valid_actions=[c.to_string() for c in valid_candidates],
+            candidate_actions=[self._serialize_action(c, worker) for c in candidates],
+            valid_actions=[self._serialize_action(c, worker) for c in valid_candidates],
+            fallback_reason=fallback_reason,
         )
 
     async def sample_action_two_phase(
@@ -285,16 +387,16 @@ class SamplingLayer:
         temperature_action: float,
         temperature_args: float,
         prompt_builder,
-        table_caption: str = None,
     ) -> SamplingResult:
         """
         Two-phase sampling for Chain-of-Table:
         Phase 1: Generate single action type (no sampling)
-        Phase 2: Generate N arguments based on per_action_samples config
+        Phase 2: Sample eight arguments for row/column selection when enabled;
+        generate one argument candidate for every other action.
         """
 
-        if self.config.debug:
-            print(f"\n[SAMPLING DEBUG] Two-phase generation for {request_id} step {step}")
+        # if self.config.debug:
+        #     print(f"\n[SAMPLING DEBUG] Two-phase generation for {request_id} step {step}")
 
         # Phase 1: Generate action type (optimized to skip LLM when only one option)
         action_type = await self._generate_action_type(
@@ -307,8 +409,20 @@ class SamplingLayer:
             temperature_action=temperature_action,
             state_machines=state_machines,
             prompt_builder=prompt_builder,
-            table_caption=table_caption,
         )
+
+        if action_type is None:
+            return SamplingResult(
+                action=Action("end", []),
+                n_requested=1,
+                n_generated=0,
+                n_valid=0,
+                winner_votes=0,
+                total_votes=0,
+                candidate_actions=[],
+                valid_actions=[],
+                fallback_reason="action_type_generation_failed",
+            )
 
         # Check if this action requires arguments
         # Some actions like 'end' don't need argument generation
@@ -326,13 +440,13 @@ class SamplingLayer:
                 total_votes=1,
             )
 
-        # Phase 2: Generate N argument sets based on action type
-        # Use per_action_samples config to determine how many samples for this action
-        n_samples = self.config.get_n_samples(action_type)
+        # Enforce the shared policy even when the layer was constructed without the config loader.
+        n_samples = self.config.for_strategy("cot").get_n_samples(action_type)
 
         if self.config.debug:
             print(f"[SAMPLING DEBUG] Phase 2 - Generating {n_samples} argument sets for '{action_type}'")
 
+        add_column_diagnostics: list[AddColumnDiagnostic] = []
         args_candidates = await self.generate_arguments(
             worker,
             action_type,
@@ -345,7 +459,7 @@ class SamplingLayer:
             state_machines,
             prompt_builder,
             question,
-            table_caption,
+            diagnostics=add_column_diagnostics,
         )
 
         if self.config.debug:
@@ -377,6 +491,9 @@ class SamplingLayer:
         if action is None:
             action = Action("end", [])
             winner_votes = 0
+            fallback_reason = "no_valid_candidates"
+        else:
+            fallback_reason = None
 
         return SamplingResult(
             action=action,
@@ -385,8 +502,10 @@ class SamplingLayer:
             n_valid=len(valid_candidates),
             winner_votes=winner_votes,
             total_votes=len(valid_candidates),
-            candidate_actions=[c.to_string() for c in args_candidates],
-            valid_actions=[c.to_string() for c in valid_candidates],
+            candidate_actions=[self._serialize_action(c, worker) for c in args_candidates],
+            valid_actions=[self._serialize_action(c, worker) for c in valid_candidates],
+            fallback_reason=fallback_reason,
+            add_column_diagnostics=add_column_diagnostics,
         )
 
     async def generate_candidates(
@@ -400,39 +519,62 @@ class SamplingLayer:
         prompt_builder,
         question: str,
         step: int,
-        table_caption: str = None,
     ) -> List[Action]:
         """
-        Generate N action candidates with context transformation.
+        Generate complete iterative operations using the original context.
 
-        For each sample:
-        1. Transform context using transform_context()
-        2. Build fresh prompt with transformed context
-        3. Generate action
-
-        All samples are generated concurrently for maximum throughput.
-
-        Override to customize generation behavior.
+        The iterative strategy requests exactly one candidate. Context transforms
+        are reserved for CoT argument sampling.
         """
 
         async def _generate_single_sample(sample_idx: int) -> Optional[Action]:
-            """Generate a single sample with its own context transformation."""
+            """Generate one complete operation without shuffling its context."""
             try:
-                # Transform context for this sample
-                modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
+                modified_table, modified_history = table, action_history
 
-                # Build fresh prompt with modified context
+                # Build the prompt from the original context
                 prompt = prompt_builder.build_iterative_prompt(
                     question=question,
                     table=modified_table,
                     action_history=modified_history,
                     worker=worker,
                     step=step,
-                    table_caption=table_caption,
                 )
 
                 # Generate single action with this prompt
-                if worker.use_constraints:
+                if uses_json_schema(worker):
+                    spec = self.json_schema_builder.build_spec(
+                        table=modified_table,
+                        action_history=modified_history,
+                        use_global_constraints=worker.use_global_constraints,
+                        phase="single_step",
+                    )
+                    spec = self._exclude_hidden_iterative_add_column(spec, prompt)
+                    schema = self.json_schema_builder.build_single_step_schema(spec)
+                    sampling_params = SamplingParams(
+                        temperature=getattr(worker, "effective_temperature", lambda value: value)(0.7),
+                        max_tokens=900 if "add_column" in spec.allowed_actions else 300,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        n=1,
+                        **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
+                    )
+                elif uses_xgrammar(worker):
+                    spec = self.grammar_builder.build_spec(
+                        table=modified_table,
+                        action_history=modified_history,
+                        use_global_constraints=worker.use_global_constraints,
+                        phase="single_step",
+                    )
+                    spec = self._exclude_hidden_iterative_add_column(spec, prompt)
+                    grammar = self.grammar_builder.build_single_step_grammar(spec)
+                    sampling_params = SamplingParams(
+                        temperature=getattr(worker, "effective_temperature", lambda value: value)(0.7),
+                        max_tokens=900 if "add_column" in spec.allowed_actions else 300,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        n=1,
+                        **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
+                    )
+                elif worker.use_constraints:
                     constraint_processor = create_constraint_logits_processor(
                         modified_table,
                         worker.tokenizer,
@@ -443,7 +585,7 @@ class SamplingLayer:
                         worker.use_global_constraints,
                     )
                     sampling_params = SamplingParams(
-                        temperature=0.7,
+                        temperature=getattr(worker, "effective_temperature", lambda value: value)(0.7),
                         max_tokens=900,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         logits_processors=[constraint_processor],
@@ -451,16 +593,17 @@ class SamplingLayer:
                     )
                 else:
                     sampling_params = SamplingParams(
-                        temperature=0.7,
+                        temperature=getattr(worker, "effective_temperature", lambda value: value)(0.7),
                         max_tokens=900,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         stop=["\n", "Next", "Step"],
                         n=1,
                     )
 
-                # DEBUG: Print prompt
-                print(f"\n{'=' * 80}\n[PROMPT] Sample {sample_idx}\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
+                if self.config.debug:
+                    print(f"\n{'=' * 80}\n[PROMPT] Sample {sample_idx}\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
 
+                sampling_params.output_kind = RequestOutputKind.FINAL_ONLY
                 result_generator = worker.engine.generate(prompt, sampling_params, f"{request_id}_sample{sample_idx}")
                 final_result = None
                 async for result in result_generator:
@@ -468,9 +611,16 @@ class SamplingLayer:
 
                 if final_result and final_result.outputs:
                     response_text = final_result.outputs[0].text.strip()
-                    # DEBUG: Print response
-                    print(f"\n[RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
-                    action = Action.parse(response_text)
+                    if self.config.debug:
+                        print(f"\n[RESPONSE] Sample {sample_idx}\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
+                    if uses_json_operations(worker):
+                        action = JsonActionCodec.parse_single_step(response_text, modified_table)
+                    elif uses_xgrammar(worker):
+                        action = StructuredActionParser.parse_single_step(response_text, modified_table)
+                    else:
+                        action = Action.parse(response_text)
+                    if action and action.name == "add_column" and "add_column" not in prompt:
+                        return None
                     return action
                 return None
             except Exception as e:
@@ -488,16 +638,67 @@ class SamplingLayer:
 
         return candidates
 
+    @staticmethod
+    def _exclude_hidden_iterative_add_column(spec, prompt: str):
+        if "add_column" in spec.allowed_actions and "add_column" not in prompt:
+            return replace(spec, allowed_actions=tuple(name for name in spec.allowed_actions if name != "add_column"))
+        return spec
+
     async def generate_action_types(
-        self, worker, prompt: str, n: int, request_id: str, step: int, temperature: float, state_machines
+        self,
+        worker,
+        prompt: str,
+        n: int,
+        request_id: str,
+        step: int,
+        temperature: float,
+        state_machines,
+        table: Table,
+        action_history: List[str],
     ) -> List[str]:
         """Generate N action types for two-phase sampling."""
         step_id = f"{request_id}_action_step{step}"
 
-        if worker.use_constraints:
-            constraint_processor = create_action_only_constraint_processor(worker.tokenizer, step_id, state_machines)
+        if uses_json_schema(worker):
+            spec = self.json_schema_builder.build_spec(
+                table=table,
+                action_history=action_history,
+                use_global_constraints=worker.use_global_constraints,
+                phase="action",
+            )
+            schema = self.json_schema_builder.build_action_schema(spec)
             sampling_params = SamplingParams(
-                temperature=temperature,
+                temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
+                max_tokens=60,
+                stop_token_ids=[worker.tokenizer.eos_token_id],
+                n=n,
+                **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
+            )
+        elif uses_xgrammar(worker):
+            spec = self.grammar_builder.build_spec(
+                table=table,
+                action_history=action_history,
+                use_global_constraints=worker.use_global_constraints,
+                phase="action",
+            )
+            grammar = self.grammar_builder.build_action_grammar(spec)
+            sampling_params = SamplingParams(
+                temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
+                max_tokens=60,
+                stop_token_ids=[worker.tokenizer.eos_token_id],
+                n=n,
+                **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
+            )
+        elif worker.use_constraints:
+            constraint_processor = create_action_only_constraint_processor(
+                worker.tokenizer,
+                step_id,
+                state_machines,
+                action_history=action_history,
+                use_global_constraints=worker.use_global_constraints,
+            )
+            sampling_params = SamplingParams(
+                temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
                 max_tokens=20,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
                 logits_processors=[constraint_processor],
@@ -505,16 +706,16 @@ class SamplingLayer:
             )
         else:
             sampling_params = SamplingParams(
-                temperature=temperature,
-                max_tokens=30,
+                temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
+                max_tokens=100,
                 stop_token_ids=[worker.tokenizer.eos_token_id],
-                stop=["\n", "Arguments", "Next"],
                 n=n,
             )
 
-        # DEBUG: Print Phase 1 prompt
-        print(f"\n{'=' * 80}\n[PHASE 1 PROMPT - ACTION SELECTION | {request_id} step={step}]\n{'=' * 80}\n{prompt}\n{'=' * 80}\n")
+        if self.config.debug:
+            print(f"\n[PHASE 1 PROMPT | {request_id} step={step}]\n{prompt}")
 
+        sampling_params.output_kind = RequestOutputKind.FINAL_ONLY
         result_generator = worker.engine.generate(prompt, sampling_params, step_id)
         final_result = None
         async for result in result_generator:
@@ -524,9 +725,15 @@ class SamplingLayer:
         if final_result:
             for output in final_result.outputs:
                 response_text = output.text.strip()
-                # DEBUG: Print Phase 1 response
-                print(f"\n[PHASE 1 RESPONSE | {request_id} step={step}]\n{'=' * 80}\n{response_text}\n{'=' * 80}\n")
-                action_name = Action.parse_name_only(response_text)
+                if self.config.debug:
+                    print(f"\n[PHASE 1 RESPONSE | {request_id} step={step}]\n{response_text}")
+                if uses_json_operations(worker):
+                    allowed = self._get_available_actions(action_history, worker)
+                    action_name = JsonActionCodec.parse_action_name(response_text, allowed_actions=allowed)
+                elif uses_xgrammar(worker):
+                    action_name = StructuredActionParser.parse_action_name(response_text)
+                else:
+                    action_name = Action.parse_name_only(response_text)
                 if action_name:
                     action_types.append(action_name)
 
@@ -545,7 +752,7 @@ class SamplingLayer:
         state_machines,
         prompt_builder: PromptBuilder,
         question: str,
-        table_caption: str = None,
+        diagnostics: list[AddColumnDiagnostic] | None = None,
     ) -> List[Action]:
         """
         Generate N argument sets for a given action type with context transformation.
@@ -558,25 +765,80 @@ class SamplingLayer:
         All samples are generated concurrently for maximum throughput.
         """
 
-        async def _generate_single_argument_set(sample_idx: int) -> Optional[Action]:
+        async def _generate_single_argument_set(sample_idx: int) -> tuple[Optional[Action], AddColumnDiagnostic | None]:
             """Generate a single argument set with its own context transformation."""
+            diagnostic = (
+                AddColumnDiagnostic(
+                    request_id=request_id,
+                    step=step,
+                    sample_idx=sample_idx,
+                    selected_action=action_name,
+                    table_row_count=len(table.rows),
+                    table_column_count=len(table.columns),
+                )
+                if action_name == "add_column"
+                else None
+            )
+
+            def failed(code: str, reason: str, *, stage: str | None = None) -> tuple[None, AddColumnDiagnostic | None]:
+                if diagnostic is not None:
+                    diagnostic.failure_code = code
+                    diagnostic.failure_reason = reason
+                    diagnostic.parse_stage = stage
+                return None, diagnostic
+
             try:
                 # Transform context for this sample
                 modified_table, modified_history = self.transform_context(table, action_history, sample_idx)
+                generation_table = modified_table
                 # Build fresh args prompt with modified context
                 args_prompt = prompt_builder.build_cot_arguments_prompt(
                     question=question,
-                    table=modified_table,
+                    table=generation_table,
                     action_name=action_name,
                     action_history=modified_history,
                     worker=worker,
-                    table_caption=table_caption,
                 )
 
                 step_id = f"{request_id}_args_step{step}_sample{sample_idx}"
+                add_column_max_tokens = (
+                    self._add_column_max_tokens(generation_table, args_prompt, worker) if action_name == "add_column" else 300
+                )
 
                 # Generate single argument set
-                if worker.use_constraints:
+                if uses_json_schema(worker):
+                    spec = self.json_schema_builder.build_spec(
+                        table=generation_table,
+                        action_history=modified_history,
+                        use_global_constraints=worker.use_global_constraints,
+                        phase="arguments",
+                        selected_action=action_name,
+                    )
+                    schema = self.json_schema_builder.build_arguments_schema(spec)
+                    sampling_params = SamplingParams(
+                        temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
+                        max_tokens=add_column_max_tokens if action_name == "add_column" else 300,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        n=1,
+                        **JsonSchemaSamplingParamsFactory.structured_outputs_kwargs(schema),
+                    )
+                elif uses_xgrammar(worker):
+                    spec = self.grammar_builder.build_spec(
+                        table=generation_table,
+                        action_history=modified_history,
+                        use_global_constraints=worker.use_global_constraints,
+                        phase="arguments",
+                        selected_action=action_name,
+                    )
+                    grammar = self.grammar_builder.build_arguments_grammar(spec)
+                    sampling_params = SamplingParams(
+                        temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
+                        max_tokens=add_column_max_tokens if action_name == "add_column" else 300,
+                        stop_token_ids=[worker.tokenizer.eos_token_id],
+                        n=1,
+                        **StructuredSamplingParamsFactory.structured_outputs_kwargs(grammar),
+                    )
+                elif worker.use_constraints and action_name != "add_column":
                     # Use arguments-only constraint processor for two-phase generation
                     # This prevents the model from generating the action name again
                     constraint_processor = create_arguments_only_constraint_processor(
@@ -588,7 +850,7 @@ class SamplingLayer:
                         state_machines,
                     )
                     sampling_params = SamplingParams(
-                        temperature=temperature,
+                        temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
                         max_tokens=900,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
                         logits_processors=[constraint_processor],
@@ -596,49 +858,74 @@ class SamplingLayer:
                     )
                 else:
                     sampling_params = SamplingParams(
-                        temperature=temperature,
+                        temperature=getattr(worker, "effective_temperature", lambda value: value)(temperature),
                         max_tokens=900,
                         stop_token_ids=[worker.tokenizer.eos_token_id],
-                        stop=["Next", "Step"],
+                        stop=["\n", "Next", "Step"],
                         n=1,
                     )
 
-                # DEBUG: Print Phase 2 prompt
-                print(
-                    f"\n{'=' * 80}\n[PHASE 2 PROMPT - ARGUMENTS | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{args_prompt}\n{'=' * 80}\n"  # noqa: E501
-                )
+                if self.config.debug:
+                    print(f"\n[PHASE 2 PROMPT | {request_id} step={step} sample={sample_idx}]\n{args_prompt}")
 
+                if diagnostic is not None:
+                    diagnostic.generation_submitted = True
+                sampling_params.output_kind = RequestOutputKind.FINAL_ONLY
                 result_generator = worker.engine.generate(args_prompt, sampling_params, step_id)
                 final_result = None
                 async for result in result_generator:
                     final_result = result
 
-                if final_result and final_result.outputs:
-                    raw_args_text = final_result.outputs[0].text.strip()
+                if final_result is None:
+                    return failed("no_final_result", "The engine yielded no final result.")
+                if diagnostic is not None:
+                    diagnostic.final_result_received = True
+                if not final_result.outputs:
+                    return failed("no_output", "The final result contained no outputs.")
 
-                    print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{'=' * 80}\n{raw_args_text}\n{'=' * 80}\n")
+                output = final_result.outputs[0]
+                args_text = output.text.strip()
+                if diagnostic is not None:
+                    diagnostic.output_present = True
+                    diagnostic.raw_output = output.text
+                    diagnostic.raw_output_length = len(output.text)
+                    diagnostic.finish_reason = getattr(output, "finish_reason", None)
+                    token_ids = getattr(output, "token_ids", None)
+                    diagnostic.output_token_ids = list(token_ids) if token_ids is not None else None
+                    diagnostic.output_token_count = len(token_ids) if token_ids is not None else None
+                if not args_text:
+                    return failed("empty_output", "The model output was empty.")
 
-                    args_text = self._clean_argument_text(raw_args_text, action_name)
-                    full_action_str = f"{action_name}({args_text})"
-                    action = Action.parse(full_action_str)
+                if self.config.debug:
+                    print(f"\n[PHASE 2 RESPONSE | {request_id} step={step} sample={sample_idx}]\n{args_text}")
 
-                    if action and action.name == "add_column":
-                        action = await self._extend_add_column_per_row(
-                            action=action,
-                            table=modified_table,
-                            prompt_builder=prompt_builder,
-                            worker=worker,
-                            step_id=step_id,
-                            request_id=request_id,
-                            step=step,
-                            explanation=raw_args_text,
+                if uses_json_operations(worker):
+                    inspection = JsonActionCodec.inspect_arguments(args_text, action_name, generation_table)
+                    action = inspection.action
+                elif uses_xgrammar(worker):
+                    inspection = None
+                    action = StructuredActionParser.parse_arguments(args_text, action_name, generation_table)
+                else:
+                    inspection = None
+                    if not worker.use_constraints or action_name == "add_column":
+                        args_text = self._clean_argument_text(args_text, action_name)
+                    action = Action.parse(f"{action_name}({args_text})")
+
+                if action is None:
+                    if inspection is not None:
+                        return failed(
+                            inspection.failure_code or "action_parse_failed",
+                            inspection.failure_reason or "Action parsing failed.",
+                            stage=inspection.stage,
                         )
+                    return failed("action_parse_failed", "Action parsing failed.")
 
-                    return action
-                return None
+                return action, None
             except Exception as e:
                 print(f"[SAMPLING ERROR] Sample {sample_idx} failed: {type(e).__name__}: {e}")
-                return None
+                if diagnostic is not None:
+                    diagnostic.engine_exception = f"{type(e).__name__}: {e}"
+                return failed("generation_exception", diagnostic.engine_exception if diagnostic else str(e))
 
         # Create all argument generation tasks concurrently
         tasks = [_generate_single_argument_set(i) for i in range(n)]
@@ -646,65 +933,41 @@ class SamplingLayer:
         # Execute all samples concurrently and wait for all to complete
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Filter out None values and exceptions, keeping only valid actions
-        candidates = [r for r in results if r is not None and not isinstance(r, Exception)]
+        # Filter out None values and exceptions, retaining diagnostics for failed add_column candidates.
+        candidates = []
+        for result in results:
+            if isinstance(result, Exception):
+                continue
+            action, diagnostic = result
+            if action is not None:
+                candidates.append(action)
+            elif diagnostic is not None and diagnostics is not None:
+                diagnostics.append(diagnostic)
 
         return candidates
 
-    async def _extend_add_column_per_row(
-        self,
-        *,
-        action: Action,
-        table: Table,
-        prompt_builder,
-        worker,
-        step_id: str,
-        request_id: str,
-        step: int,
-        explanation: str,
-    ) -> Action:
-        """Extend an add_column action by generating any missing row values one at a time.
+    @staticmethod
+    def _add_column_max_tokens(table: Table, prompt: str, worker) -> int:
+        """Allocate add-column output tokens from row count, bounded by remaining context."""
+        requested = min(
+            ADD_COLUMN_MAX_TOKENS,
+            max(ADD_COLUMN_MIN_TOKENS, ADD_COLUMN_BASE_TOKENS + ADD_COLUMN_TOKENS_PER_ROW * len(table.rows)),
+        )
+        max_model_len = getattr(worker, "max_model_len", None)
+        if not max_model_len:
+            return requested
+        try:
+            prompt_tokens = len(worker.tokenizer.encode(prompt, add_special_tokens=False))
+        except (AttributeError, TypeError):
+            prompt_tokens = len(prompt) // 4
+        remaining = max_model_len - prompt_tokens - ADD_COLUMN_CONTEXT_SAFETY_TOKENS
+        return max(1, min(requested, remaining))
 
-        If the action already has values for all rows, returns it unchanged.
-        Otherwise uses the existing values as seed examples and generates the rest row-by-row.
-        """
-        col_name, seed_values = action.arguments
-        if len(seed_values) >= len(table.rows):
-            return action
-
-        all_values = list(seed_values)
-
-        for row_idx in range(len(seed_values), len(table.rows)):
-            per_row_prompt = prompt_builder.build_add_column_per_row_prompt(
-                table=table,
-                column_name=col_name,
-                target_row=table.rows[row_idx],
-                target_row_idx=row_idx,
-                seed_values=list(seed_values),
-                explanation=explanation,
-            )
-            row_id = f"{step_id}_row{row_idx}"
-            row_params = SamplingParams(
-                temperature=0.0,
-                max_tokens=50,
-                stop_token_ids=[worker.tokenizer.eos_token_id],
-                stop=["\n"],
-                n=1,
-            )
-            print(
-                f"\n{'=' * 80}\n[PHASE 2 PROMPT - ADD_COLUMN ROW {row_idx} | {request_id} step={step}]\n{'=' * 80}\n{per_row_prompt}\n{'=' * 80}\n"  # noqa: E501
-            )
-            row_gen = worker.engine.generate(per_row_prompt, row_params, row_id)
-            row_result = None
-            async for r in row_gen:
-                row_result = r
-            val = row_result.outputs[0].text.strip() if row_result and row_result.outputs else ""
-            # Take only the first non-empty line in case the model generated extra text
-            val = next((line.strip() for line in val.splitlines() if line.strip()), val)
-            print(f"\n[PHASE 2 RESPONSE - ADD_COLUMN ROW {row_idx} | {request_id}]\n{'=' * 80}\n{val}\n{'=' * 80}\n")
-            all_values.append(val)
-
-        return Action("add_column", [col_name, all_values])
+    @staticmethod
+    def _serialize_action(action: Action, worker) -> str:
+        if uses_json_operations(worker):
+            return JsonActionCodec.dumps(action)
+        return action.to_string()
 
     def filter_candidates(self, candidates: List[Action], table: Table, action_history: List[str] = None) -> List[Action]:
         """Filter candidates to only valid actions. Override to customize filtering."""
@@ -754,6 +1017,12 @@ class SamplingLayer:
         """
         import re
 
+        def strip_trailing_prompt_punctuation(text: str) -> str:
+            cleaned_text = text.strip().rstrip(".")
+            if len(cleaned_text) >= 2 and cleaned_text[0] in {"'", '"'} and cleaned_text[-1] == cleaned_text[0]:
+                return cleaned_text
+            return cleaned_text.rstrip("'\"")
+
         # Remove action name prefix (with optional space and opening paren)
         # Patterns to clean:
         # - "select_column ([ "Team" ]" -> "[ "Team" ]"
@@ -772,8 +1041,16 @@ class SamplingLayer:
                 after_marker = after_marker[: last_paren + 1]
             args_text = after_marker
 
-        # Normalize backslashes only for regex matching — do NOT use this for the returned value
-        normalized_args_text = args_text.replace("\\", "")
+        # Normalize backslashes only for regex matching while retaining a map
+        # back to the original offsets used for the returned value.
+        normalized_chars = []
+        normalized_to_original = []
+        for original_idx, char in enumerate(args_text):
+            if char == "\\":
+                continue
+            normalized_chars.append(char)
+            normalized_to_original.append(original_idx)
+        normalized_args_text = "".join(normalized_chars)
 
         # Try to extract just the args from f_action_name(args) or action_name(args)
         # Try f_-prefixed version first (LLM generates f_sort_by(...) etc.)
@@ -793,11 +1070,13 @@ class SamplingLayer:
                     pos += 1
                 if depth == 0:
                     close_pos = pos - 1  # position of closing ')'
-                    # Use match offsets on the original args_text (offsets are same since we only stripped backslashes)
-                    return args_text[open_pos:close_pos].strip().rstrip(".'\"")
+                    original_open_pos = normalized_to_original[open_pos - 1] + 1
+                    original_close_pos = normalized_to_original[close_pos]
+                    return strip_trailing_prompt_punctuation(args_text[original_open_pos:original_close_pos])
 
-        # Fallback: strip action name prefix (with or without f_) then everything after closing paren
+        # Fallback: strip only the action name prefix (with or without f_).
+        # Preserve parentheses in the remaining arguments because they may be
+        # part of a valid column name, e.g. "Population (2005)".
         pattern = rf"^\s*(?:f_)?{re.escape(action_name)}\s*\(?\s*"
         cleaned = re.sub(pattern, "", args_text, count=1)
-        cleaned = cleaned.replace(")", "")
-        return cleaned.strip().rstrip(".'\"")  # Strip trailing punctuation from prompt format
+        return strip_trailing_prompt_punctuation(cleaned)

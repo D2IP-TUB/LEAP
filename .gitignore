@@ -1,14 +1,23 @@
 __pycache__
 .cursor/
 .venv/
+.venv-vllm-legacy/
+.venv-vllm-modern/
 .vscode
 .claude
+.ruff_cache
+.pytest_cache
 
 logs/
+results/
 datasets/
 CLAUDE.md
+
+flash-attention/
 
 *.sh
 *.backup
 uv.lock.backup
 Miniconda3-latest-Linux-x86_64.sh
+
+AGENTS.md

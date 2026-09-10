@@ -2,11 +2,14 @@
 Essential tests for vLLM server components
 """
 
+import asyncio
 import multiprocessing as mp
 
 import pytest
 
 from leap.config.loader import GenerationConfig, LoggingConfig, TokenizerConfig
+from leap.core import ExecutionMetrics, InferenceRequest, InferenceResult, Table
+from leap.generation.sampling import SamplingConfig, SamplingLayer
 from leap.inference.vllm_server import ProcessParallelVLLM, VLLMWorkerProcess
 
 
@@ -204,9 +207,152 @@ class TestProcessParallelVLLM:
         with pytest.raises(RuntimeError, match="Workers not ready"):
             server.generate_batch([{"question": "test"}])
 
+    def test_generate_batch_preserves_stable_request_ids(self):
+        server = create_test_server(
+            model_id="gpt2",
+            num_workers=1,
+            generation_config=create_test_generation_config(),
+            logging_config=create_test_logging_config(enable_logging=False),
+        )
+
+        class DummyQueue:
+            def __init__(self, responses=None):
+                self.responses = list(responses or [])
+                self.put_calls = []
+
+            def put(self, value):
+                self.put_calls.append(value)
+
+            def get(self, timeout=None):
+                if not self.responses:
+                    raise AssertionError("No queued response available")
+                return self.responses.pop(0)
+
+        request = InferenceRequest.from_example(
+            {
+                "question": "What is the answer?",
+                "table": {"header": ["A"], "rows": [["1"]]},
+                "answers": ["1"],
+            },
+            index=0,
+        )
+        result = InferenceResult(
+            action_history=[],
+            final_table=Table(columns=[], rows=[]),
+            execution_metrics=ExecutionMetrics(
+                execution_accuracy=1.0,
+                answer_found_in_final=True,
+                answer_found_in_original=False,
+                terminated_properly=True,
+                matched_answers_final=["1"],
+                matched_answers_original=[],
+                num_actions=0,
+            ),
+            request_id=request.request_id,
+            question=request.question,
+            ground_truth_answers=request.ground_truth_answers,
+        )
+
+        server._workers_ready = True
+        server.input_queue = DummyQueue()
+        server.output_queue = DummyQueue([("result", request.request_id, result)])
+        server.main_logger = None
+
+        ordered_results = server.generate_batch([request])
+
+        assert server.input_queue.put_calls[0].request.request_id == "example_0"
+        assert ordered_results[0].request_id == "example_0"
+
+    def test_reconfigure_keeps_worker_objects_and_replaces_run_logger(self, monkeypatch, tmp_path):
+        server = create_test_server(
+            model_id="gpt2",
+            num_workers=2,
+            generation_config=create_test_generation_config(),
+            logging_config=create_test_logging_config(enable_logging=False),
+        )
+        worker_ids = [id(worker) for worker in server.workers]
+        monkeypatch.setattr(server, "workers_healthy", lambda: True)
+        next_generation = GenerationConfig(
+            use_constraints=False,
+            use_global_constraints=False,
+            strategy="cot",
+            constraint_backend="xgrammar",
+            output_format="json",
+        )
+        next_logging = create_test_logging_config(log_dir=str(tmp_path))
+
+        server.reconfigure(next_generation, next_logging)
+
+        assert [id(worker) for worker in server.workers] == worker_ids
+        assert server.generation_config is next_generation
+        assert server.logging_config is next_logging
+        assert server.main_logger.log_dir == tmp_path
+
 
 class TestVLLMWorkerProcess:
     """Test VLLMWorkerProcess initialization"""
+
+    def _worker(self):
+        return VLLMWorkerProcess(
+            worker_id=0,
+            gpu_ids=[0],
+            model_id="gpt2",
+            input_queue=mp.Queue(),
+            output_queue=mp.Queue(),
+            generation_config=create_test_generation_config(),
+            tokenizer_config=create_test_tokenizer_config(),
+            logging_config=create_test_logging_config(),
+            generation_functions={},
+            tensor_parallel_size=1,
+            max_model_len=1234,
+        )
+
+    def test_process_requests_runs_request_loop(self, monkeypatch):
+        worker = self._worker()
+        events = []
+
+        async def fake_loop():
+            events.append("loop")
+
+        monkeypatch.setattr(worker, "_process_request_loop", fake_loop)
+
+        asyncio.run(worker._process_requests())
+
+        assert events == ["loop"]
+
+    def test_apply_run_config_refreshes_sampling_policy_without_reloading_engine(self):
+        worker = self._worker()
+        engine_marker = object()
+        worker.engine = engine_marker
+        generation = GenerationConfig(
+            use_constraints=False,
+            use_global_constraints=False,
+            strategy="cot",
+            constraint_backend="xgrammar",
+            output_format="json",
+            sampling=SamplingConfig(enabled=True, n_samples=8),
+        )
+        logging = create_test_logging_config(enable_logging=False)
+
+        class HandlerOwner:
+            def __init__(self):
+                self.sampling_layer = SamplingLayer(SamplingConfig(enabled=True, n_samples=8))
+
+            def generate(self):
+                pass
+
+        owner = HandlerOwner()
+        worker.generation_functions = {"handler": owner.generate}
+        worker._apply_run_config(generation, logging)
+
+        assert worker.engine is engine_marker
+        assert owner.sampling_layer.config.get_n_samples("select_row") == 8
+        assert owner.sampling_layer.config.get_n_samples("add_column") == 1
+        assert isinstance(owner.sampling_layer, SamplingLayer)
+        assert worker.generation_config is generation
+        assert worker.use_constraints is False
+        assert worker.use_cot is True
+        assert worker.output_format == "json"
 
     def test_worker_initialization(self):
         """Test worker process initialization"""
@@ -232,6 +378,126 @@ class TestVLLMWorkerProcess:
         assert worker.model_id == "gpt2"
         assert worker.use_constraints is True
         assert worker.use_cot is False
+
+    def test_worker_resolves_vllm_012_tokenizer_and_config(self):
+        """Test worker engine access for vLLM 0.12 AsyncLLM shape."""
+
+        class Tokenizer:
+            pad_token = None
+            eos_token = "<eos>"
+
+        class ModelConfig:
+            max_model_len = 4096
+
+        class VLLMConfig:
+            model_config = ModelConfig()
+
+        class Engine:
+            vllm_config = VLLMConfig()
+
+            def __init__(self):
+                self.tokenizer = Tokenizer()
+
+            def get_tokenizer(self):
+                return self.tokenizer
+
+        worker = self._worker()
+        worker.engine = Engine()
+
+        assert worker._resolve_engine_tokenizer() is worker.engine.tokenizer
+        assert worker._resolve_engine_max_model_len() == 4096
+
+    def test_worker_resolves_async_vllm_012_tokenizer(self):
+        """Test worker engine access when vLLM exposes async get_tokenizer."""
+
+        class Tokenizer:
+            pad_token = None
+            eos_token = "<eos>"
+
+        class Engine:
+            def __init__(self):
+                self.tokenizer = Tokenizer()
+
+            async def get_tokenizer(self):
+                return self.tokenizer
+
+        worker = self._worker()
+        worker.engine = Engine()
+
+        assert worker._resolve_engine_tokenizer() is worker.engine.tokenizer
+
+    def test_worker_resolves_legacy_engine_tokenizer_and_config(self):
+        """Test worker engine access for older AsyncLLMEngine shape."""
+
+        class Tokenizer:
+            pad_token = None
+            eos_token = "<eos>"
+
+        class TokenizerGroup:
+            tokenizer = Tokenizer()
+
+        class ModelConfig:
+            max_model_len = 2048
+
+        class InnerEngine:
+            tokenizer = TokenizerGroup()
+            model_config = ModelConfig()
+
+        class Engine:
+            engine = InnerEngine()
+
+        worker = self._worker()
+        worker.engine = Engine()
+
+        assert worker._resolve_engine_tokenizer() is worker.engine.engine.tokenizer.tokenizer
+        assert worker._resolve_engine_max_model_len() == 2048
+
+    def test_worker_cleanup_shuts_down_engine_and_cuda(self, monkeypatch):
+        """Test worker teardown releases vLLM and CUDA resources."""
+        calls = []
+
+        class Engine:
+            def shutdown(self):
+                calls.append("engine_shutdown")
+
+        worker = self._worker()
+        worker.engine = Engine()
+        worker.tokenizer = object()
+
+        monkeypatch.setattr(
+            "vllm.distributed.parallel_state.cleanup_dist_env_and_memory",
+            lambda: calls.append("dist_cleanup"),
+        )
+        monkeypatch.setattr("torch.cuda.is_available", lambda: True)
+        monkeypatch.setattr("torch.cuda.empty_cache", lambda: calls.append("empty_cache"))
+        monkeypatch.setattr("torch.cuda.ipc_collect", lambda: calls.append("ipc_collect"))
+
+        worker._cleanup_engine()
+
+        assert worker.engine is None
+        assert worker.tokenizer is None
+        assert calls == ["engine_shutdown", "dist_cleanup", "empty_cache", "ipc_collect"]
+
+    def test_worker_cleanup_supports_async_engine_shutdown(self, monkeypatch):
+        """Test worker teardown handles awaitable vLLM shutdown results."""
+        calls = []
+
+        class Engine:
+            async def shutdown(self):
+                calls.append("engine_shutdown")
+
+        worker = self._worker()
+        worker.engine = Engine()
+
+        monkeypatch.setattr(
+            "vllm.distributed.parallel_state.cleanup_dist_env_and_memory",
+            lambda: calls.append("dist_cleanup"),
+        )
+        monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+
+        worker._cleanup_engine()
+
+        assert calls == ["engine_shutdown", "dist_cleanup"]
 
     def test_worker_generation_mode_constrained(self):
         """Test generation mode string for constrained mode"""

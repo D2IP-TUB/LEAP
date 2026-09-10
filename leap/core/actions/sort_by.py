@@ -83,12 +83,26 @@ class SortByAction(ActionDefinition):
         if not args_str or args_str == "[]":
             return None
 
-        parts = args_str.split(",")
-        if len(parts) < 2:
-            return None
+        column_name = None
+        order_str = None
+        try:
+            import ast
 
-        column_name = parts[0].strip().strip('"').strip("'")
-        order_str = parts[1].strip().strip('"').strip("'").lower()
+            parsed = ast.literal_eval(f"({args_str})")
+            if isinstance(parsed, tuple) and len(parsed) == 2:
+                column_name, order_str = parsed
+        except (SyntaxError, ValueError):
+            pass
+
+        # Retain the existing permissive parser for unquoted legacy output.
+        if not isinstance(column_name, str) or not isinstance(order_str, str):
+            parts = args_str.split(",")
+            if len(parts) < 2:
+                return None
+            column_name = parts[0].strip().strip('"').strip("'")
+            order_str = parts[1].strip().strip('"').strip("'")
+
+        order_str = order_str.lower()
 
         order = self._normalize_order(order_str)
         if order is None:
@@ -118,8 +132,10 @@ class SortByAction(ActionDefinition):
 
         return None
 
-    def _resolve_column(self, table: Table, column_name: str) -> Optional[str]:
+    def _resolve_column(self, table: Table, column_name) -> Optional[str]:
         """Case-insensitive column name resolution."""
+        if not isinstance(column_name, str):
+            return None
         if column_name in table.columns:
             return column_name
         lower = column_name.lower()
@@ -157,14 +173,22 @@ class SortByAction(ActionDefinition):
         col_idx = table.columns.index(column_name)
 
         # Sort rows
-        def sort_key(row):
-            value = row[col_idx]
-            # Try to convert to number for proper numerical sorting
+        def to_float(v):
             try:
-                return float(value)
+                return float(str(v).replace(",", ""))
             except (ValueError, TypeError):
-                # Fall back to string comparison
-                return str(value)
+                return None
+
+        all_numeric = all(to_float(row[col_idx]) is not None for row in table.rows)
+
+        if all_numeric:
+
+            def sort_key(row):
+                return to_float(row[col_idx])
+        else:
+
+            def sort_key(row):
+                return str(row[col_idx]) if row[col_idx] is not None else ""
 
         sorted_rows = sorted(table.rows, key=sort_key, reverse=(order == "desc"))
 

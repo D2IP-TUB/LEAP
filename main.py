@@ -1,9 +1,29 @@
+# ruff: noqa: I001  # Runtime bootstrap must execute before imports that load vLLM.
+if __name__ == "__main__":
+    import json as _bootstrap_json
+    import os as _bootstrap_os
+    import sys as _bootstrap_sys
+    from pathlib import Path as _BootstrapPath
+
+    from leap.vllm_runtime import ensure_vllm_runtime, runtime_for_config
+
+    _bootstrap_config = _BootstrapPath(_bootstrap_os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
+    _bootstrap_session = _bootstrap_os.environ.get("LEAP_SESSION_MANIFEST")
+    if _bootstrap_session:
+        with open(_bootstrap_session, "r", encoding="utf-8") as _session_file:
+            _session_data = _bootstrap_json.load(_session_file)
+        _bootstrap_config = _BootstrapPath(_session_data["jobs"][0]["config_path"])
+    ensure_vllm_runtime(runtime_for_config(_bootstrap_config), argv=_bootstrap_sys.argv)
+
 import json
 import logging
 import multiprocessing as mp
 import os
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass, replace
+from datetime import datetime
+from hashlib import sha1
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +40,7 @@ from leap.config.loader import (
     GenerationConfig as GenerationSettings,
 )
 from leap.core import Action, InferenceRequest, InferenceResult
+from leap.extractors import build_extractors
 from leap.generation.prompt_builder import PromptBuilder
 from leap.generation.sampling import SamplingConfig, SamplingLayer
 from leap.generation.shuffle_invariant_sampling import ShuffleInvariantSamplingLayer
@@ -29,15 +50,16 @@ from leap.generation.strategies import (
     IterativeGenerationStrategy,
 )
 from leap.inference.vllm_server import ProcessParallelVLLM
+from leap.vllm_runtime import runtime_for_generation, runtime_metadata, validate_installed_runtime
+from leap.utils.config_labels import build_generation_config_label
 from leap.utils.profiler import get_aggregate_profiler
 
 # shut off llm logging in case not important
 logging.getLogger("vllm").setLevel(logging.ERROR)
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
-os.environ["VLLM_USE_V1"] = "0"
-os.environ["VLLM_SERVER_DEV_MODE"] = "1"
 CONFIG_PATH = Path(os.environ.get("LEAP_CONFIG_PATH", "configs/default.yaml"))
+RESULTS_ROOT = Path(os.environ.get("LEAP_RESULTS_ROOT", "results"))
 
 
 @dataclass(frozen=True)
@@ -46,6 +68,24 @@ class RuntimeContext:
     prompt_builder: PromptBuilder
     tokenizer: AutoTokenizer
     dataset: Any
+
+
+@dataclass(frozen=True)
+class RunOutputPaths:
+    run_dir: Path
+    results_file: Path
+    table_log_dir: Path
+    accuracy_file: Path
+    extractor_accuracy_file: Path
+    manifest_file: Path
+    config_slug: str
+    config_key: str
+    config_label: str
+    timestamp: str
+
+
+class ServerExecutionError(RuntimeError):
+    """Raised when a reusable vLLM server fails while executing a batch."""
 
 
 def load_dataset_from_config(dataset_config: DatasetConfig):
@@ -86,8 +126,18 @@ def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
 
     # Now load the full config with tokenizer
     app_config: AppConfig = load_runtime_config(config_path, tokenizer)
+    validate_installed_runtime(
+        model_id=app_config.model.id,
+        use_constraints=app_config.generation.use_constraints,
+        constraint_backend=app_config.generation.constraint_backend,
+        output_format=app_config.generation.output_format,
+    )
 
-    prompt_builder = PromptBuilder(tokenizer=tokenizer, is_instruct=app_config.model.instruct)
+    prompt_builder = PromptBuilder(
+        tokenizer=tokenizer,
+        is_instruct=app_config.model.instruct,
+        output_format=app_config.generation.output_format,
+    )
     dataset = load_dataset_from_config(app_config.dataset)
     return RuntimeContext(
         config=app_config,
@@ -97,8 +147,128 @@ def build_runtime(config_path: Path = CONFIG_PATH) -> RuntimeContext:
     )
 
 
-def write_results_to_jsonl(results: list[InferenceResult], output_file, generation_config: GenerationSettings):
+def _json_safe(value: Any) -> Any:
+    if is_dataclass(value):
+        return _json_safe(asdict(value))
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def _sanitize_slug(value: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-._")
+    return slug or "run"
+
+
+def build_config_identity(app_config: AppConfig) -> dict[str, Any]:
+    return {
+        "model": {
+            "id": app_config.model.id,
+            "instruct": app_config.model.instruct,
+            "hardware": app_config.model.hardware,
+            "tokenizer_config": app_config.model.tokenizer_config,
+        },
+        "dataset": app_config.dataset,
+        "run": app_config.run,
+        "generation": app_config.generation,
+        "extractors": app_config.extractors,
+    }
+
+
+def build_config_key(app_config: AppConfig) -> str:
+    identity_json = json.dumps(_json_safe(build_config_identity(app_config)), sort_keys=True)
+    return sha1(identity_json.encode("utf-8")).hexdigest()
+
+
+def build_config_label(app_config: AppConfig) -> str:
+    return build_generation_config_label(model_id=app_config.model.id, generation=app_config.generation)
+
+
+def build_config_slug(app_config: AppConfig) -> str:
+    config_hash = build_config_key(app_config)[:8]
+    base = f"{app_config.model.log_dir}_{app_config.generation.strategy}_{config_hash}"
+    return _sanitize_slug(base)
+
+
+def create_run_output_paths(app_config: AppConfig, results_root: Path | str = "results") -> RunOutputPaths:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    config_slug = build_config_slug(app_config)
+    config_key = build_config_key(app_config)
+    config_label = build_config_label(app_config)
+    run_dir = Path(results_root) / config_slug / timestamp
+    return RunOutputPaths(
+        run_dir=run_dir,
+        results_file=run_dir / "results.jsonl",
+        table_log_dir=run_dir / "table_logs",
+        accuracy_file=run_dir / "end_to_end_accuracy.json",
+        extractor_accuracy_file=run_dir / "extractor_accuracy.json",
+        manifest_file=run_dir / "run_config.json",
+        config_slug=config_slug,
+        config_key=config_key,
+        config_label=config_label,
+        timestamp=timestamp,
+    )
+
+
+def apply_run_output_paths(app_config: AppConfig, paths: RunOutputPaths) -> AppConfig:
+    return replace(
+        app_config,
+        model=replace(app_config.model, results_file=str(paths.results_file)),
+        logging=replace(app_config.logging, log_dir=str(paths.table_log_dir)),
+    )
+
+
+def write_end_to_end_accuracy(accuracy: float, output_file: Path | str) -> None:
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump({"end_to_end_accuracy": accuracy}, f, indent=2)
+
+
+def write_run_manifest(app_config: AppConfig, paths: RunOutputPaths, config_path: Path) -> None:
+    manifest = {
+        "config_slug": paths.config_slug,
+        "config_key": paths.config_key,
+        "config_label": paths.config_label,
+        "timestamp": paths.timestamp,
+        "config_path": str(config_path),
+        "run_dir": str(paths.run_dir),
+        "results_file": str(paths.results_file),
+        "table_log_dir": str(paths.table_log_dir),
+        "end_to_end_accuracy_file": str(paths.accuracy_file),
+        "extractor_accuracy_file": str(paths.extractor_accuracy_file),
+        "model": _json_safe(app_config.model),
+        "dataset": _json_safe(app_config.dataset),
+        "run": _json_safe(app_config.run),
+        "generation": _json_safe(app_config.generation),
+        "logging": _json_safe(app_config.logging),
+        "vllm_runtime": runtime_metadata(
+            app_config.generation.constraint_backend,
+            use_constraints=app_config.generation.use_constraints,
+            output_format=app_config.generation.output_format,
+        ),
+        "extractors": list(app_config.extractors),
+    }
+    paths.manifest_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(paths.manifest_file, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+
+def write_results_to_jsonl(
+    results: list[InferenceResult],
+    output_file,
+    generation_config: GenerationSettings,
+    *,
+    config_key: str | None = None,
+    config_label: str | None = None,
+):
     """Write results to JSONL file with execution accuracy metrics"""
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
         for i, result in enumerate(results):
             actions = []
@@ -109,15 +279,30 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
                 else:
                     actions.append({"action": "invalid", "args": [action_str]})
 
+            example_id = result.request_id or f"example_{i + 1}"
+
             # Create entry with WikiTableQuestions logic-based execution accuracy metrics
             # All data comes from the self-contained result
+            is_correct = bool(result.execution_accuracy == 1.0)
             entry = {
-                "id": f"nt-{i + 1}",
+                "id": example_id,
+                "request_id": example_id,
+                "example_id": example_id,
                 "question": result.question,
                 "ground_truth_answers": result.ground_truth_answers,
+                "generated_answers": result.generated_answers,
                 "actions": actions,
                 "execution_accuracy": result.execution_accuracy,
+                "is_correct": is_correct,
+                "comparison": {
+                    "is_correct": is_correct,
+                    "label": "correct" if is_correct else "incorrect",
+                    "answer_found_in_final": result.execution_metrics.answer_found_in_final,
+                    "terminated_properly": result.execution_metrics.terminated_properly,
+                    "execution_error": result.execution_metrics.execution_error,
+                },
                 "execution_metrics": result.execution_metrics.to_dict(),  # Use to_dict() method
+                "extractor_results": [extractor.to_dict() for extractor in (result.extractor_results or [])],
                 "sampling_metadata": [
                     {
                         "candidate_actions": m.candidate_actions,
@@ -128,10 +313,16 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
                         "n_valid": m.n_valid,
                         "winner_votes": m.winner_votes,
                         "total_votes": m.total_votes,
+                        "fallback_reason": m.fallback_reason,
                     }
                     for m in (result.sampling_metadata or [])
                 ],
                 "metadata": {
+                    "example_id": example_id,
+                    "config_key": config_key,
+                    "config_label": config_label,
+                    "is_correct": is_correct,
+                    "comparison_label": "correct" if is_correct else "incorrect",
                     "num_steps": len(actions),
                     "generation_mode": get_generation_mode_string(generation_config),
                     "evaluation_method": "wikitablequestions_logic_with_dataset_answers",
@@ -144,158 +335,363 @@ def write_results_to_jsonl(results: list[InferenceResult], output_file, generati
 
 def get_generation_mode_string(generation_config: GenerationSettings):
     """Get a descriptive string for the current generation mode"""
-    if generation_config.strategy == "cot":
+    format_prefix = f"{generation_config.output_format}_" if generation_config.output_format != "function" else ""
+    if generation_config.strategy == "direct_query":
+        return "direct_query"
+    elif generation_config.strategy == "cot":
         constraint_desc = "with_constraints" if generation_config.use_constraints else "without_constraints"
-        return f"chain_of_table_{constraint_desc}"
+        return f"{format_prefix}chain_of_table_{constraint_desc}"
     elif generation_config.use_constraints:
         if generation_config.use_global_constraints:
-            return "constrained_with_global"
+            return f"{format_prefix}constrained_with_global"
         else:
-            return "constrained_local_only"
+            return f"{format_prefix}constrained_local_only"
     else:
-        return "unconstrained_with_postprocessing"
+        return f"{format_prefix}unconstrained_with_postprocessing"
 
 
 def create_sampling_layer(generation_settings: GenerationSettings) -> SamplingLayer:
-    if not generation_settings.sampling or not generation_settings.sampling.enabled:
-        # When sampling is disabled, use n=1 (no voting, single generation)
-        print("Sampling disabled - using single-sample generation (n=1)")
-        return SamplingLayer(
-            config=SamplingConfig(
-                enabled=True,
-                n_samples=1,
-                debug=False,
-            )
-        )
-    elif generation_settings.sampling.shuffle_invariant:
-        print(f"Shuffle-invariant sampling enabled: {generation_settings.sampling.n_samples} samples per step")
-        return ShuffleInvariantSamplingLayer(config=generation_settings.sampling)
+    config = (generation_settings.sampling or SamplingConfig()).for_strategy(generation_settings.strategy)
+    if generation_settings.strategy == "direct_query":
+        print("Direct query - action sampling is not used")
+        return SamplingLayer(config=config)
+    if generation_settings.strategy == "iterative":
+        print("Effective sampling: iterative uses one complete operation per attempt; no shuffle sampling")
+    elif not config.enabled:
+        print("Effective sampling: CoT uses one action selection and one argument candidate; sampling disabled")
     else:
-        print(f"Sampling enabled: {generation_settings.sampling.n_samples} samples per step")
-        return SamplingLayer(config=generation_settings.sampling)
+        print("Effective sampling: CoT uses one action selection; 8 argument candidates for select_row/select_column, 1 otherwise")
+    if config.shuffle_invariant:
+        print("Shuffle-invariant sampling enabled for CoT row selection")
+        return ShuffleInvariantSamplingLayer(config=config)
+    return SamplingLayer(config=config)
 
 
-def main():
-    """Main function using the modular vLLM server with comprehensive logging"""
-    print("Setting up modular vLLM server with integrated logging...")
+def build_inference_requests(runtime: RuntimeContext, max_examples: int | None) -> list[InferenceRequest]:
+    requests = []
+    dataset = runtime.dataset
+    subset_size = len(dataset) if max_examples is None else min(max_examples, len(dataset))
 
-    runtime = build_runtime(CONFIG_PATH)
-    app_config = runtime.config
+    for i, example in enumerate(dataset):
+        if i >= subset_size:
+            break
+        requests.append(InferenceRequest.from_example(example, index=i))
+
+    return requests
+
+
+def calculate_extractor_accuracy_report(results: list[InferenceResult], configured_extractors: tuple[str, ...]) -> dict[str, Any]:
+    method_accuracies = {}
+    for method in configured_extractors:
+        scores_by_request = {
+            result.request_id: extractor.accuracy
+            for result in results
+            for extractor in (result.extractor_results or [])
+            if extractor.method == method
+        }
+        method_accuracies[method] = sum(scores_by_request.values()) / len(results) if results else 0.0
+    average_accuracy = sum(method_accuracies.values()) / len(method_accuracies) if method_accuracies else 0.0
+    return {"method_accuracies": method_accuracies, "average_accuracy": average_accuracy, "examples": len(results)}
+
+
+def write_extractor_accuracy_report(report: dict[str, Any], output_file: Path | str) -> None:
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2)
+
+
+def print_final_extractor_summary(report: dict[str, Any]) -> None:
+    examples = int(report.get("examples", 0))
+    method_accuracies = report.get("method_accuracies", {})
+
+    print(f"\n{'=' * 80}")
+    print("FINAL EXTRACTOR ACCURACY SUMMARY")
+    print(f"{'=' * 80}")
+    for method, accuracy in method_accuracies.items():
+        correct = round(float(accuracy) * examples)
+        print(f"{method}: {float(accuracy):.3f} ({float(accuracy) * 100:.1f}%) | {correct}/{examples} correct")
+    average = float(report.get("average_accuracy", 0.0))
+    print(f"Average across {len(method_accuracies)} extractors: {average:.3f} ({average * 100:.1f}%)")
+
+
+def finalize_results(
+    results: list[InferenceResult],
+    model_settings,
+    generation_settings: GenerationSettings,
+    run_paths: RunOutputPaths,
+    app_config: AppConfig,
+) -> dict[str, Any]:
+    profiler = get_aggregate_profiler()
+    for result in results:
+        if result.profiling_data:
+            profiler.add_request_profile(
+                result.profiling_data["total_time"],
+                result.profiling_data["operation_timings"],
+                result.profiling_data["num_steps"],
+                result.profiling_data.get("diagnostic_timings"),
+            )
+
+    end_to_end_accuracy = analyze_execution_accuracy(results)
+    write_results_to_jsonl(
+        results,
+        model_settings.results_file,
+        generation_settings,
+        config_key=build_config_key(app_config),
+        config_label=build_config_label(app_config),
+    )
+    write_end_to_end_accuracy(end_to_end_accuracy, run_paths.accuracy_file)
+    extractor_report = calculate_extractor_accuracy_report(results, app_config.extractors)
+    write_extractor_accuracy_report(extractor_report, run_paths.extractor_accuracy_file)
+    if generation_settings.sampling and generation_settings.sampling.debug:
+        print_sample_results(results)
+    get_aggregate_profiler().print_summary()
+    return extractor_report
+
+
+def build_generation_functions(app_config: AppConfig, tokenizer) -> dict[str, Any]:
+    functions = {}
+    for output_format in ("function", "json"):
+        prompt_builder = PromptBuilder(
+            tokenizer=tokenizer,
+            is_instruct=app_config.model.instruct,
+            output_format=output_format,
+        )
+        sampling_layer = create_sampling_layer(app_config.generation)
+        extractors = build_extractors(app_config.extractors, prompt_builder)
+        strategies = {
+            "iterative": IterativeGenerationStrategy(
+                prompt_builder=prompt_builder,
+                sampling_layer=sampling_layer,
+                extractors=extractors,
+            ),
+            "cot": ChainOfTableGenerationStrategy(
+                prompt_builder=prompt_builder,
+                sampling_layer=sampling_layer,
+                extractors=extractors,
+            ),
+            "direct_query": DirectQueryGenerationStrategy(
+                prompt_builder=prompt_builder,
+                sampling_layer=sampling_layer,
+                extractors=extractors,
+            ),
+        }
+        for strategy, handler in strategies.items():
+            functions[f"{output_format}_{strategy}_generation"] = handler.generate_instance
+    return functions
+
+
+def create_server(app_config: AppConfig, tokenizer) -> ProcessParallelVLLM:
     model_settings = app_config.model
-    generation_settings = app_config.generation
-
-    # Create sampling layer (always created, with n=1 when "disabled")
-    sampling_layer = create_sampling_layer(generation_settings)
-
-    # Create strategies
-    iterative_strategy = IterativeGenerationStrategy(
-        prompt_builder=runtime.prompt_builder,
-        sampling_layer=sampling_layer,
-    )
-    cot_strategy = ChainOfTableGenerationStrategy(
-        prompt_builder=runtime.prompt_builder,
-        sampling_layer=sampling_layer,
-    )
-    direct_query_strategy = DirectQueryGenerationStrategy(
-        prompt_builder=runtime.prompt_builder,
-        sampling_layer=sampling_layer,
-    )
-
-    # Validate strategy selection
-    valid_strategies = ["iterative", "cot", "direct_query"]
-    if generation_settings.strategy not in valid_strategies:
-        raise ValueError(f"Invalid strategy '{generation_settings.strategy}'. Must be one of: {valid_strategies}")
-
-    print(f"Using generation strategy: {generation_settings.strategy}_generation")
-
-    # Initialize the server with typed configs (no more dicts!)
-    num_workers = model_settings.hardware.num_workers
-    server = ProcessParallelVLLM(
+    return ProcessParallelVLLM(
         model_id=model_settings.id,
-        num_workers=num_workers,
+        num_workers=model_settings.hardware.num_workers,
         gpu_allocation=model_settings.hardware.gpu_allocation,
-        generation_config=generation_settings,
+        generation_config=app_config.generation,
         tokenizer_config=model_settings.tokenizer_config,
         logging_config=app_config.logging,
-        generation_functions={
-            "iterative_generation": iterative_strategy.generate_instance,
-            "cot_generation": cot_strategy.generate_instance,
-            "direct_query_generation": direct_query_strategy.generate_instance,
-        },
+        generation_functions=build_generation_functions(app_config, tokenizer),
         tensor_parallel_size=model_settings.hardware.tensor_parallel_size,
         max_concurrent_requests=model_settings.hardware.max_concurrent_requests,
         max_model_len=model_settings.hardware.max_model_len,
+        gpu_memory_utilization=model_settings.hardware.gpu_memory_utilization,
     )
 
-    try:
-        # Start server
-        print(f"Starting server with {num_workers} workers...")
-        print(f"Logging configuration: {server.get_logging_stats()}")
 
+def execute_config_run(
+    *,
+    config_path: Path,
+    app_config: AppConfig,
+    dataset,
+    prompt_builder: PromptBuilder,
+    server: ProcessParallelVLLM,
+    results_root: Path,
+    run_paths: RunOutputPaths | None = None,
+) -> tuple[RunOutputPaths, dict[str, Any]]:
+    get_aggregate_profiler().reset()
+    run_paths = run_paths or create_run_output_paths(app_config, results_root=results_root)
+    app_config = apply_run_output_paths(app_config, run_paths)
+    run_paths.run_dir.mkdir(parents=True, exist_ok=True)
+    write_run_manifest(app_config, run_paths, config_path)
+    server.reconfigure(app_config.generation, app_config.logging)
+
+    runtime = RuntimeContext(config=app_config, prompt_builder=prompt_builder, tokenizer=None, dataset=dataset)
+    requests = build_inference_requests(runtime, app_config.run.max_examples)
+    print(f"Run output directory: {run_paths.run_dir}")
+    print(f"Processing {len(requests)} questions...")
+    print(f"Generation mode: {get_generation_mode_string(app_config.generation)}")
+
+    start_time = time.time()
+    try:
+        results = server.generate_batch(requests)
+    except Exception as exc:
+        raise ServerExecutionError(f"vLLM batch execution failed: {exc}") from exc
+    elapsed = time.time() - start_time
+    print(f"Total time: {elapsed:.2f} seconds")
+    if requests:
+        print(f"Average time per request: {elapsed / len(requests):.2f} seconds")
+
+    extractor_report = finalize_results(results, app_config.model, app_config.generation, run_paths, app_config)
+    demonstrate_logging_analysis(server, results)
+    server.finish_run()
+    print_final_extractor_summary(extractor_report)
+    return run_paths, extractor_report
+
+
+def _session_compatibility_key(app_config: AppConfig) -> str:
+    identity = {
+        "model": {
+            "id": app_config.model.id,
+            "instruct": app_config.model.instruct,
+            "hardware": app_config.model.hardware,
+            "tokenizer": app_config.model.tokenizer_config,
+        },
+        "dataset": app_config.dataset,
+        # Sampling is run-specific and refreshed in the worker when the run changes.
+        "enabled_actions": app_config.generation.enabled_actions,
+        "extractors": app_config.extractors,
+    }
+    return json.dumps(_json_safe(identity), sort_keys=True)
+
+
+def _write_session_event(status_path: Path, event: dict[str, Any]) -> None:
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    with status_path.open("a", encoding="utf-8") as status_file:
+        status_file.write(json.dumps(event) + "\n")
+        status_file.flush()
+        os.fsync(status_file.fileno())
+
+
+def run_experiment_session(manifest_path: Path) -> int:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    jobs = manifest["jobs"]
+    status_path = Path(manifest["status_path"])
+    first_config_path = Path(jobs[0]["config_path"])
+    runtime = build_runtime(first_config_path)
+    compatibility_key = _session_compatibility_key(runtime.config)
+    session_runtime = runtime_for_generation(
+        use_constraints=runtime.config.generation.use_constraints,
+        constraint_backend=runtime.config.generation.constraint_backend,
+        output_format=runtime.config.generation.output_format,
+    ).name
+    server = create_server(runtime.config, runtime.tokenizer)
+    model_load_index = 1
+    jobs_on_load = 0
+    restart_reason = None
+
+    try:
+        if not server.start_workers(timeout=600):
+            raise RuntimeError("Failed to start all model workers.")
+        for job in jobs:
+            job_id = job["job_id"]
+            config_path = Path(job["config_path"])
+            started_at = time.time()
+            load_id = f"{manifest['session_id']}-load-{model_load_index}"
+            _write_session_event(
+                status_path,
+                {"event": "started", "job_id": job_id, "config_path": str(config_path), "model_load_id": load_id},
+            )
+            run_paths = None
+            try:
+                app_config = load_runtime_config(config_path, runtime.tokenizer)
+                if _session_compatibility_key(app_config) != compatibility_key:
+                    raise ValueError(f"Config {config_path} is incompatible with this persistent model session.")
+                config_runtime = runtime_for_generation(
+                    use_constraints=app_config.generation.use_constraints,
+                    constraint_backend=app_config.generation.constraint_backend,
+                    output_format=app_config.generation.output_format,
+                ).name
+                if config_runtime != session_runtime:
+                    raise ValueError(f"Config {config_path} requires runtime {config_runtime}, not {session_runtime}.")
+                prompt_builder = PromptBuilder(
+                    tokenizer=runtime.tokenizer,
+                    is_instruct=app_config.model.instruct,
+                    output_format=app_config.generation.output_format,
+                )
+                run_paths = create_run_output_paths(app_config, results_root=Path(job["results_root"]))
+                run_paths, _ = execute_config_run(
+                    config_path=config_path,
+                    app_config=app_config,
+                    dataset=runtime.dataset,
+                    prompt_builder=prompt_builder,
+                    server=server,
+                    results_root=Path(job["results_root"]),
+                    run_paths=run_paths,
+                )
+                _write_session_event(
+                    status_path,
+                    {
+                        "event": "completed",
+                        "job_id": job_id,
+                        "config_path": str(config_path),
+                        "runtime_seconds": time.time() - started_at,
+                        "run_dir": str(run_paths.run_dir),
+                        "model_load_id": load_id,
+                        "model_reused": jobs_on_load > 0,
+                        "restart_reason": restart_reason,
+                    },
+                )
+                jobs_on_load += 1
+                restart_reason = None
+            except Exception as exc:
+                healthy = server.workers_healthy()
+                try:
+                    server.finish_run()
+                except Exception:
+                    pass
+                _write_session_event(
+                    status_path,
+                    {
+                        "event": "failed",
+                        "job_id": job_id,
+                        "config_path": str(config_path),
+                        "runtime_seconds": time.time() - started_at,
+                        "run_dir": str(run_paths.run_dir) if run_paths else None,
+                        "model_load_id": load_id,
+                        "model_reused": jobs_on_load > 0,
+                        "restart_reason": None,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
+                )
+                if isinstance(exc, ServerExecutionError) or not healthy:
+                    restart_reason = f"Server restart after {job_id}: {type(exc).__name__}: {exc}"
+                    server.shutdown(write_summary=False)
+                    server = create_server(runtime.config, runtime.tokenizer)
+                    if not server.start_workers(timeout=600):
+                        raise RuntimeError("Failed to restart model workers.") from exc
+                    model_load_index += 1
+                    jobs_on_load = 0
+                else:
+                    jobs_on_load += 1
+    finally:
+        server.shutdown(write_summary=False)
+    return 0
+
+
+def main() -> int:
+    """Run one configuration or an internal persistent experiment session."""
+    session_manifest = os.environ.get("LEAP_SESSION_MANIFEST")
+    if session_manifest:
+        return run_experiment_session(Path(session_manifest))
+
+    print("Setting up modular vLLM server with integrated logging...")
+    runtime = build_runtime(CONFIG_PATH)
+    server = create_server(runtime.config, runtime.tokenizer)
+    try:
         if not server.start_workers(timeout=600):
             print("Failed to start all workers. Exiting.")
-            return
-
-        # Prepare requests
-        requests = []
-        run_config = app_config.run
-        max_examples = run_config.max_examples
-        dataset = runtime.dataset
-        subset_size = len(dataset) if max_examples is None else min(max_examples, len(dataset))
-
-        for i, example in enumerate(dataset):
-            if i >= subset_size:
-                break
-
-            # Use typed request builder
-            inference_request = InferenceRequest.from_example(example, index=i)
-
-            # Pass the typed object directly (no conversion needed)
-            requests.append(inference_request)
-
-        print(f"Processing {len(requests)} questions...")
-        print(f"Generation mode: {get_generation_mode_string(generation_settings)}")
-
-        # Generate responses with comprehensive logging
-        start_time = time.time()
-        results = server.generate_batch(requests)
-        end_time = time.time()
-
-        print(f"Total time: {end_time - start_time:.2f} seconds")
-        print(f"Average time per request: {(end_time - start_time) / len(requests):.2f} seconds")
-
-        # Collect profiling data from results
-        profiler = get_aggregate_profiler()
-        for result in results:
-            if result.profiling_data:
-                profiler.add_request_profile(
-                    result.profiling_data["total_time"],
-                    result.profiling_data["operation_timings"],
-                    result.profiling_data["num_steps"],
-                )
-
-        # Analyze results
-        analyze_execution_accuracy(results)
-
-        # Write results
-        write_results_to_jsonl(
-            results,
-            model_settings.results_file,
-            generation_settings,
+            return 1
+        _, extractor_report = execute_config_run(
+            config_path=CONFIG_PATH,
+            app_config=runtime.config,
+            dataset=runtime.dataset,
+            prompt_builder=runtime.prompt_builder,
+            server=server,
+            results_root=RESULTS_ROOT,
         )
-
-        # Print sample results
-        print_sample_results(results)
-
-        # Demonstrate logging analysis
-        demonstrate_logging_analysis(server, results)
-
-        # Print performance profiling summary (already collected above)
-        get_aggregate_profiler().print_summary()
-
+        return 0 if extractor_report is not None else 1
     finally:
-        # Shutdown will automatically generate summary report
-        server.shutdown()
+        server.shutdown(write_summary=False)
 
 
 def analyze_execution_accuracy(results: list[InferenceResult]):
@@ -334,6 +730,9 @@ def analyze_execution_accuracy(results: list[InferenceResult]):
 
         success_cases = sum(1 for acc in execution_accuracies if acc == 1.0)
         print(f"Successful Cases: {success_cases}/{len(execution_accuracies)} ({success_cases / len(execution_accuracies) * 100:.1f}%)")
+        return overall_execution_accuracy
+
+    return 0.0
 
 
 def print_sample_results(results: list[InferenceResult]):
@@ -398,4 +797,4 @@ def demonstrate_logging_analysis(server, results):
 
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
-    main()
+    raise SystemExit(main())
