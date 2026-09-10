@@ -1,75 +1,104 @@
-## Installation
+# LEAP
 
-We strongly recommend using [uv](https://docs.astral.sh/uv/) for environment and package management.
+LEAP extends Chain-of-Tables (COT) with constrained generation for LLM-based question answering over tables. It restricts model output during decoding to reduce malformed table operations and invalid arguments, using either a logit-masking state-machine backend or XGrammar2. The repository supports comparisons with unconstrained generation to evaluate how these restrictions affect end-to-end answer accuracy.
+
+See the [project handover report](docs/project-handover.md) for the backend overview, experimental results, and future direction. The MCP-based implementation is maintained in a separate repository, [LEAP-MCP](https://github.com/D2IP-TUB/LEAP-MCP).
+
+## Setup and first run
+
+Use Python 3.11 or later and [uv](https://docs.astral.sh/uv/) for environment and package management:
 
 ```bash
 uv sync --group dev --extra vllm-modern
 ```
 
-This creates the common project environment with development dependencies. The selected vLLM runtime is installed separately on first use as described below.
+This installs the modern vLLM runtime and development dependencies in `.venv`. LEAP manages the incompatible legacy runtime in a separate environment when needed.
 
-## vLLM Runtime Selection
+Before running, review:
 
-LEAP keeps the incompatible legacy and current vLLM releases in separate, automatically managed environments. Unconstrained generation automatically uses the current V1 runtime. For constrained generation, choose the constraint backend in the generation section of your config:
+- [configs/default.yaml](configs/default.yaml) for the model, dataset, example limit, generation settings, and answer extractors.
+- [configs/models.yaml](configs/models.yaml) for model-specific hardware and tokenizer settings. Choose a model and GPU allocation that fit your available hardware.
+
+The checked-in default config selects Qwen2.5-32B with legacy constraints. To use modern constrained generation, set `generation.constraint_backend: xgrammar`.
+
+Run the default config:
+
+```bash
+uv run main.py
+```
+
+To use another config:
+
+```bash
+LEAP_CONFIG_PATH=path/to/config.yaml uv run main.py
+```
+
+## Constrained generation
+
+Choose the constraint backend independently of the generation strategy:
 
 ```yaml
 generation:
-  # Current constrained generation: vLLM >=0.28,<0.29 with the V1 engine.
+  strategy: cot
+  use_constraints: true
   constraint_backend: xgrammar
-
-  # Legancy state machine: vLLM 0.10.0 with the V0 engine.
-  # constraint_backend: legacy_state_machine
+  output_format: function
+  use_global_constraints: true
 ```
 
-Run LEAP normally with `uv run main.py`, or run a benchmark matrix with `uv run scripts/run_experiments.py`. Before importing vLLM, the entrypoint reads the config and re-executes itself in one of these persistent environments:
+| Mode | Decoding restrictions | Runtime | Environment |
+|---|---|---|---|
+| Unconstrained | No token-level restrictions; output is still parsed and validated. | vLLM >=0.28,<0.29, V1 | `.venv` |
+| `xgrammar` | Grammar or JSON Schema constraints on operation syntax and arguments. | vLLM >=0.28,<0.29, V1 | `.venv` |
+| `legacy_state_machine` | A custom state machine masks tokens during function-call generation. Qwen2.5 models only. | vLLM 0.10.0, V0 | `.venv-vllm-legacy` |
 
-- `.venv` for unconstrained generation and `xgrammar`
-- `.venv-vllm-legacy` only for active `legacy_state_machine` constraints with Qwen2.5 models
+Set `use_constraints: false` for unconstrained generation. These runs always use the modern runtime, regardless of the backend setting. If `constraint_backend` is omitted, it defaults to `xgrammar`. Selecting `legacy_state_machine` forces function output; active legacy constraints also select the legacy runtime.
 
-The first run for each runtime downloads and installs its vLLM and PyTorch stack, so it can take substantially longer than later runs. Unconstrained configs use the modern runtime regardless of `constraint_backend`. Constrained configs without `generation.constraint_backend` use xgrammar. Only Qwen2.5 models may use `legacy_state_machine`; all other constrained models must use xgrammar.
+The entrypoints select the environment before importing vLLM. First use may download and install the selected vLLM and PyTorch stack. The backend/version pairing is strict. If LEAP reports a mismatch, follow the error's instructions to update the lockfile with `uv lock` and retry. If installation was interrupted, remove only the generated environment named in the error before retrying.
 
+### Output formats and validation
 
-The backend/version pairing is strict. If LEAP reports a mismatch, update the lockfile with `uv lock` and retry. If an environment was interrupted or corrupted during installation, remove only the named generated environment from the error message and rerun the command. The `xgrammar` backend supports `add_column` with exact value cardinality: generated output must contain one quoted cell value per table row. Unconstrained runs enforce the same cardinality after parsing and discard malformed candidates.
+Both `iterative` and `cot` support function calls and JSON operation objects. Function output is the default:
 
-LEAP passes `enable_thinking=False` to chat templates for action generation and answer extraction. Models whose templates support this option generate answers without a thinking phase.
+```text
+f_sort_by("Year", "desc")
+```
 
-Iterative `add_column` emits the complete operation in one response and is hidden when the full table cannot fit the model context. CoT also emits the complete column in one argument-generation response.
+For JSON, set `output_format: json` and `constraint_backend: xgrammar`:
 
-## Action sampling and debug output
+```json
+{"action":"sort_by","column":"Year","order":"desc"}
+```
 
-Iterative generation always makes one complete operation request per attempt, with
-no voting or shuffle sampling. Existing failure limits and the `end` shortcut are
-unchanged. Earlier runs could generate eight iterative candidates, so their
-sampling policy differs from new runs.
+With constraints enabled, JSON mode uses vLLM's structured-output backend. With constraints disabled, LEAP uses the same JSON prompts and strict parser without token-level restrictions. COT remains two-phase: action selection emits the `action` field, then argument generation emits an object for that action.
 
-CoT selects an action once. With `generation.sampling.enabled: true`, it then
-votes over eight argument candidates for `select_row` and `select_column` only.
-`add_column`, `group_by`, and `sort_by` each get one argument candidate; `end`
-requires no argument request. With sampling disabled, every argument request is
-single-shot. `shuffle_invariant` applies only to CoT row-selection sampling.
-Direct-query answer extraction is unchanged.
+LEAP validates operations against the current table after decoding in both constrained and unconstrained modes. XGrammar supports `add_column` with exactly one value per table row. Unconstrained runs enforce the same count after parsing and discard malformed candidates.
 
-Legacy `n_samples` and `per_action_samples` fields remain accepted, but cannot
-override these counts. Startup messages and `run_config.json` report the effective
-policy. Persistent model sessions refresh sampling settings between runs.
+## Strategies and sampling
 
-Set `generation.sampling.debug: true` to print full prompts, responses, action
-payloads, and per-question summaries. The default is false. Normal stdout retains
-progress, warnings/errors, and aggregate summaries. Structured results, table logs,
-and compact failed-candidate counts are still included in run summaries; raw candidate diagnostics are not persisted.
+| Strategy | Behavior |
+|---|---|
+| `iterative` | Generates one complete operation per attempt, with no candidate voting or shuffle sampling. |
+| `cot` | Selects an action, then generates its arguments. With sampling enabled, row and column selection each use eight argument candidates and voting. Other actions use one candidate; `end` needs no arguments. |
+| `direct_query` | Skips table transformations and runs answer extraction on the original table as a baseline. |
 
-Action generation requests final-only vLLM output instead of delivering unused
-intermediate responses. Constraint grammars and validation remain unchanged.
+The `extractors` setting selects answer methods applied to each strategy's final table. The `direct_query` extractor is distinct from the strategy of the same name: it can answer from either a transformed table or the original table.
+
+Set `generation.sampling.enabled: false` to make COT argument generation single-shot. `generation.sampling.shuffle_invariant` applies only to COT row selection. Legacy `n_samples` and `per_action_samples` fields remain accepted but cannot override these counts. Startup messages and `run_config.json` report the effective policy. Earlier iterative results may use multiple candidates and are not directly comparable to the current single-shot policy.
+
+Set `generation.force_zero_temperature: true` to use temperature 0 for every model request, including action selection, argument generation, and answer extraction. LEAP also passes `enable_thinking=False` to chat templates; models that support this option generate answers without a thinking phase.
+
+Iterative `add_column` generates the complete operation in one response and is unavailable when the full table cannot fit the model context. COT generates the complete column in one argument-generation response.
 
 ## Experiment matrices
 
-Run the example benchmark matrix with:
+The [example experiment spec](configs/experiments.example.yaml) defines the models, repetitions, example limit, extractors, and generation settings to compare:
 
 ```bash
 uv run scripts/run_experiments.py configs/experiments.example.yaml
 ```
 
-The experiment spec uses explicit generation dimensions:
+Its matrix includes these dimensions:
 
 ```yaml
 matrix:
@@ -78,52 +107,44 @@ matrix:
   use_global_constraints: [false, true]
   constraint_backends: [legacy_state_machine, xgrammar]
   output_formats: [function, json]
-  force_zero_temperature: [false, true]
+  force_zero_temperature: [true]
+  add_column: [true, false]
 ```
 
-Only unique supported jobs are generated. Unconstrained runs use the modern xgrammar runtime. Legacy constrained decoding supports function output only and is generated only for Qwen2.5 models. Other constrained models use xgrammar. `direct_query` is emitted once per model, repeat, and temperature mode because action constraints do not affect it. Set `force_zero_temperature: true` to force every model request in that run to use temperature 0, including dynamic-plan, generate-args, and answer-extraction calls. The temperature-mode sweep roughly doubles the matrix size. Every job failure is recorded in the experiment report and the runner continues with the remaining jobs; the final command exits nonzero if any job failed. Invalid suite configuration and explicit user interruption still stop the runner.
+The runner generates only unique, supported jobs. Legacy constrained jobs use function output and run only for Qwen2.5 models. Unconstrained jobs use the modern runtime. The direct-query baseline runs once per model, repeat, and temperature mode because action constraints do not affect it. Add `false` to `force_zero_temperature` to compare both temperature modes, roughly doubling the matrix size.
 
-Model reuse is enabled by default and can be controlled explicitly:
+Job failures are recorded in the experiment report, and the runner continues with the remaining jobs. It exits nonzero if any job failed. Invalid suite configuration and explicit user interruption stop the runner.
+
+### Model reuse
+
+Model reuse is enabled by default. Set this at the top level of the experiment spec to make it explicit:
 
 ```yaml
 reuse_models: true
 ```
 
-The runner groups jobs by model and vLLM runtime. Strategy, constraint, output-format, and repeat changes within a compatible group reuse the loaded model; changing the model or switching between the modern V1 and legacy V0 runtimes starts a new model session. Set `reuse_models: false` to restore isolated one-process-per-job execution. Reports include the session, model-load count, reuse state, and restart reason for each job.
+Compatible jobs reuse the loaded model across strategy, constraint, output-format, and repeat changes. A model change or switch between V1 and V0 starts a new session. Set `reuse_models: false` for isolated one-process-per-job execution. Reports record sessions, model loads, reuse status, and restart reasons.
 
-An interrupted matrix can be resumed from its existing output directory. The runner
-uses the frozen experiment specification and generated job configs, skips jobs with
-terminal status events, and reruns the job that was active when the process stopped:
+### Resuming an interrupted matrix
 
 ```bash
 uv run scripts/run_experiments.py --resume results/experiments/<experiment-id>
 ```
 
-The resumed process uses the current working-tree code while preserving the original
-matrix configuration. Completed run artifacts are not overwritten.
+The runner uses the saved experiment specification and generated job configs, skips jobs with terminal status events, and reruns the job active at interruption. Completed run artifacts are not overwritten. Resuming uses the current working-tree code, so preserve the code revision as well as the experiment configuration for reproducibility.
 
-## JSON operation mode
+## Results and diagnostics
 
-Iterative and Chain-of-Table generation can use named JSON operation objects instead of the original `f_action(...)` protocol:
+The default single-run config writes results to `logs/results.jsonl` and table logs under the configured `logging.log_dir`. The example matrix writes experiment outputs under `results/experiments`.
 
-```yaml
-generation:
-  strategy: cot       # or iterative
-  output_format: json
-  use_constraints: true
-```
+Normal console output includes progress, warnings, errors, and aggregate summaries. Set `generation.sampling.debug: true` to also print full prompts, responses, action payloads, and per-question summaries. Debug output is disabled by default. Structured results, table logs, and compact failed-candidate counts remain available; raw candidate diagnostics are not persisted.
 
-With constraints enabled, JSON mode uses vLLM JSON Schema structured outputs on the modern V1 runtime. Selecting `constraint_backend: legacy_state_machine` automatically forces `output_format: function`; JSON operation mode therefore requires the modern `xgrammar` backend setting. With constraints disabled, the same JSON prompts and strict JSON parser are used without structured decoding when `constraint_backend` is modern. The default remains `output_format: function` for backward compatibility.
+## Development
 
-JSON operations use named fields, for example `{"action":"select_row","rows":["row 0"]}` and `{"action":"sort_by","column":"Year","order":"desc"}`. CoT remains two-phase: action selection emits only the `action` field, followed by a selected-action argument object.
-
-## Developer Setup
-
-If you plan to contribute to the codebase, install the development dependencies and enable the pre-commit hooks:
+The setup command above installs development dependencies. Enable the pre-commit hooks with:
 
 ```bash
-uv sync --group dev --extra vllm-modern
 uv run pre-commit install
 ```
 
-This installs the linting/formatting tools defined in pyproject.toml and ensures they run automatically before each commit.
+The hooks run Ruff linting and formatting before commits.

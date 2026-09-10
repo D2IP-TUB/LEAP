@@ -2,17 +2,17 @@
 
 ## Project introduction
 
-LEAP reproduces Chain-of-Tables (COT), a framework that aims to enhance LLM reasoning over semi-structured tabular data for table-based question answering tasks. Furthermore, it extends COT with multiple strategies for constrained generation that attempt to minimize erroneous generation validity failures as well as invalid argument generation.
+LEAP reproduces Chain-of-Tables (COT), a framework for answering questions over semi-structured tables with LLMs. It extends COT with constrained-generation strategies designed to reduce malformed operations and invalid arguments.
 
-Chain-of-Table attempts to improve reasoning by evolving tables within a chain where a table is transformed repeatedly, using atomic table operations, into a suitable state for downstream answer extraction. 
+COT transforms a table through a sequence of atomic operations to prepare it for answer extraction.
 
 The framework runs over examples containing a natural-language question, a table, and one or more reference answers. The model can select rows or columns, group rows, sort a column, add a derived column, and finish the reasoning chain with the `end()` operation. Each successful operation produces the table passed to the next step. For example, a question about the highest score may lead to `sort_by("Score", "desc")`, followed by `end()`.
 
 After the operation sequence terminates, COT runs the configured answer extractors on the final table and compares the generated answer with the dataset's reference answer using denotation matching, which checks answer values rather than the wording of the model response. The `direct_query` extractor uses LEAP's normal `Query(T, Q)` prompt to ask the model for an answer from the final table. The `nl2sql` extractor implementation is copied from the official [AutoPrep repository](https://github.com/ruc-datalab/AutoPrep): it asks the model to produce a `SELECT` or `WITH` SQL query over the final table, executes it in an in-memory SQLite table, and returns the query result as the answer.
 
-## Constraints
+## Constrained generation
 
-Constraints generation marks one of the key contribution of LEAP. Constraints limit the operation text available to the decoder. They reduce malformed output and invalid table references, but they do not establish that an action sequence answers the question. LEAP still parses model output and validates the action against the current table after decoding.
+Constrained generation is one of LEAP's main contributions. It limits the operation text available to the decoder to reduce malformed output and invalid table references. These restrictions do not establish that an action sequence answers the question. LEAP still parses model output and validates each action against the current table after decoding.
 
 | Mode | Decode-time restriction | Post-decode checks | Runtime and compatibility |
 |---|---|---|---|
@@ -21,17 +21,17 @@ Constraints generation marks one of the key contribution of LEAP. Constraints li
 | XGrammar function | An XGrammar grammar restricts function syntax, enabled action names, current row identifiers, current column names, sort order, and `add_column` value count. | Parser and table validation apply. | vLLM >=0.28,<0.29 with V1. |
 | XGrammar JSON | A JSON Schema restricts action fields and most argument domains. The modern structured-output backend turns the schema into token-level decoding constraints. | The JSON codec rejects duplicate selections and operations invalid for the current table. | Modern V1 only. |
 
-The two constrained approaches use different kinds of state machine. The legacy backend implements one directly in Python. It tracks states such as the expected function name, argument position, and whether a list item has already been selected, then applies a custom logits processor to mask the tokenizer's next-token choices. It emits the legacy function-style COT output. 
+The legacy and XGrammar backends enforce these restrictions differently. The legacy backend implements a state machine directly in Python. It tracks states such as the expected function name, argument position, and whether a list item has already been selected, then applies a custom logits processor to mask the tokenizer's next-token choices. It emits the legacy function-style COT output.
 
 [XGrammar](https://github.com/mlc-ai/xgrammar) is a library for structured generation. It accepts a context-free grammar or JSON Schema, compiles it against the model's tokenizer, and tracks which output prefixes remain valid. At each decoding step, it masks tokens that would make the prefix invalid, so the model samples only from structurally valid continuations. LEAP builds a grammar or JSON Schema from the current table and action history for each request, and vLLM uses XGrammar as its structured-output backend. Function mode describes calls such as `f_sort_by(...)`, while JSON mode describes a flat action object. Both pass through LEAP's parser and table validation after decoding.
 
-Since the legacy constraint mode requires an older vLLM version, the dependency is loaded dynamically. `main.py` chooses `.venv-vllm-legacy` only when active legacy function constraints require it. Unconstrained runs and XGrammar runs use `.venv`. The environments remain separate because their supported vLLM versions are incompatible.
+The legacy constraint mode requires an older vLLM version, so LEAP selects its runtime environment at launch. `main.py` chooses `.venv-vllm-legacy` only when active legacy function constraints require it. Unconstrained runs and XGrammar runs use `.venv`. The environments remain separate because their supported vLLM versions are incompatible.
 
 ### Global action constraints
 
-By default for the first action, `end` is unavailable. After a non-`end` action has been invoked, the system removes that action from the list of available actions. For instance if `select_row` has been invoked `select_column`, `group_by`, `sort_by`, `add_column`, and `end` may be chosen next, provided they are enabled. `select_row` may not be invoked again.
+By default, `end` is unavailable as the first action, and each non-`end` action can be used only once. Without global constraints, invoking `select_row` leaves `select_column`, `group_by`, `sort_by`, `add_column`, and `end` available next, provided they are enabled and have not already been used.
 
-Global constraints use the transition matrix in `leap/core/actions/registry.py`:
+Enabling global constraints further restricts the action order using the transition matrix in `leap/core/actions/registry.py`:
 
 ```text
 start -> add_column | select_row | select_column | group_by | sort_by
@@ -42,7 +42,7 @@ group_by -> sort_by | end
 sort_by -> end
 ```
 
-For example using global constraints after `select_row` has been invoked `sort_by` may be chosen next but `add_column` may not be invoked next. We adopted the transition matrix as used in the [official COT repo](https://github.com/google-research/chain-of-table).
+With global constraints enabled, `sort_by` may follow `select_row`, but `add_column` may not. This transition matrix comes from the [official COT repository](https://github.com/google-research/chain-of-table).
 
 
 ### Output formats
@@ -53,12 +53,12 @@ For example using global constraints after `select_row` has been invoked `sort_b
 
 ## Strategies
 
-Besides the choice whether to constrain the generation and how to do so, LEAP also provides two different strategies for the output mode. While `iterative` and `cot` may be constrained, `direct_query` bypasses the table reasoning and may therefore be used as a baseline for experiments.  
+Generation strategy is separate from output format and constraint backend. LEAP provides two table-reasoning strategies, `iterative` and `cot`, both of which support constrained generation. A third strategy, `direct_query`, skips table transformations and provides an experimental baseline.
 
 | Choice | Model requests | Table transformation | Use in comparisons |
 |---|---|---|---|
 | `iterative` | One complete operation request per attempt. No voting or shuffle sampling. | Validates and applies that operation, then prompts again with the replacement table. | Main single-stage transformation method. |
-| `cot` | Select an action once, then generate arguments. With sampling enabled, row/column selection gets eight argument candidates; other actions get one. `end` needs no arguments. | Votes over selection candidates and applies the operation. Default selection temperature is 0 and argument temperature is 0.7. | Chain-of-Table implementation. |
+| `cot` | Select an action once, then generate arguments. With sampling enabled, row/column selection gets eight argument candidates; other actions get one. `end` needs no arguments. | Votes over selection candidates and applies the operation. Default selection temperature is 0 and argument temperature is 0.7. | Chain-of-Tables implementation. |
 | `direct_query` | No action-generation request. It runs answer extraction on the original table. | None. LEAP records `end()` and `direct_query()` immediately. | Baseline for the value of table transformations. |
 
 
@@ -82,17 +82,17 @@ flowchart TB
     M --> N[Next strategy step or answer extraction]
 ```
 
-Function and JSON execution keep table state in the LEAP worker process.
+Both function and JSON execution keep table state in the LEAP worker process.
 
 The sampling policy applies to both output formats and constrained/unconstrained
-runs. Disabling sampling makes CoT argument generation single-shot too. Legacy
+runs. Disabling sampling makes COT argument generation single-shot too. Legacy
 sample-count settings cannot override the policy. Shuffle sampling is limited to
-CoT row selection. Earlier iterative results may use multiple candidates and
+COT row selection. Earlier iterative results may use multiple candidates and
 should not be treated as the same sampling configuration as new single-shot runs.
 
 Action requests use final-only vLLM output; token-level constraints still apply
-throughout decoding. CoT calculates the full-column token budget only for
-`add_column`. No grammar validation or cardinality checks are removed.
+throughout decoding. COT calculates the full-column token budget only for
+`add_column`. Grammar validation and cardinality checks still apply.
 
 ### Operation examples
 
@@ -141,14 +141,14 @@ flowchart TB
 |---|---|
 | `model.id` and hardware preset | Select the model, tokenizer details, worker count, GPU allocation, tensor parallelism, concurrency, and context limit. |
 | `dataset` and `run.max_examples` | Select input examples and cap the number processed. The cap takes the first examples in dataset order. |
-| `generation.strategy` | Selects iterative operation generation, two-stage Chain-of-Table generation, or the direct-query baseline. |
+| `generation.strategy` | Selects iterative operation generation, two-stage Chain-of-Tables generation, or the direct-query baseline. |
 | `generation.enabled_actions` | Limits the actions available to prompts, parsers, and constrained decoding. |
 | `generation.use_constraints` | Turns structured decoding on or off. With it off, LEAP still parses output and validates actions against the table after generation. |
 | `generation.use_global_constraints` | Selects either local action-history restrictions or fixed global action transitions. |
 | `generation.constraint_backend` | Selects the historical state-machine backend or XGrammar. The selection may also choose a different vLLM environment. |
 | `generation.output_format` | Selects function-call or JSON operation messages. Legacy constraints force function output. |
 | `generation.sampling` | Sets candidate counts, per-action sample counts, voting, and optional shuffle-invariant sampling. |
-| `generation.force_zero_temperature` | Sets every model request to temperature 0, including CoT selection, arguments, and answer extraction. |
+| `generation.force_zero_temperature` | Sets every model request to temperature 0, including COT selection, arguments, and answer extraction. |
 | `extractors` | Selects answer-generation methods run independently on the final table. `direct_query` asks the model directly over the final table; `nl2sql` is copied from the official [AutoPrep repository](https://github.com/ruc-datalab/AutoPrep) and generates and executes a SQL query over the final table. Legacy end-to-end accuracy uses the `direct_query` extractor. |
 | `logging` | Controls table-log creation and representation. Logs help diagnose runs but do not replace saved result records. |
 
@@ -163,8 +163,8 @@ This timeline uses commits that changed `main.py` or `leap/`. It excludes visual
 |---|---|---|
 | August 2025 | LEAP entered the repository from a playground implementation. Constraint logic moved into its own module, model calls were separated, logging returned, and global constraints became configurable. | `e1b34d1`, `b3774d6`, `7cafb4f`, `6abc59a`, `0191731`, `4ba3202` |
 | October to December 2025 | The backend gained model-specific hardware settings, typed table and action data objects, a package layout, centralized configuration, worker-error isolation, continuous batching, profiling, and basic tests. `main.py` shifted toward orchestration while implementation moved into `leap/`. | `fdb9d4f`, `d95b41b`, `fec0ea6`, `db67baf`, `8992593`, `f67a9f2`, `212260e` |
-| December 2025 to January 2026 | Multi-candidate sampling and shuffle-invariant sampling arrived. The action registry became the shared definition of actions, prompts, parsing, and constraints. The older Chain-of-Table flag became a strategy setting, and direct query became an automatic action after `end()`. | `9c36977`, `1aefd54`, `0e2e9e1`, `69909a5`, `f4ecd31` |
-| February to March 2026 | Packaged tools and a substantial CoT refactor landed. Follow-up commits addressed per-row `add_column` sampling, duplicate actions, sort type handling, numeric commas, prompt behavior, and larger table support. | `6d83fba`, `1b645af`, `078bba6`, `425ca91`, `b7e1348`, `6ad9d85`, `b5bd93b` |
+| December 2025 to January 2026 | Multi-candidate sampling and shuffle-invariant sampling arrived. The action registry became the shared definition of actions, prompts, parsing, and constraints. The older Chain-of-Tables flag became a strategy setting, and direct query became an automatic action after `end()`. | `9c36977`, `1aefd54`, `0e2e9e1`, `69909a5`, `f4ecd31` |
+| February to March 2026 | Packaged tools and a substantial COT refactor landed. Follow-up commits addressed per-row `add_column` sampling, duplicate actions, sort type handling, numeric commas, prompt behavior, and larger table support. | `6d83fba`, `1b645af`, `078bba6`, `425ca91`, `b7e1348`, `6ad9d85`, `b5bd93b` |
 | June to July 2026 | Constraints broadened, while `add_column` constraints were temporarily removed during correctness work. XGrammar was added alongside the legacy state machine. Runtime selection then isolated V0 and V1 environments, and new answer extractors were added. | `104d79f`, `b138efd`, `76bc18d`, `088b4f6`, `4287498` |
 | August 2026 | Global constraints and prompts were revised. JSON structured output, experiment matrices, persistent model reuse, worker health checks, and richer manifests made larger comparison suites practical. Later work restored constrained `add_column` with exact cardinality. | `4a43eb6`, `8d3d089`, `a70ae07`, `36b4751` |
 | Later development | A separate [LEAP-MCP implementation](https://github.com/D2IP-TUB/LEAP-MCP) introduced an MCP host, client, and server workflow. It exposes LEAP's table operations as tools and removes constrained generation. | [LEAP-MCP repository](https://github.com/D2IP-TUB/LEAP-MCP) |
@@ -182,18 +182,19 @@ This separates the model-facing part of the workflow from the table-operation pa
 
 ## Research questions
 
-RQ1. Does constrained generation improve average end-to-end accuracy on table-based question answering compared with unconstrained Chain-of-Table reasoning? 
+The following experiments compare LEAP's generation variants with the LEAP-MCP implementation to address two research questions.
+
+RQ1. Does constrained generation improve average end-to-end accuracy on table-based question answering compared with unconstrained Chain-of-Tables reasoning?
 
 RQ2. Does MCP tool calling improve end-to-end accuracy compared with LEAP's text-based operation generation? 
 
 ## Results
 
-All tables report accuracy from the Direct Query extractor after table
-reasoning. This differs from DirectQuery, the baseline that gives the model the original
-table and question without prior transformation. Each accuracy cell averages three runs
-on the same 500 questions.
+All accuracy tables report results from the `direct_query` answer extractor. For table-reasoning strategies, it receives the final transformed table. The direct-query baseline uses the same extractor on the original table, without prior transformation. Each accuracy cell averages three runs on the same 500 questions.
 
-## LEAP — Unconstrained
+The tables below present accuracy by backend and strategy, followed by overall and per-model paired effects. The discussion then relates these results to the research questions.
+
+### LEAP unconstrained
 
 <table class="dataframe results-table">
   <thead>
@@ -272,7 +273,7 @@ on the same 500 questions.
   </tbody>
 </table>
 
-## LEAP — xgrammar
+### LEAP with XGrammar
 
 <table class="dataframe results-table">
   <thead>
@@ -351,7 +352,7 @@ on the same 500 questions.
   </tbody>
 </table>
 
-## LEAP — Legacy state machine
+### LEAP with the legacy state machine
 
 <table class="dataframe results-table">
   <thead>
@@ -394,7 +395,7 @@ on the same 500 questions.
   </tbody>
 </table>
 
-## LEAP — Direct Query baseline
+### LEAP direct-query baseline
 
 <table class="dataframe results-table">
   <thead>
@@ -424,7 +425,7 @@ on the same 500 questions.
   </tbody>
 </table>
 
-## LEAP-MCP — MCP output
+### LEAP-MCP output
 
 <table class="dataframe results-table">
   <thead>
@@ -479,7 +480,7 @@ on the same 500 questions.
   </tbody>
 </table>
 
-## Overall paired effects
+### Overall paired effects
 
 <table class="dataframe results-table">
   <thead>
@@ -505,7 +506,7 @@ on the same 500 questions.
   <tbody>
     <tr>
       <th rowspan="5" valign="top">LEAP</th>
-      <th>CoT − Iterative</th>
+      <th>COT − Iterative</th>
       <td>26</td>
       <td>+0.99 ± 2.94</td>
       <td>+0.57</td>
@@ -529,7 +530,7 @@ on the same 500 questions.
       <td>18/0/6</td>
     </tr>
     <tr>
-      <th>xgrammar − Unconstrained</th>
+      <th>XGrammar − Unconstrained</th>
       <td>24</td>
       <td>-0.52 ± 1.19</td>
       <td>-0.37</td>
@@ -537,7 +538,7 @@ on the same 500 questions.
       <td>10/0/14</td>
     </tr>
     <tr>
-      <th>xgrammar − Legacy state machine</th>
+      <th>XGrammar − Legacy state machine</th>
       <td>4</td>
       <td>+4.27 ± 4.79</td>
       <td>+3.70</td>
@@ -546,7 +547,7 @@ on the same 500 questions.
     </tr>
     <tr>
       <th rowspan="2" valign="top">LEAP-MCP</th>
-      <th>CoT − Iterative</th>
+      <th>COT − Iterative</th>
       <td>6</td>
       <td>+5.93 ± 1.87</td>
       <td>+6.17</td>
@@ -564,7 +565,7 @@ on the same 500 questions.
   </tbody>
 </table>
 
-## Paired effects — Qwen3.8-27B
+### Paired effects for Qwen3.8-27B
 
 <table class="dataframe results-table">
   <thead>
@@ -590,7 +591,7 @@ on the same 500 questions.
   <tbody>
     <tr>
       <th rowspan="4" valign="top">LEAP</th>
-      <th>CoT − Iterative</th>
+      <th>COT − Iterative</th>
       <td>8</td>
       <td>+1.76 ± 2.81</td>
       <td>+1.10</td>
@@ -614,7 +615,7 @@ on the same 500 questions.
       <td>4/0/4</td>
     </tr>
     <tr>
-      <th>xgrammar − Unconstrained</th>
+      <th>XGrammar − Unconstrained</th>
       <td>8</td>
       <td>-0.26 ± 0.64</td>
       <td>-0.27</td>
@@ -623,7 +624,7 @@ on the same 500 questions.
     </tr>
     <tr>
       <th rowspan="2" valign="top">LEAP-MCP</th>
-      <th>CoT − Iterative</th>
+      <th>COT − Iterative</th>
       <td>2</td>
       <td>+5.13 ± 1.51</td>
       <td>+5.13</td>
@@ -641,7 +642,7 @@ on the same 500 questions.
   </tbody>
 </table>
 
-## Paired effects — Qwen3-235B-A22B
+### Paired effects for Qwen3-235B-A22B
 
 <table class="dataframe results-table">
   <thead>
@@ -667,7 +668,7 @@ on the same 500 questions.
   <tbody>
     <tr>
       <th rowspan="4" valign="top">LEAP</th>
-      <th>CoT − Iterative</th>
+      <th>COT − Iterative</th>
       <td>8</td>
       <td>+0.20 ± 2.54</td>
       <td>-0.50</td>
@@ -691,7 +692,7 @@ on the same 500 questions.
       <td>8/0/0</td>
     </tr>
     <tr>
-      <th>xgrammar − Unconstrained</th>
+      <th>XGrammar − Unconstrained</th>
       <td>8</td>
       <td>-1.37 ± 1.54</td>
       <td>-1.20</td>
@@ -700,7 +701,7 @@ on the same 500 questions.
     </tr>
     <tr>
       <th rowspan="2" valign="top">LEAP-MCP</th>
-      <th>CoT − Iterative</th>
+      <th>COT − Iterative</th>
       <td>2</td>
       <td>+4.87 ± 1.79</td>
       <td>+4.87</td>
@@ -718,7 +719,7 @@ on the same 500 questions.
   </tbody>
 </table>
 
-## Paired effects — Qwen2.5-32B
+### Paired effects for Qwen2.5-32B
 
 <table class="dataframe results-table">
   <thead>
@@ -744,7 +745,7 @@ on the same 500 questions.
   <tbody>
     <tr>
       <th rowspan="5" valign="top">LEAP</th>
-      <th>CoT − Iterative</th>
+      <th>COT − Iterative</th>
       <td>10</td>
       <td>+1.01 ± 3.43</td>
       <td>+1.87</td>
@@ -768,7 +769,7 @@ on the same 500 questions.
       <td>6/0/2</td>
     </tr>
     <tr>
-      <th>xgrammar − Unconstrained</th>
+      <th>XGrammar − Unconstrained</th>
       <td>8</td>
       <td>+0.07 ± 0.73</td>
       <td>+0.10</td>
@@ -776,7 +777,7 @@ on the same 500 questions.
       <td>5/0/3</td>
     </tr>
     <tr>
-      <th>xgrammar − Legacy state machine</th>
+      <th>XGrammar − Legacy state machine</th>
       <td>4</td>
       <td>+4.27 ± 4.79</td>
       <td>+3.70</td>
@@ -785,7 +786,7 @@ on the same 500 questions.
     </tr>
     <tr>
       <th rowspan="2" valign="top">LEAP-MCP</th>
-      <th>CoT − Iterative</th>
+      <th>COT − Iterative</th>
       <td>2</td>
       <td>+7.80 ± 1.23</td>
       <td>+7.80</td>
@@ -804,57 +805,68 @@ on the same 500 questions.
 </table>
 
 
+### Discussion
 
- For RQ1, constrained generation did not improve average end-to-end accuracy. Across 24
- matched LEAP configurations, xgrammar minus unconstrained generation was -0.52 ± 1.19
- percentage points, with median -0.37, an unadjusted 95% bootstrap interval of [-1.00,
- -0.09], and 10 wins versus 14 losses. Restricting the comparison to the 12 CoT
- configurations gives a descriptive difference of about -0.72 points, also favoring
- unconstrained generation. Thus, the observed effect is small but contrary to the
- proposed benefit.
+For RQ1, XGrammar-constrained generation did not improve average end-to-end accuracy in these runs. Across 24
+matched LEAP configurations, XGrammar minus unconstrained generation was -0.52 ± 1.19
+percentage points, with median -0.37, an unadjusted 95% bootstrap interval of [-1.00,
+-0.09], and 10 wins versus 14 losses. Restricting the comparison to the 12 COT
+configurations gives a descriptive difference of about -0.72 points, also favoring
+unconstrained generation. The observed difference is small and does not support an accuracy benefit from
+XGrammar constraints in this comparison.
 
- For RQ2, MCP CoT had the strongest observed accuracy, but the results do not isolate an
- MCP tool-calling effect. Nevertheless, MCP CoT exceeded every model-and-global-setting-matched unconstrained or xgrammar text-CoT cell, with descriptive gaps ranging from 1.00 to
- 10.93 points. Relative to each model's best LEAP CoT result, MCP CoT was higher by 1.00
- points for Qwen3.8-27B, 2.20 for Qwen3-235B-A22B, and 3.53 for Qwen2.5-32B. MCP
- iterative did not show the same dominance, winning 11 and losing 13 of 24 descriptive
- comparisons with text-based iterative generation. The evidence therefore favors MCP
- specifically when combined with CoT, while not establishing tool calling as the cause.
+For RQ2, MCP COT had the strongest observed accuracy, but the results do not isolate an
+MCP tool-calling effect. MCP COT exceeded every unconstrained or XGrammar text-COT cell
+matched by model and global-constraint setting, with descriptive gaps ranging from 1.00 to
+10.93 points. Relative to each model's best LEAP COT result, MCP COT was higher by 1.00
+points for Qwen3.8-27B, 2.20 for Qwen3-235B-A22B, and 3.53 for Qwen2.5-32B. MCP
+iterative did not show the same dominance, winning 11 and losing 13 of 24 descriptive
+comparisons with text-based iterative generation. The evidence therefore favors MCP
+specifically when combined with COT, while not establishing tool calling as the cause.
 
- Within LEAP, JSON was the strongest text representation on average. JSON minus Function
- was +1.66 ± 2.38 points across 24 matched configurations, with median +1.83, an
- unadjusted interval of [+0.77, +2.61], and 18 wins versus 6 losses. The average effect
- was +3.10 points for Qwen3-235B-A22B, +1.00 for Qwen2.5-32B, and +0.88 for Qwen3.8-27B.
- The Qwen3.8 interval included zero, so JSON did not dominate for every model.
+Within LEAP, JSON was the strongest text representation on average. JSON minus Function
+was +1.66 ± 2.38 points across 24 matched configurations, with median +1.83, an
+unadjusted interval of [+0.77, +2.61], and 18 wins versus 6 losses. The average effect
+was +3.10 points for Qwen3-235B-A22B, +1.00 for Qwen2.5-32B, and +0.88 for Qwen3.8-27B.
+The Qwen3.8 interval included zero, so the average advantage was not clear for every model.
 
- Strategy effects depended strongly on protocol. In LEAP, CoT had only a small and
- inconsistent advantage over iterative reasoning: +0.99 ± 2.94 points, interval [-0.13,
- +2.08], with 14 wins, one tie, and 11 losses across 26 configurations. In MCP, CoT beat
- iterative in all six matched configurations by +5.93 ± 1.87 points, interval [+4.61,
- +7.38]. Global constraints produced a small average LEAP increase of +0.74 ± 1.89
- points, interval [+0.04, +1.45], but no clear MCP effect, +0.29 ± 1.58 points with
- interval [-0.84, +1.39].
+Strategy effects depended strongly on protocol. In LEAP, COT had only a small and
+inconsistent advantage over iterative reasoning: +0.99 ± 2.94 points, interval [-0.13,
++2.08], with 14 wins, one tie, and 11 losses across 26 configurations. In MCP, COT beat
+iterative in all six matched configurations by +5.93 ± 1.87 points, interval [+4.61,
++7.38]. Global constraints produced a small average LEAP increase of +0.74 ± 1.89
+points, interval [+0.04, +1.45], but no clear MCP effect, +0.29 ± 1.58 points with
+interval [-0.84, +1.39].
 
- The best overall run for every model used MCP CoT. Qwen3.8-27B reached 76.67 ± 0.31%
- with either global-constraint setting. Qwen3-235B-A22B reached 60.93 ± 0.92% with global
- constraints off. Qwen2.5-32B reached 66.33 ± 0.70%, also with global constraints off.
- The best LEAP-only result for Qwen3.8-27B was unconstrained Function CoT with global
- constraints off at 75.67%.
+The highest mean accuracy for every model came from MCP COT. Qwen3.8-27B reached 76.67 ± 0.31%
+with either global-constraint setting. Qwen3-235B-A22B reached 60.93 ± 0.92% with global
+constraints off. Qwen2.5-32B reached 66.33 ± 0.70%, also with global constraints off.
+The best LEAP-only result for Qwen3.8-27B was unconstrained Function COT with global
+constraints off at 75.67%.
 
- Performance relative to DirectQuery was model-dependent and descriptive because no
- paired baseline tests were reported. All 20 transformed Qwen3.8-27B means exceeded its
- 69.00 ± 0.35% baseline, ranging from 69.87% to 76.67%. Only 6 of 20 Qwen3-235B-A22B
- transformed means exceeded its 56.53 ± 0.23% baseline. Qwen2.5-32B exceeded its 58.27 ±
- 0.31% baseline in 16 of 24 conditions, tied it once, and fell below it seven times. None
- of the legacy-state-machine conditions exceeded the Qwen2.5 baseline.
+Performance relative to the direct-query baseline was model-dependent and descriptive because no
+paired baseline tests were reported. All 20 transformed Qwen3.8-27B means exceeded its
+69.00 ± 0.35% baseline, ranging from 69.87% to 76.67%. Only 6 of 20 Qwen3-235B-A22B
+transformed means exceeded its 56.53 ± 0.23% baseline. Qwen2.5-32B exceeded its 58.27 ±
+0.31% baseline in 16 of 24 conditions, tied it once, and fell below it seven times. None
+of the legacy-state-machine conditions exceeded the Qwen2.5 baseline.
 
- The model results reject a simple "larger is better" interpretation. Best scores were
- 76.67% for the nominally 27B Qwen3.8 model, 66.33% for Qwen2.5-32B, and 60.93% for
- Qwen3-235B-A22B. The newer Qwen3.8 model performed best, but the older Qwen2.5 model
- outperformed the larger Qwen3 model.
+These results do not support a simple "larger is better" interpretation. Best scores were
+76.67% for the nominally 27B Qwen3.8 model, 66.33% for Qwen2.5-32B, and 60.93% for
+Qwen3-235B-A22B. The newer Qwen3.8 model performed best, but the older Qwen2.5 model
+outperformed the larger Qwen3 model.
 
- One further result concerns the legacy backend. In its narrow Qwen2.5 Function-only
- subset, xgrammar exceeded the legacy state machine by +4.27 ± 4.79 points, with median
- +3.70, interval [+0.23, +8.30], and three wins, one tie, and no losses across four
- configurations. This comparison also changes the runtime and is based on very few
- configurations, so it does not support a broad backend conclusion. Furthermore, this configuration is incompatible with later models due to the vLLM V0 constraint.
+Finally, the legacy-backend comparison covers only a narrow Qwen2.5 function-only
+subset. XGrammar exceeded the legacy state machine by +4.27 ± 4.79 points, with median
++3.70, interval [+0.23, +8.30], and three wins, one tie, and no losses across four
+configurations. This comparison also changes the runtime and is based on very few
+configurations, so it does not support a broad backend conclusion. The legacy configuration
+is also incompatible with later models because it requires vLLM V0.
+
+## Conclusion
+
+LEAP extends Chain-of-Tables with configurable generation strategies, output formats, and constraint backends. Its central distinction is between generating a valid table operation and choosing an operation that helps answer the question. Constrained decoding addresses the former, but the reported XGrammar results did not show an average end-to-end accuracy benefit over unconstrained generation.
+
+JSON output improved accuracy on average within LEAP, while MCP COT achieved the highest observed mean accuracy for every evaluated model. These results make MCP implementations, particularly MCP COT, the main direction for future work, although they do not establish tool calling as the cause of the improvement. The benefits of table transformations and global constraints also varied by model and strategy, so no single configuration should be assumed to improve on the direct-query baseline in every setting.
+
+Future work should focus on developing and evaluating MCP implementations. Constrained generation may instead be suitable for tasks where output validity is the highest priority, even without an improvement in answer accuracy. Its restrictions can enforce output structure and limit invalid table references, but they do not guarantee a correct answer. This suggests different priorities for the two approaches: MCP as the main direction for further table-reasoning research, and constrained generation for settings where strict output requirements are central.
