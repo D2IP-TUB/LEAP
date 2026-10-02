@@ -135,7 +135,10 @@ class Action:
         if not hasattr(action_def, "validate"):
             return True
 
-        return action_def.validate(table, self.arguments)
+        try:
+            return action_def.validate(table, self.arguments)
+        except Exception:
+            return False
 
     def __repr__(self) -> str:
         return f"Action({self.name}, args={list(self.arguments)})"

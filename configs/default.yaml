@@ -1,6 +1,8 @@
 model:
   # id: "meta-llama/Llama-4-Scout-17B-16E-Instruct"
-  id: Qwen/Qwen2.5-7B-Instruct
+  # id: "mistralai/Mixtral-8x7B-v0.1"
+  id: Qwen/Qwen2.5-32B-Instruct
+  # id: "gpt2"
   presets_path: "configs/models.yaml"
   # possible alternatives:
   # "meta-llama/Llama-2-70b-hf"
@@ -22,7 +24,7 @@ dataset:
   path: null
 
 run:
-  max_examples: 300
+  max_examples: 100
 
 generation:
   use_constraints: false

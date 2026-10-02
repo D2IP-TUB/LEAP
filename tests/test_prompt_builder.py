@@ -187,8 +187,8 @@ class TestCoTPromptFiltering:
         )
 
         # On first step, only non-terminating actions should be shown
-        assert "The next operation must be one of" in prompt
-        available_section = prompt.split("The next operation must be one of")[1].split("\n")[0]
+        assert "Available actions:" in prompt
+        available_section = prompt.split("Available actions:")[1].split("\n")[0]
         assert "f_select_row" in available_section
         assert "f_select_column" in available_section
         # Terminating action should NOT be shown on first step
@@ -206,7 +206,7 @@ class TestCoTPromptFiltering:
         )
 
         # select_row should be filtered from available actions
-        available_section = prompt.split("The next operation must be one of")[1].split("\n")[0]
+        available_section = prompt.split("Available actions:")[1].split("\n")[0]
         assert "f_select_row" not in available_section
         assert "f_select_column" in available_section
         assert "f_end" in available_section
@@ -218,6 +218,7 @@ class TestCoTPromptFiltering:
             question="What is the average age?",
             table=sample_table,
             action_name="select_column",
+            action_history=[],
             worker=mock_worker,
         )
 
@@ -348,7 +349,7 @@ class TestPromptStructure:
         assert "Table:" in prompt
         assert "Question:" in prompt
         assert "Actions taken so far:" in prompt
-        assert "The next operation must be one of" in prompt
+        assert "Available actions:" in prompt
 
     def test_print_example_prompts(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry, capsys):
         """Print example prompts for visual inspection (run with -s flag)."""
@@ -402,7 +403,7 @@ class TestCoTFirstActionRestrictions:
         )
 
         # Check available actions section
-        available_section = prompt.split("The next operation must be one of")[1].split("\n")[0]
+        available_section = prompt.split("Available actions:")[1].split("\n")[0]
 
         # Terminating action should NOT be available on first step
         assert "f_end" not in available_section
@@ -425,7 +426,7 @@ class TestCoTFirstActionRestrictions:
         )
 
         # Check available actions section
-        available_section = prompt.split("The next operation must be one of")[1].split("\n")[0]
+        available_section = prompt.split("Available actions:")[1].split("\n")[0]
 
         # After first action, terminating action should be available
         assert "f_end" in available_section
@@ -460,7 +461,7 @@ class TestCoTActionHistory:
         assert "2. f_select_column(['Name', 'Age'])" in prompt
 
     def test_cot_action_prompt_no_history_section_when_empty(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
-        """When action history is empty, no history section should appear."""
+        """When action history is empty, section shows 'None'."""
         prompt = prompt_builder_non_instruct.build_cot_action_prompt(
             question="What is the average age?",
             table=sample_table,
@@ -468,8 +469,9 @@ class TestCoTActionHistory:
             worker=mock_worker,
         )
 
-        # No action history section should appear
-        assert "Actions taken so far:" not in prompt
+        # Section always appears, with 'None' when empty
+        assert "Actions taken so far:" in prompt
+        assert "None" in prompt
 
     def test_cot_arguments_prompt_shows_action_history(self, prompt_builder_non_instruct, sample_table, mock_worker, setup_registry):
         """CoT arguments prompt should contain instruction and table content."""
@@ -477,6 +479,7 @@ class TestCoTActionHistory:
             question="What is the average age?",
             table=sample_table,
             action_name="select_column",
+            action_history=[],
             worker=mock_worker,
         )
 

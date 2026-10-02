@@ -1,64 +1,17 @@
-action_descriptions:
-  - description: "If the table does not have the needed column to answer the question, we use f_add_column() to add a new column."
-    table_repr: |
-      ,rank,lane,player,time
-      row 1,1,5,olga tereshkova (kaz),51.86
-      row 2,2,6,manjeet kaur (ind),52.17
-      row 3,3,3,asami tanno (jpn),53.04
-    question: "How many athletes are from Japan?"
-    function: 'f_add_column(country of athlete, ["Kazakstan", "India", "Japan"])'
-    explanation: "The question asks about the number of athletes from Japan. We need to know the country of each athlete. There is no column for the country of athletes. We add a column country of athlete."
-
-  - description: "If the table only needs a few columns to answer the question, we use f_select_column() to keep only those columns."
-    table_repr: |
-      ,code,county,former province,area (km2),population,capital
-      row 1,1,mombasa,coast,212.5,"939,370",mombasa (city)
-      row 2,2,kwale,coast,8270.3,"649,931",kwale
-      row 3,3,kilifi,coast,12245.9,"1,109,735",kilifi
-    question: "What is the population of Mombasa county?"
-    function: "f_select_column(county, population)"
-    explanation: "The question asks about the population of Mombasa county. We only need to know the county names and their populations. We select columns county and population."
-
-  - description: "If the table only needs a few rows to answer the question, we use f_select_row() to keep only those rows."
-    table_repr: |
-      ,years,displacement,engine,power,torque
-      row 1,1999 - 2004,4.0l (242cid),power tech i6,-,3000 rpm
-      row 2,1999 - 2004,4.7l (287cid),powertech v8,-,3200 rpm
-      row 3,2002 - 2004,4.7l (287cid),high output powertech v8,-,-
-      row 4,1999 - 2001,3.1l diesel,531 ohv diesel i5,-,-
-      row 5,2002 - 2004,2.7l diesel,om647 diesel i5,-,-
-    question: "What is the third lowest displacement among Jeep Grand Cherokee engines?"
-    function: "f_select_row(row 1, row 4, row 5)"
-    explanation: "The question asks for the third lowest displacement value. We need the three rows with the lowest displacement values: row 5 (2.7l), row 4 (3.1l), and row 1 (4.0l). We select row 1, row 4, and row 5."
-
-  - description: "If the question asks about items sharing the same value and the count of those items, we use f_group_by() to group them."
-    table_repr: |
-      ,district,name,party,residence,first served
-      row 1,district 1,nelson albano,dem,vineland,2006
-      row 2,district 1,robert andrzejczak,dem,middle twp.,2013
-      row 3,district 2,john f. amodeo,rep,margate,2008
-    question: "How many representatives belong to each party?"
-    function: "f_group_by(party)"
-    explanation: "The question asks about the number of representatives from each party. We need to count items sharing the same value in the party column. We group the rows according to column party."
-
-  - description: "If the question asks about the order of items in a column, we use f_sort_by() to sort them."
-    table_repr: |
-      ,position,club,played,points
-      row 1,1,malaga cf,42,79
-      row 10,10,cp merida,42,59
-      row 3,3,cd numancia,42,73
-    question: "Which club placed in the last position?"
-    function: "f_sort_by(position, desc)"
-    explanation: "The question asks about the club in the last position. We need to know the order of positions from last to first. We sort the rows according to column position."
-
 examples:
   query_answer:
     system: |
-      Here is the table to answer this question. Please understand the table and answer the question with the table values only.
-      Format as a JSON list, e.g. ["2"] or ["John", "Doe"].
+      You are a table question answering assistant. 
+      Return only a JSON array of strings and nothing else. 
+      Only return the exact table values.
+      Examples of valid outputs: 
+      ["Italy"], ["Italy", "Spain"], ["yes"], ["28.1%"], ["1", "3"]. 
+      All answer items must be strings. 
+      Do not add explanations. 
+      If multiple rows satisfy the condition, include all matching answers in table order. 
+      If the same answer appears multiple times, return it only once.
     examples:
-    - table_caption: "2008 sidecarcross world championship"
-      table: |
+    - table: |
         ,position,driver / passenger,equipment,bike no,points
         row 0,1,daniël willemsen / reto grütter,ktm - ayr,1,531
         row 1,2,kristers sergis / kaspars stupelis,ktm - ayr,3,434
@@ -68,8 +21,7 @@ examples:
       question: "how many bikes use ktm - ayr equipment?"
       answer: '["2"]'
 
-    - table_caption: "1957 vfl season"
-      table: |
+    - table: |
         ,home team,home team score,away team,away team score,venue,crowd,date
         row 0,footscray,6.6 (42),north melbourne,8.13 (61),western oval,13325,10 august 1957
         row 1,essendon,10.15 (75),south melbourne,7.13 (55),windy hill,16000,10 august 1957
@@ -79,8 +31,7 @@ examples:
       question: "which team was the away team at brunswick street oval?"
       answer: '["geelong"]'
 
-    - table_caption: "co-operative commonwealth federation (ontario section)"
-      table: |
+    - table: |
         ,year of election,candidates elected,of seats available,of votes,% of popular vote
         row 0,1934,1,90,na,7.0%
         row 1,1937,0,90,na,5.6%
@@ -90,8 +41,7 @@ examples:
       question: "In which years did the party have the highest number of candidates elected?"
       answer: '["1943", "1945", "1948"]'
 
-    - table_caption: "2003 pga championship"
-      table: |
+    - table: |
         ,place,player,country,score,to par
         row 0,1,shaun micheel,united states,69 + 68 = 137,- 3
         row 1,t2,billy andrade,united states,67 + 72 = 139,- 1
@@ -103,183 +53,125 @@ examples:
 
   select_row:
     system: |
-      Using f_select_row() api to select relevant rows in the given table that support or oppose the statement.
-      Please use f_select_row([*]) to select all rows in the table.
+      You are a precise table row selector. Analyze the question and table to select ONLY the relevant rows.
+      Use the function f_select_row(rows) where rows is a list of row indices like [row 0, row 2].
+      To select all rows, use f_select_row([*]).
 
       Do not answer the question in this step.
-      Only provide the explanation, the function and its arguments.
-      Your answer must STRICTLY end like:
-      <explanation>
-      Therefore the answer is: f_select_row([list_of_rows]).'
+      Only provide the function and its arguments.
+      Output ONLY this exact format, nothing else: f_select_row([row 0, row 1]) or f_select_row([*]). Do not add explanations, text, or other content.
+      Always select the minimal set of rows needed to answer the question exactly.
 
     examples:
-      - table_caption: "1972 vfl season"
-        table: |
+      - table: |
           ,home team,home team score,away team,away team score,venue,crowd,date
-          row 1,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836,19 august 1972
-          row 2,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154,19 august 1972
-          row 3,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651,19 august 1972
-          row 4,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108,19 august 1972
-          row 5,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271,19 august 1972
-          row 6,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749,19 august 1972
+          row 0,st kilda,13.12 (90),melbourne,13.11 (89),moorabbin oval,18836,19 august 1972
+          row 1,south melbourne,9.12 (66),footscray,11.13 (79),lake oval,9154,19 august 1972
+          row 2,richmond,20.17 (137),fitzroy,13.22 (100),mcg,27651,19 august 1972
+          row 3,geelong,17.10 (112),collingwood,17.9 (111),kardinia park,23108,19 august 1972
+          row 4,north melbourne,8.12 (60),carlton,23.11 (149),arden street oval,11271,19 august 1972
+          row 5,hawthorn,15.16 (106),essendon,12.15 (87),vfl park,36749,19 august 1972
         question: "What is the highest away team score?"
         explanation: "The question asks for the highest away team score. To find it, we need to compare scores across all away teams, so all rows are relevant. We use * to represent all rows in the table."
         answer: "f_select_row([*])"
 
-      - table_caption: "list of largest airlines in central america & the caribbean"
-        table: |
+      - table: |
           ,rank,airline,country,fleet size,remarks
-          row 1,1,caribbean airlines,trinidad and tobago,22,largest airline in the caribbean
-          row 2,2,liat,antigua and barbuda,17,second largest airline in the caribbean
-          row 3,3,cubana de aviaciã cubicn,cuba,14,operational since 1929
-          row 4,4,inselair,curacao,12,operational since 2006
-          row 5,5,dutch antilles express,curacao,4,curacao second national carrier
-          row 6,6,air jamaica,trinidad and tobago,5,parent company is caribbean airlines
-          row 7,7,tiara air,aruba,3,aruba's national airline
+          row 0,1,caribbean airlines,trinidad and tobago,22,largest airline in the caribbean
+          row 1,2,liat,antigua and barbuda,17,second largest airline in the caribbean
+          row 2,3,cubana de aviaciã cubicn,cuba,14,operational since 1929
+          row 3,4,inselair,curacao,12,operational since 2006
+          row 4,5,dutch antilles express,curacao,4,curacao second national carrier
+          row 5,6,air jamaica,trinidad and tobago,5,parent company is caribbean airlines
+          row 6,7,tiara air,aruba,3,aruba's national airline
         question: "Which airline has the remark 'Curacao second national carrier' and a fleet size over 4?"
         explanation: "The question asks for an airline with a fleet size over 4 and the remark 'Curacao second national carrier'. No row perfectly satisfies both conditions. The most relevant row is row 4, which describes Dutch Antilles Express: its remark is 'Curacao second national carrier', but its fleet size is 4, not over 4."
         answer: "f_select_row([row 4])"
 
-      - table_caption: "list of longest-serving soap opera actors"
-        table: |
+      - table: |
           ,actor,character,soap opera,years,duration
-          row 1,tom jordon,charlie kelly,fair city,1989-,25 years
-          row 2,tony tormey,paul brennan,fair city,1989-,25 years
-          row 3,jim bartley,bela doyle,fair city,1989-,25 years
-          row 4,sarah flood,suzanne halpin,fair city,1989 - 2013,24 years
-          row 5,pat nolan,barry o'hanlon,fair city,1989 - 2011,22 years
-          row 6,martina stanley,dolores molloy,fair city,1992-,22 years
-          row 7,joan brosnan walsh,mags kelly,fair city,1989 - 2009,20 years
-          row 8,jean costello,rita doyle,fair city,1989 - 2008 , 2010,19 years
-          row 9,ciara o'callaghan,yvonne gleeson,fair city,1991 - 2004 , 2008-,19 years
-          row 10,celia murphy,niamh cassidy,fair city,1995-,19 years
-          row 39,tommy o'neill,john deegan,fair city,2001-,13 years
-          row 40,seamus moran,mike gleeson,fair city,1996 - 2008,12 years
-          row 41,rebecca smith,annette daly,fair city,1997 - 2009,12 years
-          row 42,grace barry,mary - ann byrne,glenroe,1990 - 2001,11 years
-          row 43,gemma doorly,sarah o'leary,fair city,2001 - 2011,10 years
+          row 0,tom jordon,charlie kelly,fair city,1989-,25 years
+          row 1,tony tormey,paul brennan,fair city,1989-,25 years
+          row 2,jim bartley,bela doyle,fair city,1989-,25 years
+          row 3,sarah flood,suzanne halpin,fair city,1989 - 2013,24 years
+          row 4,pat nolan,barry o'hanlon,fair city,1989 - 2011,22 years
+          row 5,martina stanley,dolores molloy,fair city,1992-,22 years
+          row 6,seamus moran,mike gleeson,fair city,1996 - 2008,12 years
+          row 7,jean costello,rita doyle,fair city,1989 - 2008 , 2010,19 years
+          row 8,ciara o'callaghan,yvonne gleeson,fair city,1991 - 2004 , 2008-,19 years
+          row 9,celia murphy,niamh cassidy,fair city,1995-,19 years
+          row 10,tommy o'neill,john deegan,fair city,2001-,13 years
+          row 11,joan brosnan walsh,mags kelly,fair city,1989 - 2009,20 years
+          row 12,rebecca smith,annette daly,fair city,1997 - 2009,12 years
+          row 13,grace barry,mary - ann byrne,glenroe,1990 - 2001,11 years
+          row 14,gemma doorly,sarah o'leary,fair city,2001 - 2011,10 years
         question: "How long were Seamus Moran and Rebecca Smith in soap operas?"
-        explanation: "The question asks about the duration Seamus Moran and Rebecca Smith spent in soap operas. Row 40 describes Seamus Moran, who was in soap operas for a duration of 12 years. Row 41 describes Rebecca Smith, who was also in soap operas for a duration of 12 years."
-        answer: "f_select_row([row 40, row 41])"
+        explanation: "The question asks about the duration Seamus Moran and Rebecca Smith spent in soap operas. Row 11 describes Seamus Moran, who was in soap operas for a duration of 12 years. Row 12 describes Rebecca Smith, who was also in soap operas for a duration of 12 years."
+        answer: "f_select_row([row 6, row 12])"
 
-      - table_caption: "jeep grand cherokee"
-        table: |
+      - table: |
           ,years,displacement,engine,power,torque
-          row 1,1999 - 2004,4.0l (242cid),power tech i6,-,3000 rpm
-          row 2,1999 - 2004,4.7l (287cid),powertech v8,-,3200 rpm
-          row 3,2002 - 2004,4.7l (287cid),high output powertech v8,-,-
-          row 4,1999 - 2001,3.1l diesel,531 ohv diesel i5,-,-
-          row 5,2002 - 2004,2.7l diesel,om647 diesel i5,-,-
-        question: "What is the third lowest displacement among Jeep Grand Cherokee engines?"
-        explanation: "The question asks for the third lowest displacement value. To find it, we need the three rows with the lowest displacement values: row 5 (2.7l, OM647 diesel I5), row 4 (3.1l, 531 OHV diesel I5), and row 1 (4.0l, Power Tech I6)."
-        answer: "f_select_row([row 5, row 4, row 1])"
+          row 0,1999 - 2004,4.0l (242cid),power tech i6,-,3000 rpm
+          row 1,1999 - 2004,4.7l (287cid),powertech v8,-,3200 rpm
+          row 2,2002 - 2004,4.7l (287cid),high output powertech v8,-,-
+          row 3,1999 - 2001,3.1l diesel,531 ohv diesel i5,-,-
+          row 4,2002 - 2004,2.7l diesel,om647 diesel i5,-,-
+        question: "What is are the two lowest displacement among Jeep Grand Cherokee engines?"
+        explanation: "The question asks for the two lowest displacement values. To find it, we need the two rows with the lowest displacement values: row 4 (2.7l, OM647 diesel I5) and row 3 (3.1l, 531 OHV diesel I5)."
+        answer: "f_select_row([row 4, row 3])"
 
 
   select_column:
     system: |
-      Use f_select_column() api to filter out useless columns in the table according to informations in the statement and the table.
+      You are a precise table column selector. Analyze the question and table to select ONLY relevant columns.
+      Use the function f_select_column(columns) where columns is a list of exact column names or close matches like ["col1", "col2"].
+      Match column names exactly as in the table header, including spaces and hyphens.
 
       Do not answer the question in this step.
-      Only provide the explanation, the function and its arguments.
-      The function arguments must resemble column names.
-      Your answer must STRICTLY end like:
-      <explanation>
-      Therefore the answer is: f_select_column([list_of_columns]).'
-
+      Only provide the function and its arguments.
+      Only select exisiting column.
+      Output ONLY this exact format, nothing else: f_select_column(["column1", "column2"]). No explanations or extra text.
+      Select the minimal set of columns needed to answer the question. Use quotes around each column name.
 
     examples:
-    - table_caption: "south wales derby"
-      table: |
+    - table: |
         ,competition,total matches,cardiff win,draw,swansea win
-        row 1,league,55,19,16,20
-        row 2,fa cup,2,0,27,2
-        row 3,league cup,5,2,0,3
+        row 0,league,55,19,16,20
+        row 1,fa cup,2,0,27,2
+        row 2,league cup,5,2,0,3
       question: "In which competitions did Cardiff win fewer matches than there were draws?"
-      explanation: |
-        similar words link to columns :
-        no cardiff wins -> cardiff win
-        a draw -> draw
-        column value link to columns :
-        27 -> draw
-        semantic sentence link to columns :
-        None
       answer: 'f_select_column(["cardiff win", "draw"])'
 
-    - table_caption: "gambrinus liga"
-      table: |
+    - table: |
         ,season,champions,runner - up,third place,top goalscorer,club
-        row 1,1993 - 94,sparta prague (1),slavia prague,ban\\u00edk ostrava,horst siegl (20),sparta prague
-        row 2,1994 - 95,sparta prague (2),slavia prague,fc brno,radek drulák (15),drnovice
-        row 3,1995 - 96,slavia prague (1),sigma olomouc,baumit jablonec,radek drulák (22),drnovice
+        row 0,1993 - 94,sparta prague (1),slavia prague,banik ostrava,horst siegl (20),sparta prague
+        row 1,1994 - 95,sparta prague (2),slavia prague,fc brno,radek drulák (15),drnovice
+        row 2,1995 - 96,slavia prague (1),sigma olomouc,baumit jablonec,radek drulák (22),drnovice
       question: "Who was the top goalscorer in the 2010 - 2011 season?"
-      explanation: |
-        similar words link to columns :
-        season 2010 - 2011 -> season
-        the top goal scorer -> top goalscorer
-        column value link to columns :
-        2010 - 2011 -> season
-        semantic sentence link to columns :
-        the top goal scorer for ... was david lafata -> top goalscorer
       answer: 'f_select_column(["season", "top goalscorer"])'
 
-    - table_caption: "head of the river (queensland)"
-      table: |
+    - table: |
         ,crew,open 1st viii,senior 2nd viii,senior 3rd viii,senior iv,year 12 single scull,year 11 single scull
-        row 1,2009,stm,sta,sta,som,stm,splc
-        row 2,2010,splc,som,som,sth,splc,splc
-        row 3,2011,stm,stu,stu,sta,stm,splc
+        row 0,2009,stm,sta,sta,som,stm,splc
+        row 1,2010,splc,som,som,sth,splc,splc
+        row 2,2011,stm,stu,stu,sta,stm,splc
       question: "Which crew year had som for senior 2nd viii and stm for senior iv?"
-      explanation: |
-        similar words link to columns :
-        the crew -> crew
-        a senior 2nd viii of som -> senior 2nd viii
-        senior iv of stm -> senior iv
-        column value link to columns :
-        som -> senior 2nd viii
-        stm -> senior iv
-        semantic sentence link to columns :
-        None
       answer: 'f_select_column(["crew", "senior 2nd viii", "senior iv"])'
 
-    - table_caption: "2007 - 08 boston celtics season"
-      table: |
+    - table: |
         ,game,date,team,score,high points,high rebounds,high assists,location attendance,record
-        row 1,74,april 1,chicago,106 - 92,allen (22),perkins (9),rondo (10),united center 22225,59 - 15
-        row 2,75,april 2,indiana,92 - 77,garnett (20),garnett (11),rondo (6),td banknorth garden 18624,60 - 15
-        row 3,76,april 5,charlotte,101 - 78,powe (22),powe (9),rondo (5),charlotte bobcats arena 19403,61 - 15
+        row 0,74,april 1,chicago,106 - 92,allen (22),perkins (9),rondo (10),united center 22225,59 - 15
+        row 1,75,april 2,indiana,92 - 77,garnett (20),garnett (11),rondo (6),td banknorth garden 18624,60 - 15
+        row 2,76,april 5,charlotte,101 - 78,powe (22),powe (9),rondo (5),charlotte bobcats arena 19403,61 - 15
       question: "Who had the most points and most rebounds for the Celtics in game 74 against Chicago?"
-      explanation: |
-        similar words link to columns :
-        the most rebounds -> high rebounds
-        the most points -> high points
-        in game 74 -> game
-        column value link to columns :
-        74 -> game
-        semantic sentence link to columns :
-        2007 - 08 boston celtics season in game 74 against chicago -> team
-        perkins had the most rebounds -> high rebounds
-        allen had the most points -> high points
       answer: 'f_select_column(["game", "team", "high points", "high rebounds"])'
 
-    - table_caption: "dan hardy"
-      table: |
+    - table: |
         ,result,record,opponent,method,event,round,time,location
-        row 1,win,25 - 10 (1),amir sadollah,decision (unanimous),ufc on fuel tv : struve vs miocic,3,5:00,"nottingham , england"
-        row 2,win,24 - 10 (1),duane ludwig,ko (punch and elbows),ufc 146,1,3:51,"las vegas , nevada , united states"
-        row 3,loss,23 - 10 (1),chris lytle,submission (guillotine choke),ufc live : hardy vs lytle,5,4:16,"milwaukee , wisconsin , united states"
+        row 0,win,25 - 10 (1),amir sadollah,decision (unanimous),ufc on fuel tv : struve vs miocic,3,5:00,"nottingham , england"
+        row 1,win,24 - 10 (1),duane ludwig,ko (punch and elbows),ufc 146,1,3:51,"las vegas , nevada , united states"
+        row 2,loss,23 - 10 (1),chris lytle,submission (guillotine choke),ufc live : hardy vs lytle,5,4:16,"milwaukee , wisconsin , united states"
       question: "What was the result and duration of Dan Hardy's fight that brought his record to 10 - 3 (1) in round 5?"
-      explanation: |
-        similar words link to columns :
-        the record of the match was a 10 - 3 (1) score -> record
-        the record -> record
-        in round -> round
-        a time -> time
-        column value link to columns :
-        10 - 3 (1) -> record
-        5 -> round
-        5:00 minutes -> time
-        semantic sentence link to columns :
-        resulting in a win -> result
       answer: 'f_select_column(["result", "record", "round", "time"])'
 
 
@@ -288,39 +180,35 @@ examples:
       To answer the question, we can first use f_add_column() to add more columns to the table.
 
       Do not answer the question in this step.
-      Only provide the explanation, the function and its arguments.
+      Only provide the function and its arguments.
       The function arguments must resemble a new column name and its values.
-      Your answer must STRICTLY end like:
-      <explanation>
-      Therefore the answer is: f_add_column(<column>, [values]).'
+      Your answer must be exactly:
+      f_add_column(<column>, [values])
 
       The added columns should have these data types:
       1. Numerical: the numerical strings that can be used in sort, sum
       2. Datetype: the strings that describe a date, such as year, month, day
       3. String: other strings
     examples:
-      - table_caption: "nfl europe game schedule"
-        table: |
+      - table: |
           ,week,when,kickoff,opponent,results; final score,results; team record,game site,attendance
           row 0,1,saturday april 13,7:00 p.m.,at rhein fire,W 27-21,1-0,rheinstadion,32092
           row 1,2,saturday april 20,7:00 p.m.,london monarchs,W 37-3,2-0,waldstadion,34186
           row 2,3,sunday april 28,6:00 p.m.,at barcelona dragons,W 33-29,3-0,estadi olímpic de montjuïc,17503
         question: "What is the date of the competition with the highest attendance?"
         explanation: "To answer the question, we need to know the attendance number of each competition. We extract the value from column attendance and create a different column attendance number for each row. The datatype is numerical."
-        answer: "add_column(attendance number, [32092, 34186, 17503])"
+        answer: "f_add_column(attendance number, [32092, 34186, 17503])"
 
-      - table_caption: "400m relay athletics"
-        table: |
+      - table: |
           ,rank,lane,player,time
           row 0,,5,olga tereshkova (kaz),51.86
           row 1,,6,manjeet kaur (ind),52.17
           row 2,,3,asami tanno (jpn),53.04
         question: "How many athletes are from Japan?"
-        explanation: "To answer the question, we need to know the country of each athlete. We extract the value from column player and create a different column country of athletes for each row. The datatype is string."
-        answer: "f_add_column(country of athletes, [kaz, ind, jpn])"
+        explanation: "To answer the question, we need to know the country of each athlete. We extract the value from column player and create a different column country for each row. The datatype is string."
+        answer: "f_add_column(country, [Kazakhstan, India, Japan])"
 
-      - table_caption: "athletics pole vault results"
-        table: |
+      - table: |
           ,year,competition,venue,position,notes
           row 0,1991,european junior championships,"thessaloniki, greece",10th,4.90 m
           row 1,1992,world junior championships,"seoul, south korea",1st,5.45 m
@@ -329,8 +217,7 @@ examples:
         explanation: "To answer the question, we need to know the placing of each competition. We extract the value from column position and create a different column placing result for each row. The datatype is numerical."
         answer: "f_add_column(placing result, [10, 1, 14])"
 
-      - table_caption: "iso/iec standards"
-        table: |
+      - table: |
           ,iso/iec standard,status,wg
           row 0,iso/iec tr 19759,published (2005),20
           row 1,iso/iec 15288,published (2008),7
@@ -339,8 +226,7 @@ examples:
         explanation: "To answer the question, we need to know the year of each standard. We extract the value from column status and create a different column year of standard for each row. The datatype is datetype."
         answer: "f_add_column(year of standard, [2005, 2008, 2008])"
 
-      - table_caption: "football season matches"
-        table: |
+      - table: |
           ,match,date,ground,opponent,score1,pos.,pts.,gd
           row 0,1,15 august,a,bayer uerdingen,3 – 0,1,2,3
           row 1,2,22 july,h,1. fc kaiserslautern,1 – 0,1,4,4
@@ -349,8 +235,7 @@ examples:
         explanation: "To answer the question, we need to know the month of each match. We extract the value from column date and create a different column month for each row. The datatype is datetype."
         answer: "f_add_column(month, [august, july, september])"
 
-      - table_caption: "1984 u.s. open (golf)"
-        table: |
+      - table: |
           ,place,player,country,score,to par
           row 0,1,hale irwin,united states,68 + 68 = 136,- 4
           row 1,2,fuzzy zoeller,united states,71 + 66 = 137,-- 3
@@ -359,8 +244,7 @@ examples:
         explanation: "To answer the question, we need to know the score values of each player. We extract the value from column score and create a different column score value for each row. The datatype is numerical."
         answer: "f_add_column(score value, [136, 137, 138])"
 
-      - table_caption: "kenya counties"
-        table: |
+      - table: |
           ,code,county,former province,area (km2),population; census 2009,capital
           row 0,1,mombasa,coast,212.5,939370,"mombasa (city)"
           row 1,2,kwale,coast,8270.3,649931,kwale
@@ -371,17 +255,23 @@ examples:
 
   group_by:
     system: |
-      To answer the question, we can use f_group_by() to group the rows by a column value and count occurrences.
+      Use f_group_by(column_name) to select the single table column whose values should be counted.
 
-      Only provide the explanation and the function with its argument.
-      No other syntax than shown below is permitted.
-      No other table operations are permitted.
-      Your answer must STRICTLY end like:
-      <explanation>
-      Therefore the answer is: f_group_by(<column>).
+      You are a table column selector for grouping questions.
+      Select exactly one column from the table header.
+      Copy the column name exactly as written in the header.
+      Choose the column whose unique values are being counted in the question.
+      Do not answer the question.
+      Do not output counts.
+      Do not output explanations or any extra text.
+      Return only the function call.
+      Specify column names exactly as shown in the table header. 
+      Do not wrap the column names in quotes/backticks nor remove spaces.
+
+      Your output must be exactly:
+      f_group_by(column_name)
     examples:
-      - table_caption: "400m relay athletics"
-        table: |
+      - table: |
           ,rank,lane,athlete,time,country
           row 0,1,6,manjeet kaur (ind),52.17,ind
           row 1,2,5,olga tereshkova (kaz),51.86,kaz
@@ -389,11 +279,9 @@ examples:
           row 3,4,1,tang xiaoyin (chn),53.66,chn
           row 4,5,8,marina maslyonko (kaz),53.99,kaz
         question: "how many athletes are from each country?"
-        explanation: "The question asks about the number of athletes from each country. Each row is about an athlete. We can group column country to group the athletes from the same country."
         answer: "f_group_by(country)"
 
-      - table_caption: "new jersey state legislature"
-        table: |
+      - table: |
           ,district,name,party,residence,first served
           row 0,district 1,nelson albano,dem,vineland,2006
           row 1,district 1,robert andrzejczak,dem,middle twp.,2013
@@ -401,57 +289,144 @@ examples:
           row 3,district 2,chris a. brown,rep,ventnor,2012
           row 4,district 3,john j. burzichelli,dem,paulsboro,2002
         question: "how many representatives belong to each party?"
-        explanation: "The question asks about the number of representatives from each party. Each row is about a representative. We can group the column party to group the representatives from the same party."
         answer: "f_group_by(party)"
+
+      - table: |
+          ,player,position,team,nationality
+          row 0,harry kane,forward,tottenham,england
+          row 1,son heung-min,forward,tottenham,south korea
+          row 2,erling haaland,forward,manchester city,norway
+          row 3,kevin de bruyne,midfielder,manchester city,belgium
+          row 4,bukayo saka,midfielder,arsenal,england
+          row 5,gabriel martinelli,forward,arsenal,brazil
+        question: "how many players are in each team?"
+        answer: "f_group_by(team)"
 
   sort_by:
     system: |
-      To answer the question, we can use f_sort_by() to sort the values in a column to get the order of the items.
-      The order can be "asc" (ascending, small to large) or "desc" (descending, large to small).
-
-      The column to sort should have these data types:
-      1. Numerical: the numerical strings that can be used in sort
-      2. DateType: the strings that describe a date, such as year, month, day
-      3. String: other strings
+      You are a precise table sorter. Analyze the question to select ONE column and ONE order.
+      Use f_sort_by(column, order) where column is the exact column name from table header, order is asc or desc.
+      The order can be asc (ascending, small to large) or desc (descending, large to small).
 
       Do not answer the question in this step.
-      Only provide the explanation, the function and its arguments.
+      Only provide the function and its arguments.
+      Do not modify the column name representation.
       No other table operations are permitted.
-      Your answer must STRICTLY end like:
-      <explanation>
-      Therefore the answer is: f_sort_by(<column>, <order>).'
+      Output ONLY: f_sort_by(column, order). No explanations, text, or other content before/after.
+      Choose minimal sort needed to answer. 
+      Specify column names exactly as shown in the table header. 
+      Do not wrap the column names in quotes/backticks nor remove spaces.
 
     examples:
-      - table_caption: "spanish football league standings"
-        table: |
+      - table: |
           ,position,club,played,points,wins,draws,losses,goals for,goals against,goal difference
           row 0,1,malaga cf,42,79,22,13,7,72,47,+25
           row 1,10,cp merida,42,59,15,14,13,48,41,+7
           row 2,3,cd numancia,42,73,21,10,11,68,40,+28
         question: "which club placed in the last position?"
-        explanation: "The question asks about the last position. Each row is about a club. We need to know the order of position from last to front. There is a column for position and the column name is position. The datatype is Numerical."
         answer: "f_sort_by(position, desc)"
 
-      - table_caption: "jonathan babin nfl career statistics"
-        table: |
+      - table: |
           ,year,team,games,combined tackles,tackles,assisted tackles
           row 0,2004,hou,16,63,51,12
           row 1,2005,hou,12,35,24,11
           row 2,2006,hou,15,26,19,7
         question: "in which year did the player have the least amount of tackles?"
-        explanation: "The question asks about the least amount of tackles. Each row is about a year. We need to know the order of tackles from the least to the most. There is a column for tackles and the column name is tackles. The datatype is Numerical."
         answer: "f_sort_by(tackles, asc)"
 
+      - table: |
+          ,date,sales (total),profit
+          row 0,2023-01,1000,200
+          row 1,2023-02,1500,300
+          row 2,2021-01,500,100
+        question: "which month had the highest sales?"
+        answer: "f_sort_by(sales (total), desc)"
+
+      - table: |
+          ,name,age,goals
+          row 0,Alice,25,12
+          row 1,Bob,22,15
+          row 2,Sam,20,1
+        question: "who is the youngest player?"
+        answer: "f_sort_by(age, asc)"
+
   action_selection:
-    system: "To answer the question, we can apply a number of table operations to simplify. Provide a list of table operations with no duplicates."
+    system: |
+      You are a table reasoning assistant. Given a table and a question, generate a chain of table operations to answer it.
+      Output only the function chain, with no explanation, no extra text, and end with f_end.
+      Available operations: f_select_row, f_select_column, f_add_column, f_group_by, f_sort_by.
+
+      Operation rules:
+      If the table lacks a column to answer the question use f_add_column() to add a new column and infer information from other columns. Never duplicate columns. For example,
+      Table:
+      ,rank,lane,player,time
+      row 0,1,5,olga tereshkova (kaz),51.86
+      row 1,2,6,manjeet kaur (ind),52.17
+      row 2,3,3,asami tanno (jpn),53.04
+      Question: How many athletes are from Japan?
+      Operation: f_add_column(country, [Kazakhstan, India, Japan])
+      Explanation: The question is about the number of athletes from japan. We need to known the country of each athlete. There is no column of the country of athletes. We add a column country of athlete and infer the country names from the column player.
+
+      Often only a subset of columns are required to answer a question. Use f_select_column() to select the relevant columns that contain the information to answer the question. For example,
+      Table:
+      ,code,county,former province,area (km2),population,capital
+      row 0,1,mombasa,coast,212.5,"939,370",mombasa (city)
+      row 1,2,kwale,coast,8270.3,"649,931",kwale
+      row 2,3,kilifi,coast,12245.9,"1,109,735",kilifi
+      Question: What is the population of Mombasa county?
+      Operation: f_select_column([county, population])
+      Explanation: The question asks about the population of Mombasa county. We only need to know the county names and their populations. We select columns county and population.
+
+      If the question ask for information from specific rows, use f_select_row() to select these rows. This operation is best used after sorting the target column since this makes selection safer and easier. For example,
+      Table:
+      ,years,displacement,engine,power,torque
+      row 0,1999 - 2004,4.0l (242cid),power tech i6,-,3000 rpm
+      row 1,1999 - 2004,4.7l (287cid),powertech v8,-,3200 rpm
+      row 2,2002 - 2004,4.7l (287cid),high output powertech v8,-,-
+      row 3,1999 - 2001,3.1l diesel,531 ohv diesel i5,-,-
+      row 4,2002 - 2004,2.7l diesel,om647 diesel i5,-,-
+      Question: What is the two lowest displacing engines among Jeep Grand Cherokee engines?
+      Operation: f_select_row([row 3, row 4])
+      Explanation: The question asks for the two lowest displacement values. We need the two rows with the lowest displacement values: row 4 (2.7l) and row 3 (3.1l)We select row 3 and row 4.
+
+      If the question requires counting the occurence values within a column use f_group_by() to group and count the items. For example,
+      Table:
+      ,district,name,party,residence,first served
+      row 0,district 1,nelson albano,dem,vineland,2006
+      row 1,district 1,robert andrzejczak,dem,middle twp.,2013
+      row 2,district 2,john f. amodeo,rep,margate,2008
+      Question: How many representatives belong to each party?
+      Operation: f_group_by(party)
+      Explanation: The question asks about the number of representatives from each party. We need to count items sharing the same value in the party column. We group the rows according to column party.
+
+      If the question asks about the order of items in a column, use f_sort_by() to sort the items. Also use f_sort_by() before selecting rows since this makes row selection more robust and safer. For example,
+      Table:
+      ,position,club,played,points
+      row 0,1,malaga cf,42,79
+      row 1,10,cp merida,42,59
+      row 2,3,cd numancia,42,73
+      Question: Which club placed in the last position?
+      Operation: f_sort_by(position, desc)
+      Explanation: The question asks about the club in the last position. We need to know the order of positions from last to first. We sort the rows according to column position.
+
     examples:
     - table: |
-        ,date,division,league,regular season,playoffs,open cup,avg. attendance
-        row 0,2001/01/02,2,usl a-league,4th western,quarterfinals,did not qualify,7169
-        row 1,2002/08/06,2,usl a-league,2nd pacific,1st round,did not qualify,6260
-        row 2,2005/03/24,2,usl first division,5th,quarterfinals,4th round,6028
-      question: "what was the last year where this team was a part of the usl a-league?"
-      answer: "f_add_column(year, [2001, 2002, 2005]) -> f_select_row([row 0, row 1]) -> f_select_column([year, league]) -> f_sort_by(year, desc) -> f_end"
+        ,week,when,kickoff,opponent,results; final score,results; team record,game site,attendance
+        row 0,1,saturday april 13,7:00 p.m.,at rhein fire,W 27-21,1-0,rheinstadion,32092
+        row 1,2,saturday april 20,7:00 p.m.,london monarchs,W 37-3,2-0,waldstadion,34186
+        row 2,3,sunday april 28,6:00 p.m.,at barcelona dragons,W 33-29,3-0,estadi olímpic de montjuïc,17503
+      question: "on which date was the competition with the highest attendance played?"
+      action_history: []
+      answer: "f_select_column([when, attendance]) -> f_sort_by(attendance, desc) -> f_select_row([row 0]) -> f_end"
+
+    - table: |
+        ,when,attendance
+        row 0,saturday april 13,32092
+        row 1,saturday april 20,34186
+        row 2,sunday april 28,17503
+      question: "on which date was the competition with the highest attendance played?"
+      action_history: []
+      answer: "f_sort_by(attendance, desc) -> f_select_row([row 0]) -> f_end"
 
     - table: |
         ,rank,lane,athlete,time
@@ -459,20 +434,14 @@ examples:
         row 1,2,5,olga tereshkova (kaz),51.86
         row 2,3,4,pinki pramanik (ind),53.06
       question: "how many athletes are from india?"
-      answer: 'f_add_column(country, ["Kazakstan", "India", "Japan"]) -> f_group_by(country) -> f_select_column([country, count]) -> select_row([row 1]) -> f_end'
+      action_history: []
+      answer: "f_add_column(country, [India, Kazakhstan, India]) -> f_group_by(country) -> f_select_row([row 0]) -> f_end"
 
     - table: |
-        ,week,when,kickoff,opponent,results; final score,results; team record,game site,attendance
-        row 0,1,saturday april 13,7:00 p.m.,at rhein fire,W 27-21,1-0,rheinstadion,32092
-        row 1,2,saturday april 20,7:00 p.m.,london monarchs,W 37-3,2-0,waldstadion,34186
-        row 2,3,sunday april 28,6:00 p.m.,at barcelona dragons,W 33-29,3-0,estadi olímpic de montjuïc,17503
-      question: "on which date was the competition with the highest attendance played?"
-      answer: f_select_column([when, attendance]) -> f_sort_by(attendance, desc) -> f_select_row([row 0]) -> f_end"
-
-    - table: |
-        ,iso/iec standard,status,wg
-        row 0,iso/iec tr 19759,published (2005),20
-        row 1,iso/iec 15288,published (2008),7
-        row 2,iso/iec 12207,published (2011),7
-      question: "how many standards were published in 2011?"
-      answer: "f_add_column(year, [2005, 2008, 2011]) -> f_group_by(year) -> f_select_column([year, count]) -> f_select_row([row 2]) -> f_end"
+        ,iso/iec standard,status,wg,year
+        row 0,iso/iec tr 19759,published,20,2005
+        row 1,iso/iec 15288,published,7,2008
+        row 2,iso/iec 12207,published,7,2011
+      question: "what year was the last standard published?"
+      action_history: []
+      answer: "f_sort_by(year, desc) -> f_select_row([row 0]) -> f_end"

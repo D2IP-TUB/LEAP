@@ -92,7 +92,6 @@ class InferenceRequest:
     table: Table
     ground_truth_answers: List[str]
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    table_caption: Optional[str] = None
 
     @classmethod
     def from_example(cls, example: Dict[str, Any], index: Optional[int] = None) -> "InferenceRequest":
@@ -112,7 +111,6 @@ class InferenceRequest:
             table=table,
             ground_truth_answers=example["answers"],
             request_id=request_id,
-            table_caption=example["table"].get("name"),
         )
 
     @classmethod
@@ -133,7 +131,6 @@ class InferenceRequest:
             table=table,
             ground_truth_answers=data["ground_truth_answers"],
             request_id=data.get("request_id", str(uuid.uuid4())),
-            table_caption=data.get("table_caption"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -147,7 +144,6 @@ class InferenceRequest:
             "table": self.table,  # Keep as Table object (it's a dataclass)
             "ground_truth_answers": self.ground_truth_answers,
             "request_id": self.request_id,
-            "table_caption": self.table_caption,
         }
 
 

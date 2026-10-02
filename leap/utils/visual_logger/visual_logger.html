@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Interactive Log Viewer</title>
+  <link rel="stylesheet" href="visual_logger_style.css">
+</head>
+<body>
+  <h1>Interactive Log Viewer</h1>
+
+  <div class="navigation">
+    <label for="fileSearch">Search log file:</label>
+    <div class="searchable-dropdown">
+      <input type="text" id="fileSearch" placeholder="Type to search files..." onfocus="showDropdown()" oninput="filterFiles()">
+      <div id="dropdownContent" class="dropdown-content"></div>
+    </div>
+    <button onclick="prevStep()">Previous Step</button>
+    <button onclick="nextStep()">Next Step</button>
+    <span id="stepCounter" style="margin-left: 20px; font-weight: bold;"></span>
+  </div>
+
+  <div id="questionContainer"></div>
+  <div id="stepsContainer"></div>
+
+  <script src="visual_logger.js" defer></script>
+</body>
+</html>
