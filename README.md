@@ -54,6 +54,22 @@ Review [configs/default.yaml](configs/default.yaml) (model, dataset, generation,
 Runtime is selected automatically at launch. `output_format` is `function` or `json` (JSON requires
 XGrammar). All modes validate operations against the current table after decoding.
 
+## Datasets
+
+Experiments run against WikiTableQuestions or specialized subsets hosted on Hugging Face:
+
+- **[Annotated WikiTableQuestions](https://huggingface.co/datasets/ayeshalashkarwala/annotated-wikitable-questions)** (`ayeshalashkarwala/annotated-wikitable-questions`)  
+  A subset of WikiTableQuestions annotated with ground-truth rows required to answer each question.
+- **[Extracting WikiTableQuestions](https://huggingface.co/datasets/ayeshalashkarwala/extracting-wikitable-questions)** (`ayeshalashkarwala/extracting-wikitable-questions`)  
+  Curated examples answerable solely through extractive operations (`select_row`, `select_column`).
+
+| Dataset | Train | Val | Test | Total |
+|---|:---:|:---:|:---:|:---:|
+| [`annotated-wikitable-questions`](https://huggingface.co/datasets/ayeshalashkarwala/annotated-wikitable-questions) | 751 | 94 | 94 | 939 |
+| [`extracting-wikitable-questions`](https://huggingface.co/datasets/ayeshalashkarwala/extracting-wikitable-questions) | 36 | 4 | 10 | 50 |
+
+Select the dataset and split in [configs/default.yaml](configs/default.yaml) under `dataset.name` and `dataset.split`.
+
 ## Experiments
 
 ```bash
